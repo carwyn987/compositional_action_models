@@ -89,8 +89,8 @@ def skill_reward(
     if skill_name == "pickup":
         target_lift = evaluator.lift_height
         reward += -1.5 * grip_to_obj
-        reward += -3.0 * max(0.0, target_lift - lift)
-        reward += 0.5 if facts["gripper_above_object"] else 0.0
+        reward += -30.0 * max(0.0, target_lift - lift)
+        reward += 0.02 if facts["gripper_above_object"] else 0.0
         reward += 2.0 if success else 0.0
 
     elif skill_name == "putdown":
