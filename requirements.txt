@@ -1,0 +1,5 @@
+gymnasium-robotics[mujoco]>=1.4.0
+stable-baselines3[extra]>=2.4.0
+numpy>=1.26
+mujoco>=3.2
+pygame>=2.5
