@@ -20,23 +20,12 @@ class SkillSpec:
 
 @dataclass(frozen=True)
 class RewardConfig:
-    """Central reward knobs shared by all symbolic skills.
-
-    Tune action_l2_penalty once to affect every skill. Use
-    per_skill_action_l2_penalty for exceptions, e.g.
-    {"pushleft": 0.0005, "pickup": 0.002}.
-    """
-
     time_penalty: float = -0.01
     action_l2_penalty: float = 0.001
     per_skill_action_l2_penalty: dict[str, float] = field(default_factory=dict)
 
-    def movement_penalty(self, skill_name: str, action: np.ndarray | None) -> float:
-        if action is None:
-            return 0.0
-        weight = self.per_skill_action_l2_penalty.get(skill_name, self.action_l2_penalty)
-        action_arr = np.asarray(action, dtype=np.float32)
-        return -float(weight) * float(np.mean(np.square(action_arr)))
+    def action_penalty_for(self, skill_name: str) -> float:
+        return self.per_skill_action_l2_penalty.get(skill_name, self.action_l2_penalty)
 
 
 DEFAULT_REWARD_CONFIG = RewardConfig()
@@ -93,7 +82,9 @@ def skill_reward(
     disp = obj - start
 
     reward = reward_config.time_penalty
-    reward += reward_config.movement_penalty(skill_name, action)
+    if action is not None:
+        action = np.asarray(action, dtype=np.float32)
+        reward -= reward_config.action_penalty_for(skill_name) * float(np.dot(action, action))
 
     if skill_name == "pickup":
         target_lift = evaluator.lift_height

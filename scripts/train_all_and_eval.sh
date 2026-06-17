@@ -15,6 +15,11 @@ set -euo pipefail
 #   MODELS_DIR     model output directory     default: models
 #   LOGDIR         training/eval log directory default: runs
 #   SKILLS         space-separated skill list  default: all current skills
+#   TEACHER        bc or off                  default: bc
+#   TEACHER_ROLLOUTS        demos per skill   default: 8
+#   TEACHER_GRADIENT_STEPS  BC updates        default: 500
+#   TEACHER_BATCH_SIZE      BC batch size     default: 256
+#   TEACHER_LR              BC learning rate  default: 1e-4
 
 ALGO="${ALGO:-sac}"
 TIMESTEPS="${TIMESTEPS:-100000}"
@@ -22,6 +27,11 @@ SEED="${SEED:-0}"
 EVAL_EPISODES="${EVAL_EPISODES:-5}"
 MODELS_DIR="${MODELS_DIR:-models}"
 LOGDIR="${LOGDIR:-runs}"
+TEACHER="${TEACHER:-bc}"
+TEACHER_ROLLOUTS="${TEACHER_ROLLOUTS:-8}"
+TEACHER_GRADIENT_STEPS="${TEACHER_GRADIENT_STEPS:-500}"
+TEACHER_BATCH_SIZE="${TEACHER_BATCH_SIZE:-256}"
+TEACHER_LR="${TEACHER_LR:-1e-4}"
 
 DEFAULT_SKILLS=(
   pickup
@@ -48,6 +58,14 @@ case "${ALGO}" in
     ;;
 esac
 
+case "${TEACHER}" in
+  bc|off) ;;
+  *)
+    echo "ERROR: TEACHER must be 'bc' or 'off', got '${TEACHER}'" >&2
+    exit 2
+    ;;
+esac
+
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "${REPO_ROOT}"
 
@@ -57,8 +75,8 @@ SUMMARY_FILE="${LOGDIR}/all_eval/summary_${ALGO}.txt"
 : > "${SUMMARY_FILE}"
 
 printf 'Training/evaluating skills: %s\n' "${SKILL_LIST[*]}"
-printf 'ALGO=%s TIMESTEPS=%s SEED=%s EVAL_EPISODES=%s\n' \
-  "${ALGO}" "${TIMESTEPS}" "${SEED}" "${EVAL_EPISODES}"
+printf 'ALGO=%s TIMESTEPS=%s SEED=%s EVAL_EPISODES=%s TEACHER=%s\n' \
+  "${ALGO}" "${TIMESTEPS}" "${SEED}" "${EVAL_EPISODES}" "${TEACHER}"
 
 for SKILL in "${SKILL_LIST[@]}"; do
   echo
@@ -73,6 +91,11 @@ for SKILL in "${SKILL_LIST[@]}"; do
     --seed "${SEED}" \
     --models-dir "${MODELS_DIR}" \
     --logdir "${LOGDIR}" \
+    --teacher "${TEACHER}" \
+    --teacher-rollouts "${TEACHER_ROLLOUTS}" \
+    --teacher-gradient-steps "${TEACHER_GRADIENT_STEPS}" \
+    --teacher-batch-size "${TEACHER_BATCH_SIZE}" \
+    --teacher-lr "${TEACHER_LR}" \
     2>&1 | tee "${LOGDIR}/all_train/${SKILL}_${ALGO}.log"
 
   MODEL_PATH="${MODELS_DIR}/${SKILL}_${ALGO}.zip"

@@ -9,7 +9,6 @@ import gymnasium_robotics
 import numpy as np
 
 from .facts import FactEvaluator
-from .scripted import ScriptedPickupConfig, run_scripted_pickup
 from .skills import SkillSpec, require_skill, skill_reward
 
 
@@ -30,30 +29,35 @@ class FetchSkillEnv(gym.Wrapper):
         super().__init__(env)
         self.skill = skill
         self.evaluator = evaluator or FactEvaluator()
-        self.scripted_pickup_config = ScriptedPickupConfig()
 
     def reset(self, **kwargs: Any) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
+        # Native Fetch reset restores the arm and samples a fresh object pose.
+        # Do not replace this with object teleporting, otherwise arm/block state
+        # can silently carry artifacts across episodes.
         obs, info = self.env.reset(**kwargs)
         self.evaluator.reset_reference(obs)
 
-        scripted_info: dict[str, Any] = {}
+        scripted_pickup_success = None
+        scripted_pickup_steps = 0
+
+        # Make putdown non-trivial: start from an actually grasped/lifted block.
+        # Keep the original post-reset table/object reference so object_on_table
+        # is judged against the randomized table-resting pose, not the lifted pose.
         if self.skill.name == "putdown":
-            table_z = self.evaluator.table_object_z
-            result = run_scripted_pickup(self.env, obs, self.evaluator, self.scripted_pickup_config)
+            from .scripted import run_scripted_pickup
+
+            result = run_scripted_pickup(self.env, obs, self.evaluator)
             obs = result.obs
-            # Keep the table/resting reference from before pickup, otherwise a
-            # held block would incorrectly become the new "on table" height.
-            self.evaluator.reset_reference(obs)
-            self.evaluator.table_object_z = table_z
-            scripted_info = {
-                "scripted_pickup_success": result.success,
-                "scripted_pickup_steps": result.steps,
-            }
+            scripted_pickup_success = result.success
+            scripted_pickup_steps = result.steps
 
         info = dict(info)
-        info.update(scripted_info)
         info["facts"] = self.evaluator.facts(obs)
         info["numeric_state"] = self.evaluator.numeric_summary(obs)
+        info["skill"] = self.skill.name
+        if scripted_pickup_success is not None:
+            info["scripted_pickup_success"] = scripted_pickup_success
+            info["scripted_pickup_steps"] = scripted_pickup_steps
         return obs, info
 
     def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
@@ -75,7 +79,8 @@ class FetchSkillEnv(gym.Wrapper):
 def make_fetch_env(env_id: str = "FetchPickAndPlace-v4", render_mode: str | None = None, seed: int | None = None) -> gym.Env:
     env = gym.make(env_id, render_mode=render_mode)
     if seed is not None:
-        env.reset(seed=seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
     return env
 
 
@@ -84,7 +89,8 @@ def make_skill_env(skill_name: str, render_mode: str | None = None, seed: int | 
     base = gym.make(spec.env_id, render_mode=render_mode, max_episode_steps=spec.max_episode_steps)
     env = FetchSkillEnv(base, skill=spec)
     if seed is not None:
-        env.reset(seed=seed)
+        env.action_space.seed(seed)
+        env.observation_space.seed(seed)
     return env
 
 
@@ -95,35 +101,3 @@ def get_current_obs(env: gym.Env, fallback: dict[str, np.ndarray]) -> dict[str, 
     if callable(get_obs):
         return get_obs()
     return fallback
-
-
-def set_object_position(env: gym.Env, pos: np.ndarray, joint_name: str = "object0:joint") -> bool:
-    """Set the Fetch object free-joint position if MuJoCo internals are available."""
-    try:
-        import mujoco
-    except Exception:
-        return False
-
-    try:
-        unwrapped = env.unwrapped
-        model = unwrapped.model
-        data = unwrapped.data
-        joint_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_JOINT, joint_name)
-        if joint_id < 0:
-            return False
-
-        qpos_addr = int(model.jnt_qposadr[joint_id])
-        qvel_addr = int(model.jnt_dofadr[joint_id])
-        joint_type = int(model.jnt_type[joint_id])
-
-        # Free joint: [x, y, z, qw, qx, qy, qz] and 6 velocity dofs.
-        if joint_type == int(mujoco.mjtJoint.mjJNT_FREE):
-            data.qpos[qpos_addr : qpos_addr + 3] = np.asarray(pos, dtype=np.float64)
-            data.qpos[qpos_addr + 3 : qpos_addr + 7] = np.array([1.0, 0.0, 0.0, 0.0])
-            data.qvel[qvel_addr : qvel_addr + 6] = 0.0
-            mujoco.mj_forward(model, data)
-            return True
-    except Exception:
-        return False
-
-    return False

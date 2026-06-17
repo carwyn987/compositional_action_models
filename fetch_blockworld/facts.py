@@ -49,7 +49,7 @@ class FactEvaluator:
         push_distance: float = 0.08,
         lift_height: float = 0.06,
         open_width: float = 0.035,
-        closed_width: float = 0.020,
+        closed_width: float = 0.070,
     ) -> None:
         self.object_half_size = object_half_size
         self.near_tol = near_tol
