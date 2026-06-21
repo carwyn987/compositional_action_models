@@ -1,7 +1,7 @@
 FETCH LIVE STATE
 ====================================================
-step:       73
-reward:     -0.00560
+step:       6343
+reward:     -0.01004
 terminated: False
 truncated:  False
 success:    False
@@ -10,24 +10,24 @@ action:     [0. 0. 0. 0.]
 FACTS
 ----------------------------------------------------
 false  gripper_above_object
-TRUE   gripper_closed
+false  gripper_closed
 false  gripper_near_object
-false  gripper_open
+TRUE   gripper_open
 false  gripper_touching_object_top
 TRUE   has_object
 false  holding_object
 false  object_at_goal
 false  object_lifted
 false  object_moved_backward
-false  object_moved_forward
-false  object_moved_left
+TRUE   object_moved_forward
+TRUE   object_moved_left
 false  object_moved_right
 TRUE   object_on_table
 
 NUMERIC STATE
 ----------------------------------------------------
-desired_goal             [1.3656 0.6583 0.8698]
-grip_pos                 [1.2447 0.7159 0.5253]
-gripper_width            0.00242
-object_displacement      [0. 0. 0.]
-object_pos               [1.4288 0.6269 0.4249]
+desired_goal             [1.3544 0.689  0.4808]
+grip_pos                 [1.1324 0.4702 0.4195]
+gripper_width            0.08362
+object_displacement      [-0.087   0.3571 -0.4   ]
+object_pos               [1.1576 1.2152 0.0249]
