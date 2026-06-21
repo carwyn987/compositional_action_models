@@ -1,0 +1,33 @@
+FETCH LIVE STATE
+====================================================
+step:       73
+reward:     -0.00560
+terminated: False
+truncated:  False
+success:    False
+action:     [0. 0. 0. 0.]
+
+FACTS
+----------------------------------------------------
+false  gripper_above_object
+TRUE   gripper_closed
+false  gripper_near_object
+false  gripper_open
+false  gripper_touching_object_top
+TRUE   has_object
+false  holding_object
+false  object_at_goal
+false  object_lifted
+false  object_moved_backward
+false  object_moved_forward
+false  object_moved_left
+false  object_moved_right
+TRUE   object_on_table
+
+NUMERIC STATE
+----------------------------------------------------
+desired_goal             [1.3656 0.6583 0.8698]
+grip_pos                 [1.2447 0.7159 0.5253]
+gripper_width            0.00242
+object_displacement      [0. 0. 0.]
+object_pos               [1.4288 0.6269 0.4249]

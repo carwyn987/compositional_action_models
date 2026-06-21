@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .facts import FactEvaluator
-
+from .pickup_rewards import PickupRewardShaper
 
 @dataclass(frozen=True)
 class SkillSpec:
@@ -56,47 +56,93 @@ def skill_reward(
     *,
     action: np.ndarray | None = None,
     reward_config: RewardConfig = DEFAULT_REWARD_CONFIG,
-) -> tuple[float, bool, dict[str, bool]]:
-    """Return shaped reward, success flag, and current facts.
+    pickup_reward_shaper: PickupRewardShaper | None = None,
+) -> tuple[float, bool, dict[str, bool], dict[str, float]]:
+    """Return reward, success flag, facts, and reward components."""
 
-    The reward is deliberately simple and local. It is meant to train reusable
-    options such as pickup(block) or pushleft(block), not solve the original
-    Fetch goal task directly.
-    """
     spec = require_skill(skill_name)
     facts = evaluator.facts(obs)
     state = evaluator.state(obs)
     success = bool(facts[spec.success_fact])
 
     if state.object_pos is None:
-        return (-1.0, False, facts)
+        return -1.0, False, facts, {"invalid_state": -1.0, "total": -1.0}
 
     obj = state.object_pos
     grip = state.grip_pos
-    start = state.initial_object_pos if state.initial_object_pos is not None else obj
-    table_z = state.table_object_z if state.table_object_z is not None else float(obj[2])
+    start = (
+        state.initial_object_pos
+        if state.initial_object_pos is not None
+        else obj
+    )
+    table_z = (
+        state.table_object_z
+        if state.table_object_z is not None
+        else float(obj[2])
+    )
 
     grip_to_obj = float(np.linalg.norm(grip - obj))
     xy_dist = float(np.linalg.norm(grip[:2] - obj[:2]))
-    lift = float(obj[2] - table_z)
+    lift = max(0.0, float(obj[2] - table_z))
     disp = obj - start
 
-    reward = reward_config.time_penalty
-    if action is not None:
-        action = np.asarray(action, dtype=np.float32)
-        reward -= reward_config.action_penalty_for(skill_name) * float(np.dot(action, action))
+    action_array = (
+        np.zeros(4, dtype=np.float32)
+        if action is None
+        else np.asarray(action, dtype=np.float32)
+    )
 
+    # Pickup has its own stateful, staged reward.
+    # Do not apply the generic time/action costs here because the pickup
+    # shaper already includes them.
     if skill_name == "pickup":
-        target_lift = evaluator.lift_height
-        reward += -1.5 * grip_to_obj
-        reward += -30.0 * max(0.0, target_lift - lift)
-        reward += 0.02 if facts["gripper_above_object"] else 0.0
-        reward += 2.0 if success else 0.0
+        if pickup_reward_shaper is None:
+            raise RuntimeError(
+                "pickup_reward_shaper must be provided for the pickup skill"
+            )
 
-    elif skill_name == "putdown":
-        reward += -abs(lift)
-        reward += 0.25 if facts["gripper_open"] else 0.0
-        reward += 2.0 if success else 0.0
+        reward, components = pickup_reward_shaper.compute(
+            grip_pos=grip,
+            object_pos=obj,
+            gripper_width=float(state.gripper_width),
+            lift=lift,
+            target_lift=float(evaluator.lift_height),
+            action=action_array,
+            facts=facts,
+            success=success,
+        )
+
+        components["total"] = float(reward)
+        return float(reward), success, facts, components
+
+    # Generic costs for all non-pickup skills.
+    time_reward = float(reward_config.time_penalty)
+    movement_reward = -(
+        reward_config.action_penalty_for(skill_name)
+        * float(np.dot(action_array, action_array))
+    )
+
+    reward = time_reward + movement_reward
+
+    components: dict[str, float] = {
+        "time": time_reward,
+        "movement": movement_reward,
+    }
+
+    if skill_name == "putdown":
+        table_reward = -abs(lift)
+        open_reward = 0.25 if facts["gripper_open"] else 0.0
+        success_reward = 2.0 if success else 0.0
+
+        reward += table_reward + open_reward + success_reward
+
+        components.update(
+            {
+                "table": table_reward,
+                "open": open_reward,
+                "success": success_reward,
+            }
+        )
 
     elif skill_name.startswith("push"):
         direction = {
@@ -105,18 +151,50 @@ def skill_reward(
             "pushforward": np.array([0.0, 1.0]),
             "pushbackward": np.array([0.0, -1.0]),
         }[skill_name]
+
         progress = float(np.dot(disp[:2], direction))
-        reward += 5.0 * progress
-        reward += -0.3 * xy_dist
-        reward += 2.0 if success else 0.0
-        reward += -1.0 if not facts["object_on_table"] else 0.0
+
+        progress_reward = 5.0 * progress
+        proximity_reward = -0.3 * xy_dist
+        success_reward = 2.0 if success else 0.0
+        table_reward = -1.0 if not facts["object_on_table"] else 0.0
+
+        reward += (
+            progress_reward
+            + proximity_reward
+            + success_reward
+            + table_reward
+        )
+
+        components.update(
+            {
+                "progress": progress_reward,
+                "proximity": proximity_reward,
+                "table": table_reward,
+                "success": success_reward,
+            }
+        )
 
     elif skill_name == "reach_top":
-        top = obj + np.array([0.0, 0.0, evaluator.object_half_size])
-        reward += -float(np.linalg.norm(grip - top))
-        reward += 2.0 if success else 0.0
+        top = obj + np.array(
+            [0.0, 0.0, evaluator.object_half_size],
+            dtype=np.float64,
+        )
+
+        distance_reward = -float(np.linalg.norm(grip - top))
+        success_reward = 2.0 if success else 0.0
+
+        reward += distance_reward + success_reward
+
+        components.update(
+            {
+                "distance": distance_reward,
+                "success": success_reward,
+            }
+        )
 
     else:
         raise ValueError(f"Unhandled skill: {skill_name}")
 
-    return float(reward), success, facts
+    components["total"] = float(reward)
+    return float(reward), success, facts, components

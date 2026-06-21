@@ -10,6 +10,7 @@ import numpy as np
 
 from .facts import FactEvaluator
 from .skills import SkillSpec, require_skill, skill_reward
+from .pickup_rewards import PickupRewardShaper
 
 
 gym.register_envs(gymnasium_robotics)
@@ -25,17 +26,32 @@ class FetchSkillEnv(gym.Wrapper):
 
     metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 25}
 
-    def __init__(self, env: gym.Env, skill: SkillSpec, evaluator: FactEvaluator | None = None) -> None:
+    def __init__(
+        self,
+        env: gym.Env,
+        skill: SkillSpec,
+        evaluator: FactEvaluator | None = None,
+    ) -> None:
         super().__init__(env)
         self.skill = skill
         self.evaluator = evaluator or FactEvaluator()
 
+        # Stateful because it tracks progress and one-time milestones.
+        self.pickup_reward_shaper = (
+            PickupRewardShaper()
+            if skill.name == "pickup"
+            else None
+        )
+    
     def reset(self, **kwargs: Any) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         # Native Fetch reset restores the arm and samples a fresh object pose.
         # Do not replace this with object teleporting, otherwise arm/block state
         # can silently carry artifacts across episodes.
         obs, info = self.env.reset(**kwargs)
         self.evaluator.reset_reference(obs)
+        
+        if self.pickup_reward_shaper is not None:
+            self.pickup_reward_shaper.reset()
 
         scripted_pickup_success = None
         scripted_pickup_steps = 0
@@ -62,13 +78,20 @@ class FetchSkillEnv(gym.Wrapper):
 
     def step(self, action: np.ndarray) -> tuple[dict[str, np.ndarray], float, bool, bool, dict[str, Any]]:
         obs, _native_reward, terminated, truncated, info = self.env.step(action)
-        reward, success, facts = skill_reward(self.skill.name, obs, self.evaluator, action=action)
+        reward, success, facts, reward_components = skill_reward(
+            self.skill.name,
+            obs,
+            self.evaluator,
+            action=action,
+            pickup_reward_shaper=self.pickup_reward_shaper,
+        )
 
         info = dict(info)
         info["is_success"] = float(success)
         info["facts"] = facts
         info["numeric_state"] = self.evaluator.numeric_summary(obs)
         info["skill"] = self.skill.name
+        info["reward_components"] = reward_components
 
         if self.skill.terminate_on_success and success:
             terminated = True

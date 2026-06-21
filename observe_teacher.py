@@ -54,12 +54,20 @@ def main() -> None:
 
                 if t % args.print_every == 0 or terminated or truncated:
                     facts = info.get("facts", {})
+                    components = info.get("reward_components", {})
+
+                    component_text = ", ".join(
+                        f"{name}={value:.3f}"
+                        for name, value in components.items()
+                    )
+
                     print(
                         f"t={t:03d} "
                         f"action={np.round(action, 2)} "
                         f"reward={reward:.3f} "
                         f"success={bool(info.get('is_success', 0.0))} "
-                        f"facts={_compact_facts(facts)}"
+                        f"facts={_compact_facts(facts)}\n"
+                        f"    reward_components: {component_text}"
                     )
 
                 if not args.no_render:
