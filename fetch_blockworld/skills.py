@@ -9,6 +9,7 @@ import numpy as np
 from .facts import FactEvaluator
 from .pickup_rewards import PickupRewardShaper
 from .putdown_rewards import PutdownRewardShaper
+from .push_rewards import PushRewardShaper
 
 @dataclass(frozen=True)
 class SkillSpec:
@@ -59,6 +60,7 @@ def skill_reward(
     reward_config: RewardConfig = DEFAULT_REWARD_CONFIG,
     pickup_reward_shaper: PickupRewardShaper | None = None,
     putdown_reward_shaper: PutdownRewardShaper | None = None,
+    push_reward_shaper: PushRewardShaper | None = None,
 ) -> tuple[float, bool, dict[str, bool], dict[str, float]]:
     """Return reward, success flag, facts, and reward components."""
 
@@ -136,6 +138,26 @@ def skill_reward(
         components["total"] = float(reward)
         return float(reward), putdown_success, facts, components
 
+    # Push skills share one direction-parameterized, stateful shaper that also
+    # penalizes the block rotating while it slides.
+    if skill_name.startswith("push"):
+        if push_reward_shaper is None:
+            raise RuntimeError(
+                "push_reward_shaper must be provided for push skills"
+            )
+
+        reward, components = push_reward_shaper.compute(
+            displacement=disp,
+            xy_dist=xy_dist,
+            object_rot=state.object_rot,
+            action=action_array,
+            facts=facts,
+            success=success,
+        )
+
+        components["total"] = float(reward)
+        return float(reward), success, facts, components
+
     # Generic costs for all non-pickup skills.
     time_reward = float(reward_config.time_penalty)
     movement_reward = -(
@@ -150,38 +172,7 @@ def skill_reward(
         "movement": movement_reward,
     }
 
-    if skill_name.startswith("push"):
-        direction = {
-            "pushleft": np.array([-1.0, 0.0]),
-            "pushright": np.array([1.0, 0.0]),
-            "pushforward": np.array([0.0, 1.0]),
-            "pushbackward": np.array([0.0, -1.0]),
-        }[skill_name]
-
-        progress = float(np.dot(disp[:2], direction))
-
-        progress_reward = 5.0 * progress
-        proximity_reward = -0.3 * xy_dist
-        success_reward = 2.0 if success else 0.0
-        table_reward = -1.0 if not facts["object_on_table"] else 0.0
-
-        reward += (
-            progress_reward
-            + proximity_reward
-            + success_reward
-            + table_reward
-        )
-
-        components.update(
-            {
-                "progress": progress_reward,
-                "proximity": proximity_reward,
-                "table": table_reward,
-                "success": success_reward,
-            }
-        )
-
-    elif skill_name == "reach_top":
+    if skill_name == "reach_top":
         top = obj + np.array(
             [0.0, 0.0, evaluator.object_half_size],
             dtype=np.float64,

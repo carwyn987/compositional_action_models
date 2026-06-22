@@ -12,6 +12,7 @@ from .facts import FactEvaluator
 from .skills import SkillSpec, require_skill, skill_reward
 from .pickup_rewards import PickupRewardShaper
 from .putdown_rewards import PutdownRewardShaper
+from .push_rewards import PushRewardShaper
 
 
 gym.register_envs(gymnasium_robotics)
@@ -48,6 +49,11 @@ class FetchSkillEnv(gym.Wrapper):
             if skill.name == "putdown"
             else None
         )
+        self.push_reward_shaper = (
+            PushRewardShaper(skill.name)
+            if skill.name.startswith("push")
+            else None
+        )
     
     def reset(self, **kwargs: Any) -> tuple[dict[str, np.ndarray], dict[str, Any]]:
         # Native Fetch reset restores the arm and samples a fresh object pose.
@@ -61,6 +67,9 @@ class FetchSkillEnv(gym.Wrapper):
 
         if self.putdown_reward_shaper is not None:
             self.putdown_reward_shaper.reset()
+
+        if self.push_reward_shaper is not None:
+            self.push_reward_shaper.reset()
 
         scripted_pickup_success = None
         scripted_pickup_steps = 0
@@ -94,6 +103,7 @@ class FetchSkillEnv(gym.Wrapper):
             action=action,
             pickup_reward_shaper=self.pickup_reward_shaper,
             putdown_reward_shaper=self.putdown_reward_shaper,
+            push_reward_shaper=self.push_reward_shaper,
         )
 
         info = dict(info)
