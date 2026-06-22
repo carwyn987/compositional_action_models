@@ -8,6 +8,7 @@ import numpy as np
 
 from .facts import FactEvaluator
 from .pickup_rewards import PickupRewardShaper
+from .putdown_rewards import PutdownRewardShaper
 
 @dataclass(frozen=True)
 class SkillSpec:
@@ -57,6 +58,7 @@ def skill_reward(
     action: np.ndarray | None = None,
     reward_config: RewardConfig = DEFAULT_REWARD_CONFIG,
     pickup_reward_shaper: PickupRewardShaper | None = None,
+    putdown_reward_shaper: PutdownRewardShaper | None = None,
 ) -> tuple[float, bool, dict[str, bool], dict[str, float]]:
     """Return reward, success flag, facts, and reward components."""
 
@@ -115,6 +117,25 @@ def skill_reward(
         components["total"] = float(reward)
         return float(reward), success, facts, components
 
+    # Putdown has its own stateful, staged reward that also rewards placing
+    # the block square and only counts success once it is released on the table.
+    if skill_name == "putdown":
+        if putdown_reward_shaper is None:
+            raise RuntimeError(
+                "putdown_reward_shaper must be provided for the putdown skill"
+            )
+
+        reward, components, putdown_success = putdown_reward_shaper.compute(
+            object_rot=state.object_rot,
+            gripper_width=float(state.gripper_width),
+            height_above_table=lift,
+            action=action_array,
+            facts=facts,
+        )
+
+        components["total"] = float(reward)
+        return float(reward), putdown_success, facts, components
+
     # Generic costs for all non-pickup skills.
     time_reward = float(reward_config.time_penalty)
     movement_reward = -(
@@ -129,22 +150,7 @@ def skill_reward(
         "movement": movement_reward,
     }
 
-    if skill_name == "putdown":
-        table_reward = -abs(lift)
-        open_reward = 0.25 if facts["gripper_open"] else 0.0
-        success_reward = 2.0 if success else 0.0
-
-        reward += table_reward + open_reward + success_reward
-
-        components.update(
-            {
-                "table": table_reward,
-                "open": open_reward,
-                "success": success_reward,
-            }
-        )
-
-    elif skill_name.startswith("push"):
+    if skill_name.startswith("push"):
         direction = {
             "pushleft": np.array([-1.0, 0.0]),
             "pushright": np.array([1.0, 0.0]),

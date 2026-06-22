@@ -24,6 +24,7 @@ Array = np.ndarray
 class FetchState:
     grip_pos: Array
     object_pos: Array | None
+    object_rot: Array | None
     achieved_goal: Array | None
     desired_goal: Array | None
     gripper_width: float | None
@@ -77,11 +78,14 @@ class FactEvaluator:
         grip_pos = raw[0:3].copy()
         has_object = raw.shape[0] >= 25
         object_pos = raw[3:6].copy() if has_object else None
+        # 11:14 hold the object rotation as Euler angles (radians).
+        object_rot = raw[11:14].copy() if has_object else None
         gripper_width = float(np.sum(raw[9:11])) if has_object else None
 
         return FetchState(
             grip_pos=grip_pos,
             object_pos=object_pos,
+            object_rot=object_rot,
             achieved_goal=achieved_goal,
             desired_goal=desired_goal,
             gripper_width=gripper_width,
@@ -131,13 +135,16 @@ class FactEvaluator:
             gripper_closed = bool(s.gripper_width <= self.closed_width)
 
         gripper_above = bool(xy_dist <= self.xy_tol and grip[2] >= top_z)
-        touching_top = bool(gripper_above and abs(float(grip[2] - top_z)) <= self.z_tol)
+        # Check XY alignment and Z proximity to block top independently — the grip
+        # site sits at block-center height when fully grasping, so requiring
+        # grip[2] >= top_z (gripper_above) would give a false negative during grasp.
+        touching_top = bool(xy_dist <= self.xy_tol and abs(float(grip[2] - top_z)) <= self.z_tol)
         object_lifted = bool(lift >= self.lift_height)
         near_object = bool(grip_obj_dist <= self.near_tol)
 
         return {
             "has_object": True,
-            "object_on_table": bool(obj[2] <= table_z + self.z_tol),
+            "object_on_table": bool(abs(obj[2] - table_z) <= self.z_tol),
             "object_lifted": object_lifted,
             "gripper_near_object": near_object,
             "gripper_above_object": gripper_above,
