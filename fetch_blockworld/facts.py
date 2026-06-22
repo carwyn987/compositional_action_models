@@ -30,6 +30,14 @@ class FetchState:
     gripper_width: float | None
     initial_object_pos: Array | None
     table_object_z: float | None
+    # Multi-block fields. block_positions[0]/block_rotations[0] mirror
+    # object_pos/object_rot (block id 0). For single-block tasks the lists hold
+    # just that one block and mover/base indices are None.
+    block_positions: list[Array] | None = None
+    block_rotations: list[Array] | None = None
+    mover_index: int | None = None
+    base_index: int | None = None
+    num_blocks: int = 1
 
 
 class FactEvaluator:
@@ -42,6 +50,7 @@ class FactEvaluator:
     def __init__(
         self,
         *,
+        num_blocks: int = 1,
         object_half_size: float = 0.025,
         near_tol: float = 0.055,
         xy_tol: float = 0.045,
@@ -51,7 +60,10 @@ class FactEvaluator:
         lift_height: float = 0.06,
         open_width: float = 0.035,
         closed_width: float = 0.070,
+        stack_xy_tol: float = 0.030,
+        stack_clear_dist: float = 0.060,
     ) -> None:
+        self.num_blocks = int(num_blocks)
         self.object_half_size = object_half_size
         self.near_tol = near_tol
         self.xy_tol = xy_tol
@@ -61,14 +73,33 @@ class FactEvaluator:
         self.lift_height = lift_height
         self.open_width = open_width
         self.closed_width = closed_width
+        # Stacking tolerances: xy alignment to count a block "on top", and the
+        # horizontal separation required to count a block "clear" of another.
+        self.stack_xy_tol = stack_xy_tol
+        self.stack_clear_dist = stack_clear_dist
         self.initial_object_pos: Array | None = None
         self.table_object_z: float | None = None
+        self.initial_block_positions: list[Array] | None = None
 
     def reset_reference(self, obs: dict[str, Array]) -> None:
         """Remember the reset object pose as the table/resting reference."""
         state = self.state(obs)
         self.initial_object_pos = None if state.object_pos is None else state.object_pos.copy()
         self.table_object_z = None if state.object_pos is None else float(state.object_pos[2])
+        self.initial_block_positions = (
+            None
+            if state.block_positions is None
+            else [p.copy() for p in state.block_positions]
+        )
+        # In multi-block tasks block 0 may start elevated (e.g. the mover of an
+        # unstack episode begins stacked). The base block always rests on the
+        # table, so use it as the table-surface reference.
+        if (
+            state.num_blocks >= 2
+            and state.block_positions is not None
+            and state.base_index is not None
+        ):
+            self.table_object_z = float(state.block_positions[state.base_index][2])
 
     def state(self, obs: dict[str, Array]) -> FetchState:
         raw = np.asarray(obs["observation"], dtype=np.float64)
@@ -82,6 +113,29 @@ class FactEvaluator:
         object_rot = raw[11:14].copy() if has_object else None
         gripper_width = float(np.sum(raw[9:11])) if has_object else None
 
+        block_positions: list[Array] | None = None
+        block_rotations: list[Array] | None = None
+        mover_index: int | None = None
+        base_index: int | None = None
+        if has_object:
+            # Block 0 mirrors the standard single-block fields.
+            block_positions = [object_pos.copy()]
+            block_rotations = [object_rot.copy()]
+            # Blocks 1..N-1 are appended as pos(3), rel(3), rot(3) each.
+            for i in range(1, self.num_blocks):
+                base = 25 + 9 * (i - 1)
+                block_positions.append(raw[base : base + 3].copy())
+                block_rotations.append(raw[base + 6 : base + 9].copy())
+            if self.num_blocks > 1:
+                # Two trailing one-hot vectors of length num_blocks.
+                onehot_base = 25 + 9 * (self.num_blocks - 1)
+                mover_onehot = raw[onehot_base : onehot_base + self.num_blocks]
+                base_onehot = raw[
+                    onehot_base + self.num_blocks : onehot_base + 2 * self.num_blocks
+                ]
+                mover_index = int(np.argmax(mover_onehot))
+                base_index = int(np.argmax(base_onehot))
+
         return FetchState(
             grip_pos=grip_pos,
             object_pos=object_pos,
@@ -91,6 +145,11 @@ class FactEvaluator:
             gripper_width=gripper_width,
             initial_object_pos=self.initial_object_pos,
             table_object_z=self.table_object_z,
+            block_positions=block_positions,
+            block_rotations=block_rotations,
+            mover_index=mover_index,
+            base_index=base_index,
+            num_blocks=self.num_blocks,
         )
 
     def facts(self, obs: dict[str, Array]) -> dict[str, bool]:
@@ -142,7 +201,7 @@ class FactEvaluator:
         object_lifted = bool(lift >= self.lift_height)
         near_object = bool(grip_obj_dist <= self.near_tol)
 
-        return {
+        result = {
             "has_object": True,
             "object_on_table": bool(abs(obj[2] - table_z) <= self.z_tol),
             "object_lifted": object_lifted,
@@ -161,6 +220,45 @@ class FactEvaluator:
             "object_moved_backward": bool(disp[1] <= -self.push_distance),
         }
 
+        if (
+            s.num_blocks >= 2
+            and s.block_positions is not None
+            and s.mover_index is not None
+            and s.base_index is not None
+        ):
+            result.update(self._multi_block_facts(s, table_z))
+
+        return result
+
+    def _multi_block_facts(self, s: FetchState, table_z: float) -> dict[str, bool]:
+        """Facts about the designated mover/base blocks (stack / unstack)."""
+        grip = s.grip_pos
+        mover = s.block_positions[s.mover_index]
+        base = s.block_positions[s.base_index]
+
+        mover_lift = float(mover[2] - table_z)
+        mover_xy_to_grip = float(np.linalg.norm(grip - mover))
+        # mover resting on top of base: xy-aligned and one block-height above it.
+        stack_xy = float(np.linalg.norm(mover[:2] - base[:2]))
+        stack_target_z = float(base[2] + 2 * self.object_half_size)
+        blocks_stacked = bool(
+            stack_xy <= self.stack_xy_tol
+            and abs(float(mover[2] - stack_target_z)) <= self.z_tol
+        )
+        mover_base_horiz = float(np.linalg.norm(mover[:2] - base[:2]))
+
+        return {
+            "has_two_blocks": True,
+            "mover_lifted": bool(mover_lift >= self.lift_height),
+            "mover_on_table": bool(abs(float(mover[2] - table_z)) <= self.z_tol),
+            "gripper_near_mover": bool(mover_xy_to_grip <= self.near_tol),
+            "mover_held": bool(
+                mover_lift >= self.lift_height and mover_xy_to_grip <= self.near_tol
+            ),
+            "blocks_stacked": blocks_stacked,
+            "mover_clear_of_base": bool(mover_base_horiz > self.stack_clear_dist),
+        }
+
     def is_true(self, obs: dict[str, Array], fact_name: str) -> bool:
         facts = self.facts(obs)
         if fact_name not in facts:
@@ -177,4 +275,8 @@ class FactEvaluator:
         }
         if s.object_pos is not None and s.initial_object_pos is not None:
             out["object_displacement"] = (s.object_pos - s.initial_object_pos).round(4).tolist()
+        if s.num_blocks >= 2 and s.block_positions is not None:
+            out["block_positions"] = [p.round(4).tolist() for p in s.block_positions]
+            out["mover_index"] = s.mover_index
+            out["base_index"] = s.base_index
         return out

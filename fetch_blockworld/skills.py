@@ -10,6 +10,8 @@ from .facts import FactEvaluator
 from .pickup_rewards import PickupRewardShaper
 from .putdown_rewards import PutdownRewardShaper
 from .push_rewards import PushRewardShaper
+from .stack_rewards import StackRewardShaper
+from .unstack_rewards import UnstackRewardShaper
 
 @dataclass(frozen=True)
 class SkillSpec:
@@ -41,6 +43,8 @@ SKILLS: dict[str, SkillSpec] = {
     "pushforward": SkillSpec("pushforward", "FetchPush-v4", "object_moved_forward"),
     "pushbackward": SkillSpec("pushbackward", "FetchPush-v4", "object_moved_backward"),
     "reach_top": SkillSpec("reach_top", "FetchPickAndPlace-v4", "gripper_touching_object_top"),
+    "stack": SkillSpec("stack", "FetchStackEnv-v0", "blocks_stacked", max_episode_steps=150),
+    "unstack": SkillSpec("unstack", "FetchUnstackEnv-v0", "mover_on_table", max_episode_steps=150),
 }
 
 
@@ -61,6 +65,8 @@ def skill_reward(
     pickup_reward_shaper: PickupRewardShaper | None = None,
     putdown_reward_shaper: PutdownRewardShaper | None = None,
     push_reward_shaper: PushRewardShaper | None = None,
+    stack_reward_shaper: StackRewardShaper | None = None,
+    unstack_reward_shaper: UnstackRewardShaper | None = None,
 ) -> tuple[float, bool, dict[str, bool], dict[str, float]]:
     """Return reward, success flag, facts, and reward components."""
 
@@ -157,6 +163,45 @@ def skill_reward(
 
         components["total"] = float(reward)
         return float(reward), success, facts, components
+
+    # Stack: pick the mover block and place it on the base block. The shaper
+    # computes its own success (stacked AND released), like putdown.
+    if skill_name == "stack":
+        if stack_reward_shaper is None:
+            raise RuntimeError("stack_reward_shaper must be provided for the stack skill")
+        if state.block_positions is None or state.mover_index is None or state.base_index is None:
+            return -1.0, False, facts, {"invalid_state": -1.0, "total": -1.0}
+
+        reward, components, stack_success = stack_reward_shaper.compute(
+            grip_pos=grip,
+            mover_pos=state.block_positions[state.mover_index],
+            base_pos=state.block_positions[state.base_index],
+            gripper_width=float(state.gripper_width),
+            action=action_array,
+            facts=facts,
+        )
+        components["total"] = float(reward)
+        return float(reward), stack_success, facts, components
+
+    # Unstack: lift the mover block off the base and place it on the table.
+    if skill_name == "unstack":
+        if unstack_reward_shaper is None:
+            raise RuntimeError("unstack_reward_shaper must be provided for the unstack skill")
+        if state.block_positions is None or state.mover_index is None or state.base_index is None:
+            return -1.0, False, facts, {"invalid_state": -1.0, "total": -1.0}
+
+        reward, components, unstack_success = unstack_reward_shaper.compute(
+            grip_pos=grip,
+            mover_pos=state.block_positions[state.mover_index],
+            base_pos=state.block_positions[state.base_index],
+            gripper_width=float(state.gripper_width),
+            table_z=table_z,
+            clear_dist=evaluator.stack_clear_dist,
+            action=action_array,
+            facts=facts,
+        )
+        components["total"] = float(reward)
+        return float(reward), unstack_success, facts, components
 
     # Generic costs for all non-pickup skills.
     time_reward = float(reward_config.time_penalty)

@@ -13,6 +13,9 @@ from .skills import SkillSpec, require_skill, skill_reward
 from .pickup_rewards import PickupRewardShaper
 from .putdown_rewards import PutdownRewardShaper
 from .push_rewards import PushRewardShaper
+from .stack_rewards import StackRewardShaper
+from .unstack_rewards import UnstackRewardShaper
+from . import multiblock_env  # noqa: F401  (registers FetchStackEnv-v0 / FetchUnstackEnv-v0)
 
 
 gym.register_envs(gymnasium_robotics)
@@ -36,7 +39,10 @@ class FetchSkillEnv(gym.Wrapper):
     ) -> None:
         super().__init__(env)
         self.skill = skill
-        self.evaluator = evaluator or FactEvaluator()
+        # Multi-block envs expose num_blocks; the evaluator must parse the
+        # extended observation accordingly.
+        num_blocks = getattr(env.unwrapped, "num_blocks", 1)
+        self.evaluator = evaluator or FactEvaluator(num_blocks=num_blocks)
 
         # Stateful because it tracks progress and one-time milestones.
         self.pickup_reward_shaper = (
@@ -52,6 +58,16 @@ class FetchSkillEnv(gym.Wrapper):
         self.push_reward_shaper = (
             PushRewardShaper(skill.name)
             if skill.name.startswith("push")
+            else None
+        )
+        self.stack_reward_shaper = (
+            StackRewardShaper()
+            if skill.name == "stack"
+            else None
+        )
+        self.unstack_reward_shaper = (
+            UnstackRewardShaper()
+            if skill.name == "unstack"
             else None
         )
     
@@ -70,6 +86,12 @@ class FetchSkillEnv(gym.Wrapper):
 
         if self.push_reward_shaper is not None:
             self.push_reward_shaper.reset()
+
+        if self.stack_reward_shaper is not None:
+            self.stack_reward_shaper.reset()
+
+        if self.unstack_reward_shaper is not None:
+            self.unstack_reward_shaper.reset()
 
         scripted_pickup_success = None
         scripted_pickup_steps = 0
@@ -104,6 +126,8 @@ class FetchSkillEnv(gym.Wrapper):
             pickup_reward_shaper=self.pickup_reward_shaper,
             putdown_reward_shaper=self.putdown_reward_shaper,
             push_reward_shaper=self.push_reward_shaper,
+            stack_reward_shaper=self.stack_reward_shaper,
+            unstack_reward_shaper=self.unstack_reward_shaper,
         )
 
         info = dict(info)

@@ -52,6 +52,13 @@ class ScriptedTeacherConfig:
     push_speed: float = 1.0
     push_align_tol: float = 0.035
     push_contact_z_offset: float = 0.0
+    # Stack / unstack knobs.
+    stack_carry_clearance: float = 0.07
+    stack_z_tol: float = 0.01
+    stack_align_tol: float = 0.02
+    stack_place_tol: float = 0.01
+    unstack_lift_clearance: float = 0.08
+    unstack_table_offset: float = 0.12
 
 
 @dataclass(frozen=True)
@@ -97,6 +104,20 @@ def scripted_teacher_action(
     if skill_name == "reach_top":
         target = obj + np.array([0.0, 0.0, evaluator.object_half_size], dtype=np.float64)
         return _servo_action(grip, target, gripper_cmd=0.0, gain=cfg.gain)
+
+    if skill_name in ("stack", "unstack"):
+        if (
+            state.block_positions is None
+            or state.mover_index is None
+            or state.base_index is None
+        ):
+            return np.zeros(4, dtype=np.float32)
+        mover = state.block_positions[state.mover_index]
+        base = state.block_positions[state.base_index]
+        table_z = state.table_object_z if state.table_object_z is not None else float(base[2])
+        if skill_name == "stack":
+            return _teacher_stack(grip, mover, base, facts, evaluator, cfg)
+        return _teacher_unstack(grip, mover, base, table_z, facts, evaluator, cfg)
 
     raise ValueError(f"No scripted teacher for skill {skill_name!r}")
 
@@ -224,6 +245,83 @@ def _teacher_push(
     action = np.zeros(4, dtype=np.float32)
     action[:2] = (cfg.push_speed * direction).astype(np.float32)
     return action
+
+
+def _teacher_stack(
+    grip: np.ndarray,
+    mover: np.ndarray,
+    base: np.ndarray,
+    facts: dict[str, bool],
+    evaluator: FactEvaluator,
+    cfg: ScriptedTeacherConfig,
+) -> np.ndarray:
+    half = evaluator.object_half_size
+
+    # Once stacked, keep releasing (and do not re-grab) until success.
+    if facts.get("blocks_stacked", False):
+        return np.array([0.0, 0.0, 0.0, cfg.open_cmd], dtype=np.float32)
+
+    grasped = facts.get("gripper_closed", False) and facts.get("gripper_near_mover", False)
+    if not grasped:
+        return _teacher_pickup(grip, mover, facts, cfg)
+
+    stack_top_z = float(base[2] + 2 * half)
+    carry_z = float(stack_top_z + cfg.stack_carry_clearance)
+    align = float(np.linalg.norm(mover[:2] - base[:2]))
+
+    # 1. Lift the mover up to carry height (clear of the base).
+    if mover[2] < carry_z - cfg.stack_z_tol and align > cfg.stack_align_tol:
+        return _servo_action(grip, np.array([mover[0], mover[1], carry_z]), cfg.close_cmd, cfg.gain)
+
+    # 2. Move horizontally over the base while staying high.
+    if align > cfg.stack_align_tol:
+        return _servo_action(grip, np.array([base[0], base[1], carry_z]), cfg.close_cmd, cfg.gain)
+
+    # 3. Lower onto the base.
+    if mover[2] > stack_top_z + cfg.stack_place_tol:
+        return _servo_action(grip, np.array([base[0], base[1], stack_top_z]), cfg.close_cmd, cfg.gain)
+
+    # 4. In place: release.
+    return np.array([0.0, 0.0, 0.0, cfg.open_cmd], dtype=np.float32)
+
+
+def _teacher_unstack(
+    grip: np.ndarray,
+    mover: np.ndarray,
+    base: np.ndarray,
+    table_z: float,
+    facts: dict[str, bool],
+    evaluator: FactEvaluator,
+    cfg: ScriptedTeacherConfig,
+) -> np.ndarray:
+    half = evaluator.object_half_size
+
+    on_table = facts.get("mover_on_table", False)
+    cleared = facts.get("mover_clear_of_base", False)
+
+    # Done positioning: release.
+    if on_table and cleared:
+        return np.array([0.0, 0.0, 0.0, cfg.open_cmd], dtype=np.float32)
+
+    grasped = facts.get("gripper_closed", False) and facts.get("gripper_near_mover", False)
+    if not grasped:
+        return _teacher_pickup(grip, mover, facts, cfg)
+
+    lift_z = float(base[2] + 2 * half + cfg.unstack_lift_clearance)
+    # A clear table spot, offset from the base toward the table centre (x=1.3).
+    direction = 1.0 if base[0] <= 1.3 else -1.0
+    target_xy = np.array([base[0] + direction * cfg.unstack_table_offset, base[1]], dtype=np.float64)
+
+    # 1. Lift the mover clear off the base.
+    if mover[2] < lift_z - cfg.stack_z_tol and not cleared:
+        return _servo_action(grip, np.array([mover[0], mover[1], lift_z]), cfg.close_cmd, cfg.gain)
+
+    # 2. Carry to the clear table spot (stay high).
+    if float(np.linalg.norm(mover[:2] - target_xy)) > cfg.stack_align_tol:
+        return _servo_action(grip, np.array([target_xy[0], target_xy[1], lift_z]), cfg.close_cmd, cfg.gain)
+
+    # 3. Lower gently onto the table.
+    return _servo_action(grip, np.array([target_xy[0], target_xy[1], table_z]), cfg.close_cmd, cfg.gain)
 
 
 def _servo_action(grip: np.ndarray, target: np.ndarray, gripper_cmd: float, gain: float) -> np.ndarray:
