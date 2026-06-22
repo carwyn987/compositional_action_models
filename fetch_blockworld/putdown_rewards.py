@@ -17,6 +17,12 @@ class PutdownRewardConfig:
     descend_dense_sharpness: float = 15.0
     max_height_progress: float = 0.025
 
+    # 1b. Place it gently: penalize descending (or dropping) faster than this
+    # per-step speed so the block is lowered under control rather than slammed
+    # or released to fall. A full-speed slam descends ~0.03 m/step.
+    gentle_descent_speed: float = 0.012
+    gentle_descent_penalty: float = 25.0
+
     # 2. Keep the block square (orientation aligned with the world/gripper axes).
     # squareness is in (0, 1]; 1.0 means every face is axis-aligned (a flat,
     # un-rotated block in line with the downward gripper).
@@ -115,6 +121,7 @@ class PutdownRewardShaper:
             "time": -cfg.time_penalty,
             "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
             "descend": 0.0,
+            "gentle": 0.0,
             "square": 0.0,
             "early_open": 0.0,
             "on_table": 0.0,
@@ -135,6 +142,13 @@ class PutdownRewardShaper:
             components["descend"] += cfg.descend_dense_weight * float(
                 np.exp(-cfg.descend_dense_sharpness * height)
             )
+
+        # 1b. Penalize lowering/dropping the block faster than a gentle speed,
+        #     so it is placed under control rather than slammed onto the table.
+        if self.previous_height is not None:
+            descent_speed = max(0.0, self.previous_height - height)
+            excess_speed = max(0.0, descent_speed - cfg.gentle_descent_speed)
+            components["gentle"] = -cfg.gentle_descent_penalty * excess_speed
 
         # 2. Reward becoming more square, and a one-time bonus (scaled by how
         #    square it is) the moment the block first comes to rest.
