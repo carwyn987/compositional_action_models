@@ -16,7 +16,7 @@ class SkillSpec:
     name: str
     env_id: str
     success_fact: str
-    max_episode_steps: int = 10000
+    max_episode_steps: int = 75
     terminate_on_success: bool = True
 
 
