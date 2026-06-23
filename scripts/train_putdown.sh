@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python train_skill.py \
+python experimental/train_vanilla_skill.py \
   --skill putdown \
   --algo ppo \
   --teacher bc \
@@ -11,7 +11,7 @@ python train_skill.py \
   --timesteps 100000 \
   --models-dir models
 
-MUJOCO_GL=glfw python rollout_skill.py \
+MUJOCO_GL=glfw python experimental/rollout_vanilla_skill.py \
   --skill putdown \
   --algo ppo \
   --model models/putdown_ppo.zip \

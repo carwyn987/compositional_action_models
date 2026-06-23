@@ -1,22 +1,20 @@
-"""Train a continuous low-level policy for one symbolic Fetch skill.
-
-Same as experimental/train_vanilla_skill.py, but augments the environment
-observations with a constant symbolic embedding vector via EnvWrapper.
-"""
+"""Train a continuous low-level policy for one symbolic Fetch skill."""
 
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.monitor import Monitor
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fetch_blockworld.envs import make_skill_env
 from fetch_blockworld.skills import SKILLS
 from fetch_blockworld.teacher import TeacherConfig, warm_start_with_teacher
-from symb_model_embeddings.mock_env_embedder import SIZE, mock_embedding
-from symb_model_embeddings.obs_symb_wrapper import EnvWrapper
 
 
 def parse_args() -> argparse.Namespace:
@@ -42,8 +40,7 @@ def main() -> None:
     args.logdir.mkdir(parents=True, exist_ok=True)
 
     render_mode = "human" if args.render else None
-    skill_env = make_skill_env(args.skill, render_mode=render_mode, seed=args.seed)
-    raw_env = EnvWrapper(skill_env, mock_embedding(SIZE).numpy())
+    raw_env = make_skill_env(args.skill, render_mode=render_mode, seed=args.seed)
     env = Monitor(raw_env, filename=str(args.logdir / f"{args.skill}_{args.algo}.monitor.csv"))
 
     if args.algo == "sac":
@@ -77,7 +74,7 @@ def main() -> None:
     if args.teacher == "bc":
         teacher_config = TeacherConfig(
             rollouts=args.teacher_rollouts,
-            max_steps_per_rollout=skill_env.skill.max_episode_steps,
+            max_steps_per_rollout=raw_env.skill.max_episode_steps,
             gradient_steps=args.teacher_gradient_steps,
             batch_size=args.teacher_batch_size,
             learning_rate=args.teacher_lr,

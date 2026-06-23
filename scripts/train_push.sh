@@ -5,7 +5,7 @@
 # play/evaluate the trained policies.
 
 for SKILL in pushleft pushright pushforward pushbackward; do
-  python train_skill.py \
+  python experimental/train_vanilla_skill.py \
     --skill "${SKILL}" \
     --algo ppo \
     --teacher bc \

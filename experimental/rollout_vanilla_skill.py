@@ -1,20 +1,18 @@
-"""Render or inspect a trained symbolic skill policy.
-
-Same as experimental/rollout_vanilla_skill.py, but augments the environment
-observations with a constant symbolic embedding vector via EnvWrapper.
-"""
+"""Render or inspect a trained symbolic skill policy."""
 
 from __future__ import annotations
 
 import argparse
+import os
+import sys
 from pathlib import Path
 
 from stable_baselines3 import PPO, SAC
 
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 from fetch_blockworld.envs import make_skill_env
 from fetch_blockworld.skills import SKILLS
-from symb_model_embeddings.mock_env_embedder import SIZE, mock_embedding
-from symb_model_embeddings.obs_symb_wrapper import EnvWrapper
 
 
 def parse_args() -> argparse.Namespace:
@@ -30,10 +28,7 @@ def parse_args() -> argparse.Namespace:
 
 def main() -> None:
     args = parse_args()
-    env = EnvWrapper(
-        make_skill_env(args.skill, render_mode=None if args.no_render else "human", seed=args.seed),
-        mock_embedding(SIZE).numpy(),
-    )
+    env = make_skill_env(args.skill, render_mode=None if args.no_render else "human", seed=args.seed)
     model_cls = SAC if args.algo == "sac" else PPO
     model = model_cls.load(args.model, env=env)
 
