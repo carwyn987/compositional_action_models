@@ -10,11 +10,11 @@ import numpy as np
 
 from .facts import FactEvaluator
 from .skills import SkillSpec, require_skill, skill_reward
-from .pickup_rewards import PickupRewardShaper
-from .putdown_rewards import PutdownRewardShaper
-from .push_rewards import PushRewardShaper
-from .stack_rewards import StackRewardShaper
-from .unstack_rewards import UnstackRewardShaper
+from .rewards.pickup_rewards import PickupRewardShaper
+from .rewards.putdown_rewards import PutdownRewardShaper
+from .rewards.push_rewards import PushRewardShaper
+from .rewards.stack_rewards import StackRewardShaper
+from .rewards.unstack_rewards import UnstackRewardShaper
 from . import multiblock_env  # noqa: F401  (registers FetchStackEnv-v0 / FetchUnstackEnv-v0)
 
 

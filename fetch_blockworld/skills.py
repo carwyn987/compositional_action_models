@@ -7,11 +7,11 @@ from dataclasses import dataclass, field
 import numpy as np
 
 from .facts import FactEvaluator
-from .pickup_rewards import PickupRewardShaper
-from .putdown_rewards import PutdownRewardShaper
-from .push_rewards import PushRewardShaper
-from .stack_rewards import StackRewardShaper
-from .unstack_rewards import UnstackRewardShaper
+from .rewards.pickup_rewards import PickupRewardShaper
+from .rewards.putdown_rewards import PutdownRewardShaper
+from .rewards.push_rewards import PushRewardShaper
+from .rewards.stack_rewards import StackRewardShaper
+from .rewards.unstack_rewards import UnstackRewardShaper
 
 @dataclass(frozen=True)
 class SkillSpec:
