@@ -2,7 +2,7 @@
 
 # Train the stack skill with PPO + behavior-cloning warm-start, then evaluate.
 
-python experimental/train_vanilla_skill.py \
+python train_skill.py \
   --skill stack \
   --algo ppo \
   --teacher bc \
@@ -13,7 +13,7 @@ python experimental/train_vanilla_skill.py \
   --timesteps 1000000 \
   --models-dir models
 
-MUJOCO_GL=glfw python experimental/rollout_vanilla_skill.py \
+MUJOCO_GL=glfw python rollout_skill.py \
   --skill stack \
   --algo ppo \
   --model models/stack_ppo.zip \

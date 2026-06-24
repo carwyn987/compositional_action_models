@@ -84,7 +84,7 @@ for SKILL in "${SKILL_LIST[@]}"; do
   echo "Training skill: ${SKILL}"
   echo "=============================="
 
-  python experimental/train_vanilla_skill.py \
+  python train_skill.py \
     --skill "${SKILL}" \
     --algo "${ALGO}" \
     --timesteps "${TIMESTEPS}" \
@@ -111,7 +111,7 @@ for SKILL in "${SKILL_LIST[@]}"; do
 
   {
     echo "skill=${SKILL} algo=${ALGO} model=${MODEL_PATH} episodes=${EVAL_EPISODES}"
-    python experimental/rollout_vanilla_skill.py \
+    python rollout_skill.py \
       --skill "${SKILL}" \
       --algo "${ALGO}" \
       --model "${MODEL_PATH}" \

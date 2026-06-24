@@ -1,6 +1,6 @@
 #!/bin/bash
 
-python experimental/train_vanilla_skill.py \
+python train_skill.py \
   --skill pickup \
   --algo ppo \
   --teacher bc \
@@ -11,7 +11,7 @@ python experimental/train_vanilla_skill.py \
   --timesteps 200000 \
   --models-dir models
 
-MUJOCO_GL=glfw python experimental/rollout_vanilla_skill.py \
+MUJOCO_GL=glfw python rollout_skill.py \
   --skill pickup \
   --algo ppo \
   --model models/pickup_ppo.zip \
