@@ -2,10 +2,14 @@
 set -euo pipefail
 
 # Train every symbolic Fetch skill, then evaluate each trained policy.
+# Shared driver: the per-embedding wrappers under scripts/embeddings/<type>/
+# call this script with the EMBED_* variables set.
+#
 # Usage examples:
-#   ./scripts/train_all_and_eval.sh
-#   TIMESTEPS=200000 ALGO=sac EVAL_EPISODES=10 ./scripts/train_all_and_eval.sh
-#   SKILLS="pickup pushleft pushright" ./scripts/train_all_and_eval.sh
+#   ./scripts/per_skill/train_all_and_eval.sh
+#   TIMESTEPS=200000 ALGO=sac EVAL_EPISODES=10 ./scripts/per_skill/train_all_and_eval.sh
+#   SKILLS="pickup pushleft pushright" ./scripts/per_skill/train_all_and_eval.sh
+#   EMBEDDER=text EMBED_SOURCE=action_model EMBED_BACKEND=hash ./scripts/per_skill/train_all_and_eval.sh
 #
 # Environment variables:
 #   ALGO           sac or ppo                 default: sac
@@ -20,6 +24,11 @@ set -euo pipefail
 #   TEACHER_GRADIENT_STEPS  BC updates        default: 500
 #   TEACHER_BATCH_SIZE      BC batch size     default: 256
 #   TEACHER_LR              BC learning rate  default: 1e-4
+#   EMBEDDER       mock or text              default: mock
+#   EMBED_SOURCE   name or action_model      default: name   (text only)
+#   EMBED_BACKEND  openai or hash            default: hash   (text only)
+#   EMBED_MODEL    OpenAI embedding model    default: text-embedding-3-small
+#   EMBED_SIZE     embedding dimensionality  default: 32
 
 ALGO="${ALGO:-sac}"
 TIMESTEPS="${TIMESTEPS:-100000}"
@@ -32,6 +41,11 @@ TEACHER_ROLLOUTS="${TEACHER_ROLLOUTS:-8}"
 TEACHER_GRADIENT_STEPS="${TEACHER_GRADIENT_STEPS:-500}"
 TEACHER_BATCH_SIZE="${TEACHER_BATCH_SIZE:-256}"
 TEACHER_LR="${TEACHER_LR:-1e-4}"
+EMBEDDER="${EMBEDDER:-mock}"
+EMBED_SOURCE="${EMBED_SOURCE:-name}"
+EMBED_BACKEND="${EMBED_BACKEND:-hash}"
+EMBED_MODEL="${EMBED_MODEL:-text-embedding-3-small}"
+EMBED_SIZE="${EMBED_SIZE:-32}"
 
 DEFAULT_SKILLS=(
   pickup
@@ -66,7 +80,7 @@ case "${TEACHER}" in
     ;;
 esac
 
-REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${REPO_ROOT}"
 
 mkdir -p "${MODELS_DIR}" "${LOGDIR}/all_train" "${LOGDIR}/all_eval"
@@ -96,6 +110,11 @@ for SKILL in "${SKILL_LIST[@]}"; do
     --teacher-gradient-steps "${TEACHER_GRADIENT_STEPS}" \
     --teacher-batch-size "${TEACHER_BATCH_SIZE}" \
     --teacher-lr "${TEACHER_LR}" \
+    --embedder "${EMBEDDER}" \
+    --embed-source "${EMBED_SOURCE}" \
+    --embed-backend "${EMBED_BACKEND}" \
+    --embed-model "${EMBED_MODEL}" \
+    --embed-size "${EMBED_SIZE}" \
     2>&1 | tee "${LOGDIR}/all_train/${SKILL}_${ALGO}.log"
 
   MODEL_PATH="${MODELS_DIR}/${SKILL}_${ALGO}.zip"
@@ -117,6 +136,11 @@ for SKILL in "${SKILL_LIST[@]}"; do
       --model "${MODEL_PATH}" \
       --episodes "${EVAL_EPISODES}" \
       --seed "$((SEED + 1000))" \
+      --embedder "${EMBEDDER}" \
+      --embed-source "${EMBED_SOURCE}" \
+      --embed-backend "${EMBED_BACKEND}" \
+      --embed-model "${EMBED_MODEL}" \
+      --embed-size "${EMBED_SIZE}" \
       --no-render
   } 2>&1 | tee "${LOGDIR}/all_eval/${SKILL}_${ALGO}.log" | tee -a "${SUMMARY_FILE}"
 
