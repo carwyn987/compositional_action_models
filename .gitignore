@@ -6,3 +6,4 @@ live_facts.txt
 .venv
 media/
 symb_model_embeddings/embedding_cache.json
+embedding_logs/
