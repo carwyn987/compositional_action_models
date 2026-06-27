@@ -16,6 +16,7 @@ from .embedders import (
     build_embedder,
     embedder_config_from_args,
 )
+from .naming import basename_from_args, embed_tag, model_basename
 from .obs_symb_wrapper import EnvWrapper
 
 __all__ = [
@@ -30,4 +31,7 @@ __all__ = [
     "add_embedder_cli_args",
     "build_embedder",
     "embedder_config_from_args",
+    "basename_from_args",
+    "embed_tag",
+    "model_basename",
 ]

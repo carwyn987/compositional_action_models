@@ -15,8 +15,9 @@ python experimental/train_vanilla_skill.py \
   --timesteps 100000 \
   --models-dir models/vanilla
 
+BASENAME="$(python -m symb_model_embeddings.run_naming --skill putdown --algo ppo --teacher bc --tag vanilla)"
 MUJOCO_GL=glfw python experimental/rollout_vanilla_skill.py \
   --skill putdown \
   --algo ppo \
-  --model models/vanilla/putdown_ppo.zip \
+  --model "models/vanilla/${BASENAME}.zip" \
   --episodes 20

@@ -13,8 +13,10 @@ python train_skill.py \
   --timesteps 1000000 \
   --models-dir models
 
+# Derive the same tagged name train_skill.py just saved (default mock embedding).
+BASENAME="$(python -m symb_model_embeddings.run_naming --skill stack --algo ppo --teacher bc)"
 MUJOCO_GL=glfw python rollout_skill.py \
   --skill stack \
   --algo ppo \
-  --model models/stack_ppo.zip \
+  --model "models/${BASENAME}.zip" \
   --episodes 20
