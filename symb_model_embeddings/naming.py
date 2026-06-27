@@ -22,10 +22,18 @@ from .embedders import EmbedderConfig, embedder_config_from_args
 
 
 def embed_tag(config: EmbedderConfig) -> str:
-    """Short, filename-safe tag describing an embedding configuration."""
+    """Short, filename-safe tag describing an embedding configuration.
+
+    A ``-train`` suffix marks a trainable (learned) embedding, so trainable and
+    frozen runs of the same scheme save to distinct files.
+    """
     if config.kind == "mock":
-        return f"mock-d{config.size}"
-    return f"text-{config.source}-{config.backend}-d{config.size}"
+        tag = f"mock-d{config.size}"
+    else:
+        tag = f"text-{config.source}-{config.backend}-d{config.size}"
+    if config.trainable:
+        tag += "-train"
+    return tag
 
 
 def model_basename(

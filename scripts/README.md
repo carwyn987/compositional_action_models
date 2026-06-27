@@ -6,10 +6,32 @@ Training/evaluation entrypoints for the embedding-augmented skills.
 
 Trains a **single shared model on several skills at once** (default
 `pickup putdown`, set via `SKILLS`), where the only signal distinguishing the
-skills to the policy is the symbolic embedding vector. It does this once per
-embedding scheme — `mock`, `name`, `full` — sharing identical hyperparameters
-(set via env vars; see the file header). Vanilla is excluded: with no embedding
-the shared policy cannot tell the skills apart. Drives `train_multiskill.py`.
+skills to the policy is the symbolic embedding. It does this once per embedding
+scheme — `mock`, `name`, `full` — **and** per mode (`frozen`, `trainable`), i.e.
+six runs by default, all sharing identical hyperparameters (set via env vars;
+see the file header). Vanilla is excluded: with no embedding the shared policy
+cannot tell the skills apart. Drives `train_multiskill.py`.
+
+### Embedding modes
+
+- **frozen** — the per-skill embedding table is initialised from the pretrained
+  embeddings and held fixed.
+- **trainable** — the same table is a policy parameter, learned during BC + RL.
+  The learned values are **never written back** to the pretrained embedding
+  source (`symb_model_embeddings/embedding_cache.json`); they live only in the
+  saved policy checkpoint.
+
+Every run records its embedding table at the start and at intervals during
+training to `embedding_logs/<run>.json` (configurable via `EMBED_LOG_DIR`).
+Visualise how the embeddings begin and move with:
+
+```
+python plot_embeddings.py --log-dir embedding_logs
+```
+
+which projects all embeddings to 2-D (PCA): frozen runs show one point per
+skill, trainable runs show a trajectory (hollow `o` = initial, `★` = learned),
+coloured by scheme and labelled by mode.
 
 ## `tensorboard.sh`
 
