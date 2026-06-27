@@ -2,6 +2,19 @@
 
 Training/evaluation entrypoints for the embedding-augmented skills.
 
+## `train_all_methods.sh`
+
+Trains a **single shared model on several skills at once** (default
+`pickup putdown`, set via `SKILLS`), where the only signal distinguishing the
+skills to the policy is the symbolic embedding vector. It does this once per
+embedding scheme — `mock`, `name`, `full` — sharing identical hyperparameters
+(set via env vars; see the file header). Vanilla is excluded: with no embedding
+the shared policy cannot tell the skills apart. Drives `train_multiskill.py`.
+
+## `tensorboard.sh`
+
+Launch TensorBoard on the training logs (`LOGDIR`, default `runs/`).
+
 ## `per_skill/`
 
 Hand-tuned, per-skill recipes plus the shared sweep driver:

@@ -20,6 +20,7 @@ component-wise embedders + aggregators without changing callers.
 from __future__ import annotations
 
 import argparse
+import hashlib
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
@@ -32,7 +33,6 @@ from .backends import (
     build_text_backend,
 )
 from .cache import DiskEmbeddingCache
-from .mock_env_embedder import mock_embedding
 
 EMBEDDER_KINDS = ("mock", "text")
 DEFAULT_EMBED_SIZE = 32
@@ -76,14 +76,24 @@ class SymbolicEmbedder(ABC):
 
 
 class MockEmbedder(SymbolicEmbedder):
-    """Original behaviour: a fixed random vector (independent of the input)."""
+    """A random vector that is fixed *per operator name*.
+
+    Carries no semantic content (a control / baseline), but is deterministic and
+    distinct for each skill, so it can still serve as the skill identifier when a
+    single policy is trained on several skills at once (multi-skill training).
+    """
 
     def __init__(self, size: int = DEFAULT_EMBED_SIZE) -> None:
         self.size = int(size)
         self.trainable = False
 
     def embed(self, action_model: SymbolicActionModel) -> np.ndarray:
-        return mock_embedding(self.size).numpy().astype(np.float32)
+        # Seed an RNG from the operator name so the vector is stable across
+        # processes/machines yet differs between skills.
+        digest = hashlib.sha256(action_model.name.encode("utf-8")).digest()
+        seed = int.from_bytes(digest[:8], "little")
+        rng = np.random.default_rng(seed)
+        return rng.standard_normal(self.size).astype(np.float32)
 
 
 class TextEmbedder(SymbolicEmbedder):
