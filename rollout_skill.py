@@ -12,9 +12,14 @@ from pathlib import Path
 from stable_baselines3 import PPO, SAC
 
 from fetch_blockworld.envs import make_skill_env
-from fetch_blockworld.skills import SKILLS
-from symb_model_embeddings.mock_env_embedder import SIZE, mock_embedding
-from symb_model_embeddings.obs_symb_wrapper import EnvWrapper
+from fetch_blockworld.skills import SKILLS, require_skill
+from symb_model_embeddings import (
+    EnvWrapper,
+    SymbolicActionModel,
+    add_embedder_cli_args,
+    build_embedder,
+    embedder_config_from_args,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -25,14 +30,18 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--seed", type=int, default=1)
     parser.add_argument("--no-render", action="store_true")
+    add_embedder_cli_args(parser)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    spec = require_skill(args.skill)
+    action_model = SymbolicActionModel(name=spec.name, description=spec.action_model)
+    embedder = build_embedder(embedder_config_from_args(args))
     env = EnvWrapper(
         make_skill_env(args.skill, render_mode=None if args.no_render else "human", seed=args.seed),
-        mock_embedding(SIZE).numpy(),
+        embedder.embed(action_model),
     )
     model_cls = SAC if args.algo == "sac" else PPO
     model = model_cls.load(args.model, env=env)

@@ -20,6 +20,11 @@ class SkillSpec:
     success_fact: str
     max_episode_steps: int = 75
     terminate_on_success: bool = True
+    # PDDL-style operator string for this skill. Consumed by the symbolic
+    # embedding subsystem when embedding the full action model (as opposed to
+    # the operator name alone). Kept here so the symbolic description travels
+    # with the skill definition.
+    action_model: str | None = None
 
 
 @dataclass(frozen=True)
@@ -36,15 +41,79 @@ DEFAULT_REWARD_CONFIG = RewardConfig()
 
 
 SKILLS: dict[str, SkillSpec] = {
-    "pickup": SkillSpec("pickup", "FetchPickAndPlace-v4", "object_lifted"),
-    "putdown": SkillSpec("putdown", "FetchPickAndPlace-v4", "object_on_table"),
-    "pushleft": SkillSpec("pushleft", "FetchPush-v4", "object_moved_left"),
-    "pushright": SkillSpec("pushright", "FetchPush-v4", "object_moved_right"),
-    "pushforward": SkillSpec("pushforward", "FetchPush-v4", "object_moved_forward"),
-    "pushbackward": SkillSpec("pushbackward", "FetchPush-v4", "object_moved_backward"),
-    "reach_top": SkillSpec("reach_top", "FetchPickAndPlace-v4", "gripper_touching_object_top"),
-    "stack": SkillSpec("stack", "FetchStackEnv-v0", "blocks_stacked", max_episode_steps=150),
-    "unstack": SkillSpec("unstack", "FetchUnstackEnv-v0", "mover_on_table", max_episode_steps=150),
+    "pickup": SkillSpec(
+        "pickup", "FetchPickAndPlace-v4", "object_lifted",
+        action_model=(
+            "(:action pickup :parameters (?o - block) "
+            ":precondition (and (on-table ?o) (clear ?o) (gripper-empty)) "
+            ":effect (and (holding ?o) (not (on-table ?o)) (not (gripper-empty))))"
+        ),
+    ),
+    "putdown": SkillSpec(
+        "putdown", "FetchPickAndPlace-v4", "object_on_table",
+        action_model=(
+            "(:action putdown :parameters (?o - block) "
+            ":precondition (holding ?o) "
+            ":effect (and (on-table ?o) (clear ?o) (gripper-empty) (not (holding ?o))))"
+        ),
+    ),
+    "pushleft": SkillSpec(
+        "pushleft", "FetchPush-v4", "object_moved_left",
+        action_model=(
+            "(:action pushleft :parameters (?o - block) "
+            ":precondition (and (on-table ?o) (gripper-empty)) "
+            ":effect (moved-left ?o))"
+        ),
+    ),
+    "pushright": SkillSpec(
+        "pushright", "FetchPush-v4", "object_moved_right",
+        action_model=(
+            "(:action pushright :parameters (?o - block) "
+            ":precondition (and (on-table ?o) (gripper-empty)) "
+            ":effect (moved-right ?o))"
+        ),
+    ),
+    "pushforward": SkillSpec(
+        "pushforward", "FetchPush-v4", "object_moved_forward",
+        action_model=(
+            "(:action pushforward :parameters (?o - block) "
+            ":precondition (and (on-table ?o) (gripper-empty)) "
+            ":effect (moved-forward ?o))"
+        ),
+    ),
+    "pushbackward": SkillSpec(
+        "pushbackward", "FetchPush-v4", "object_moved_backward",
+        action_model=(
+            "(:action pushbackward :parameters (?o - block) "
+            ":precondition (and (on-table ?o) (gripper-empty)) "
+            ":effect (moved-backward ?o))"
+        ),
+    ),
+    "reach_top": SkillSpec(
+        "reach_top", "FetchPickAndPlace-v4", "gripper_touching_object_top",
+        action_model=(
+            "(:action reach_top :parameters (?o - block) "
+            ":precondition (clear ?o) "
+            ":effect (gripper-at-top ?o))"
+        ),
+    ),
+    "stack": SkillSpec(
+        "stack", "FetchStackEnv-v0", "blocks_stacked", max_episode_steps=150,
+        action_model=(
+            "(:action stack :parameters (?o - block ?b - block) "
+            ":precondition (and (holding ?o) (clear ?b)) "
+            ":effect (and (on ?o ?b) (clear ?o) (gripper-empty) "
+            "(not (holding ?o)) (not (clear ?b))))"
+        ),
+    ),
+    "unstack": SkillSpec(
+        "unstack", "FetchUnstackEnv-v0", "mover_on_table", max_episode_steps=150,
+        action_model=(
+            "(:action unstack :parameters (?o - block ?b - block) "
+            ":precondition (and (on ?o ?b) (clear ?o) (gripper-empty)) "
+            ":effect (and (on-table ?o) (clear ?b) (not (on ?o ?b))))"
+        ),
+    ),
 }
 
 
