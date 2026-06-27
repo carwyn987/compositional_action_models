@@ -15,6 +15,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from fetch_blockworld.envs import make_skill_env
 from fetch_blockworld.skills import SKILLS
 from fetch_blockworld.teacher import TeacherConfig, warm_start_with_teacher
+from symb_model_embeddings import model_basename
 
 
 def parse_args() -> argparse.Namespace:
@@ -39,9 +40,11 @@ def main() -> None:
     args.models_dir.mkdir(parents=True, exist_ok=True)
     args.logdir.mkdir(parents=True, exist_ok=True)
 
+    basename = model_basename(args.skill, args.algo, "vanilla", args.teacher, args.seed)
+
     render_mode = "human" if args.render else None
     raw_env = make_skill_env(args.skill, render_mode=render_mode, seed=args.seed)
-    env = Monitor(raw_env, filename=str(args.logdir / f"{args.skill}_{args.algo}.monitor.csv"))
+    env = Monitor(raw_env, filename=str(args.logdir / f"{basename}.monitor.csv"))
 
     if args.algo == "sac":
         model = SAC(
@@ -84,7 +87,7 @@ def main() -> None:
         print("Teacher warm-start disabled")
 
     model.learn(total_timesteps=args.timesteps, progress_bar=True)
-    out_path = args.models_dir / f"{args.skill}_{args.algo}"
+    out_path = args.models_dir / basename
     model.save(out_path)
     env.close()
     print(f"Saved model to {out_path}.zip")

@@ -20,6 +20,7 @@ from symb_model_embeddings import (
     EnvWrapper,
     SymbolicActionModel,
     add_embedder_cli_args,
+    basename_from_args,
     build_embedder,
     embedder_config_from_args,
 )
@@ -56,10 +57,12 @@ def main() -> None:
     args.models_dir.mkdir(parents=True, exist_ok=True)
     args.logdir.mkdir(parents=True, exist_ok=True)
 
+    basename = basename_from_args(args)
+
     render_mode = "human" if args.render else None
     skill_env = make_skill_env(args.skill, render_mode=render_mode, seed=args.seed)
     raw_env = EnvWrapper(skill_env, build_skill_embedding(args.skill, args))
-    env = Monitor(raw_env, filename=str(args.logdir / f"{args.skill}_{args.algo}.monitor.csv"))
+    env = Monitor(raw_env, filename=str(args.logdir / f"{basename}.monitor.csv"))
 
     if args.algo == "sac":
         model = SAC(
@@ -102,7 +105,7 @@ def main() -> None:
         print("Teacher warm-start disabled")
 
     model.learn(total_timesteps=args.timesteps, progress_bar=True)
-    out_path = args.models_dir / f"{args.skill}_{args.algo}"
+    out_path = args.models_dir / basename
     model.save(out_path)
     env.close()
     print(f"Saved model to {out_path}.zip")

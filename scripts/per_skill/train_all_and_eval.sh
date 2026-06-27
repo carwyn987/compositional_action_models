@@ -98,6 +98,14 @@ for SKILL in "${SKILL_LIST[@]}"; do
   echo "Training skill: ${SKILL}"
   echo "=============================="
 
+  # Single source of truth for the run name (encodes embedding/teacher/seed),
+  # so train, eval, logs, and the saved model all agree and never collide.
+  BASENAME="$(python -m symb_model_embeddings.run_naming \
+    --skill "${SKILL}" --algo "${ALGO}" --teacher "${TEACHER}" --seed "${SEED}" \
+    --embedder "${EMBEDDER}" --embed-source "${EMBED_SOURCE}" \
+    --embed-backend "${EMBED_BACKEND}" --embed-model "${EMBED_MODEL}" \
+    --embed-size "${EMBED_SIZE}")"
+
   python train_skill.py \
     --skill "${SKILL}" \
     --algo "${ALGO}" \
@@ -115,9 +123,9 @@ for SKILL in "${SKILL_LIST[@]}"; do
     --embed-backend "${EMBED_BACKEND}" \
     --embed-model "${EMBED_MODEL}" \
     --embed-size "${EMBED_SIZE}" \
-    2>&1 | tee "${LOGDIR}/all_train/${SKILL}_${ALGO}.log"
+    2>&1 | tee "${LOGDIR}/all_train/${BASENAME}.log"
 
-  MODEL_PATH="${MODELS_DIR}/${SKILL}_${ALGO}.zip"
+  MODEL_PATH="${MODELS_DIR}/${BASENAME}.zip"
   if [[ ! -f "${MODEL_PATH}" ]]; then
     echo "ERROR: expected model not found: ${MODEL_PATH}" >&2
     exit 1
@@ -142,7 +150,7 @@ for SKILL in "${SKILL_LIST[@]}"; do
       --embed-model "${EMBED_MODEL}" \
       --embed-size "${EMBED_SIZE}" \
       --no-render
-  } 2>&1 | tee "${LOGDIR}/all_eval/${SKILL}_${ALGO}.log" | tee -a "${SUMMARY_FILE}"
+  } 2>&1 | tee "${LOGDIR}/all_eval/${BASENAME}.log" | tee -a "${SUMMARY_FILE}"
 
 done
 

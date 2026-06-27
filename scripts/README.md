@@ -33,3 +33,23 @@ embeddings.
 
 Scripts that train the skills **without** any symbolic embedding live under
 `../experimental/scripts/` and drive the vanilla entrypoints.
+
+## Model / log file names
+
+Names encode the major option choices that change the trained artifact, so runs
+with different settings never overwrite each other:
+
+```
+{skill}_{algo}_{embed_tag}_t-{teacher}_s{seed}
+```
+
+where `embed_tag` is `mock-d{size}`, `text-{source}-{backend}-d{size}`, or
+`vanilla` (no embedding). Examples:
+
+- `pickup_ppo_mock-d32_t-bc_s0.zip`
+- `pickup_ppo_text-action_model-hash-d32_t-bc_s0.zip`
+- `pickup_ppo_vanilla_t-bc_s0.zip`
+
+The naming is defined once in `symb_model_embeddings/naming.py`; the bash drivers
+call `python -m symb_model_embeddings.run_naming ...` so model, eval, and log
+names always agree.
