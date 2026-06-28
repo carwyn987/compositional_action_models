@@ -52,6 +52,12 @@ class PutdownRewardConfig:
     success_bonus: float = 15.0
     success_square_floor: float = 0.5
 
+    # Number of consecutive steps that on_table AND released must both hold
+    # before success is declared. Gives MuJoCo time to simulate the block
+    # settling — a block released while hanging off the table edge will fail
+    # the z-check in subsequent steps and never reach the threshold.
+    settle_steps: int = 2
+
 
 def _squareness(object_rot: np.ndarray | None, sharpness: float) -> float:
     """Return how axis-aligned the block is, in (0, 1].
@@ -82,6 +88,7 @@ class PutdownRewardShaper:
     on_table_earned: bool = False
     release_earned: bool = False
     success_earned: bool = False
+    _settle_counter: int = 0
 
     def reset(self) -> None:
         self.previous_height = None
@@ -92,6 +99,7 @@ class PutdownRewardShaper:
         self.on_table_earned = False
         self.release_earned = False
         self.success_earned = False
+        self._settle_counter = 0
 
     def compute(
         self,
@@ -188,9 +196,16 @@ class PutdownRewardShaper:
                 components["release"] += cfg.release_bonus
                 self.release_earned = True
 
-        # 6. Large terminal reward once the block is placed and released,
-        #    scaled by squareness so a square placement is worth more.
-        success = bool(on_table and released)
+        # 6. Large terminal reward once the block has been on the table AND
+        #    released for settle_steps consecutive steps. The settle window lets
+        #    MuJoCo confirm the block is truly resting on the surface — a block
+        #    released while hanging over the table edge will fail the z-check on
+        #    the next step and reset the counter before success is declared.
+        if on_table and released:
+            self._settle_counter += 1
+        else:
+            self._settle_counter = 0
+        success = bool(self._settle_counter >= cfg.settle_steps)
         if success and not self.success_earned:
             square_scale = cfg.success_square_floor + (
                 1.0 - cfg.success_square_floor
