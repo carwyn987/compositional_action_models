@@ -1,0 +1,1029 @@
+<html><head><meta charset='utf-8'><style>
+@page { size: A4; margin: 1.6cm 1.5cm; }
+body { font-family: 'Liberation Sans', Arial, sans-serif; font-size: 10.2pt;
+       color: #1c2833; line-height: 1.42; }
+h1 { font-size: 19pt; color: #0f2c44; border-bottom: 3px solid #0f2c44;
+     padding-bottom: 4px; margin-top: 26px; }
+h2 { font-size: 14.5pt; color: #103a5c; border-bottom: 1px solid #9db8cc;
+     padding-bottom: 2px; margin-top: 22px; }
+h3 { font-size: 11.8pt; color: #1a5276; margin-top: 16px; }
+h4 { font-size: 10.6pt; color: #21618c; margin-top: 12px; }
+p, li { font-size: 10.2pt; }
+code { font-family: 'Liberation Mono', 'Courier New', monospace; font-size: 9pt;
+       background: #eef2f5; color: #7d2f0d; padding: 0 2px; }
+pre { font-family: 'Liberation Mono', 'Courier New', monospace; font-size: 8.4pt;
+      background: #f4f6f8; border: 1px solid #c8d3dc; border-left: 4px solid #21618c;
+      padding: 8px 10px; color: #14324a; line-height: 1.32; }
+pre code { background: transparent; color: #14324a; padding: 0; }
+table { border-collapse: collapse; width: 100%; margin: 10px 0; }
+th { background: #103a5c; color: #ffffff; font-size: 9pt; text-align: left;
+     padding: 5px 7px; border: 1px solid #103a5c; }
+td { border: 1px solid #b9c6d1; padding: 4px 7px; font-size: 9pt;
+     vertical-align: top; }
+tr:nth-child(even) td { background: #f2f6f9; }
+hr { border: none; border-top: 1px solid #c8d3dc; margin: 18px 0; }
+blockquote { border-left: 4px solid #2e86c1; background: #eef5fb; margin: 10px 0;
+             padding: 6px 12px; color: #21384a; font-style: italic; }
+strong { color: #0f2c44; }
+a { color: #1a5276; }
+</style></head><body>
+<div style="text-align:center; padding-top:120px; padding-bottom:60px;">
+  <div style="font-size:26pt; color:#0f2c44; font-weight:bold;">
+    Compositional Action Models</div>
+  <div style="font-size:15pt; color:#21618c; margin-top:10px;">
+    Architecture &amp; Redesign Analysis</div>
+  <div style="font-size:10.5pt; color:#5d6d7e; margin-top:26px;">
+    Component-level map &middot; interface schemas &middot; migration path<br/>
+    for the compositional / zero-shot research direction</div>
+  <div style="font-size:9pt; color:#85929e; margin-top:60px;">
+    Generated 2026-08-15 &nbsp;&middot;&nbsp; branch: multiskill</div>
+</div>
+<p style="page-break-before: always;"></p>
+<h1 id="compositional-action-models-architecture-redesign-analysis">Compositional Action Models — Architecture &amp; Redesign Analysis</h1>
+<p><em>A component-level map of the current system, the design decisions baked into it,
+and the interface changes required to support the compositional / zero-shot
+research direction in a modular and interpretable way.</em></p>
+<hr />
+<h2 id="0-how-to-read-this-document">0. How to read this document</h2>
+<p>This is a <strong>redesign brief</strong>, not a tutorial. Each subsystem is described three ways:</p>
+<ol>
+<li><strong>Responsibility</strong> — the single job it owns.</li>
+<li><strong>Interface / schema</strong> — the contract it exposes today (inputs → outputs).</li>
+<li><strong>Rigidity &amp; redesign needs</strong> — where the current contract blocks the research
+   direction, and the interface it should expose instead.</li>
+</ol>
+<p>The goal is that any one component can be understood, replaced, or re-specced
+<em>in isolation</em>. Section 3 is the current system. Section 5 is the honest list of
+what will hurt to change. Section 6 is the proposed target architecture, written
+as interfaces so it can be adopted piecemeal.</p>
+<p><strong>Legend for severity/effort tags:</strong> 🟢 low · 🟡 medium · 🔴 high.</p>
+<hr />
+<h2 id="1-research-thesis-direction">1. Research thesis &amp; direction</h2>
+<h3 id="11-core-hypothesis">1.1 Core hypothesis</h3>
+<blockquote>
+<p>A single low-level continuous-control policy can perform many manipulation
+skills, where the <strong>only</strong> signal distinguishing one skill from another is a
+vector <strong>embedding of that skill's symbolic action model</strong> (a PDDL-style
+operator). If that embedding carries real semantic/compositional structure,
+the shared policy should (a) learn faster than from an arbitrary skill id and
+(b) <strong>generalize to skills it never trained on</strong>, by composing an embedding
+for a novel operator out of parts it has seen.</p>
+</blockquote>
+<h3 id="12-the-direction-ladder">1.2 The direction ladder</h3>
+<p>The repository today sits on rung 2. The name ("compositional action models")
+and the placeholder fields in the code point at rungs 3–4.</p>
+<table>
+<thead>
+<tr>
+<th>Rung</th>
+<th>Capability</th>
+<th>Status</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td>One policy per skill, embedding injected as a constant observation feature</td>
+<td>✅ <code>train_skill.py</code></td>
+</tr>
+<tr>
+<td>2</td>
+<td>One shared policy, several skills, embedding (frozen or trainable) as the sole selector</td>
+<td>✅ <code>train_multiskill.py</code></td>
+</tr>
+<tr>
+<td>3</td>
+<td>Embedding <strong>composed from operator parts</strong> (predicates, params, effects) via learnable component-embedders + aggregator</td>
+<td>❌ placeholders only</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong>Zero-shot</strong> execution of a held-out operator by composing its embedding at eval time</td>
+<td>❌ interface does not allow it</td>
+</tr>
+<tr>
+<td>5</td>
+<td>Interpretable embedding space (component ablation, arithmetic, probing) drives claims</td>
+<td>⚠️ only PCA-of-table today</td>
+</tr>
+</tbody>
+</table>
+<h3 id="13-what-supporting-the-research-direction-concretely-requires">1.3 What "supporting the research direction" concretely requires</h3>
+<p>Four capabilities the current architecture cannot express without interface
+changes (detailed in §5–§6):</p>
+<ul>
+<li><strong>C1 — Structured operators.</strong> A parsed operator (typed params, predicate
+  lists for pre/effects), not a free-text string.</li>
+<li><strong>C2 — Composable embedding.</strong> <code>operator → components → aggregate → vector</code>,
+  end-to-end differentiable when desired.</li>
+<li><strong>C3 — Per-episode embedding by value, not by table index.</strong> So a <em>novel</em>
+  operator's freshly-composed embedding can condition the policy with no
+  reserved table row.</li>
+<li><strong>C4 — An evaluation + interpretability harness</strong> that measures held-out-skill
+  success and probes what the embedding encodes.</li>
+</ul>
+<hr />
+<h2 id="2-system-at-a-glance">2. System at a glance</h2>
+<h3 id="21-layered-architecture">2.1 Layered architecture</h3>
+<pre><code>                    ┌───────────────────────────────────────────────┐
+ ORCHESTRATION      │  scripts/*.sh   (sweep: scheme × mode × skills) │
+                    └───────────────────────┬───────────────────────┘
+                                            │ argparse + env vars
+                    ┌───────────────────────▼───────────────────────┐
+ ENTRYPOINTS        │  train_skill.py   train_multiskill.py          │
+                    │  rollout_skill.py   plot_embeddings.py          │
+                    └──────────┬───────────────────────┬────────────┘
+                               │                       │
+            ┌──────────────────▼─────┐     ┌───────────▼──────────────────┐
+ EMBEDDING  │ symb_model_embeddings/ │     │ CONDITIONING (two parallel)   │
+ SUBSYSTEM  │  SymbolicActionModel   │     │  obs-side:  EnvWrapper        │
+            │  SymbolicEmbedder      │     │  policy-side: SkillOneHot +   │
+            │  {Mock,Text}Embedder   │     │   SkillEmbeddingExtractor     │
+            │  Backends + Cache      │     └───────────────┬──────────────┘
+            └────────────────────────┘                     │
+                               ┌─────────────────────────────▼───────────────┐
+ ENVIRONMENT (fetch_blockworld)│  FetchSkillEnv  ── make_skill_env            │
+                               │  FactEvaluator (obs → predicates)            │
+                               │  reward shapers + skill_reward dispatcher    │
+                               │  multiblock_env (runtime MJCF synthesis)     │
+                               │  scripted teachers + BC warm-start           │
+                               └──────────────────────────────────────────────┘
+                                            │ Gymnasium-Robotics / MuJoCo
+</code></pre>
+<h3 id="22-episode-lifecycle-multi-skill-path">2.2 Episode lifecycle (multi-skill path)</h3>
+<pre><code>reset ─► MultiSkillEnv picks a skill
+      ─► that skill's FetchSkillEnv.reset()  (putdown: runs scripted pickup first)
+      ─► FactEvaluator.reset_reference(obs)   (remember table-z / initial poses)
+      ─► SkillOneHotWrapper appends skill_onehot to obs
+step  ─► policy(obs) → action [dx,dy,dz,grip]
+      ─► FetchSkillEnv.step: skill_reward(name, obs, evaluator, action, shapers)
+                              → reward, success, facts, components
+      ─► terminate_on_success flips `terminated`
+policy conditioning:
+      SkillEmbeddingExtractor:  features = concat(flatten(obs\skill_onehot),
+                                                  onehot @ embedding_table)
+</code></pre>
+<h3 id="23-module-inventory">2.3 Module inventory</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Role</th>
+<th>LOC-ish</th>
+<th>Redesign pressure</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>fetch_blockworld/facts.py</code></td>
+<td>obs → symbolic predicates</td>
+<td>280</td>
+<td>🟡 obs indices hardcoded</td>
+</tr>
+<tr>
+<td><code>fetch_blockworld/skills.py</code></td>
+<td>skill registry + reward dispatcher</td>
+<td>310</td>
+<td>🔴 dispatcher &amp; registry entangled</td>
+</tr>
+<tr>
+<td><code>fetch_blockworld/rewards/*.py</code></td>
+<td>5 bespoke shapers</td>
+<td>~600</td>
+<td>🔴 per-skill, non-uniform scale</td>
+</tr>
+<tr>
+<td><code>fetch_blockworld/envs.py</code></td>
+<td><code>FetchSkillEnv</code>, <code>make_skill_env</code></td>
+<td>170</td>
+<td>🟡 shaper wiring hardcoded</td>
+</tr>
+<tr>
+<td><code>fetch_blockworld/multiblock_env.py</code></td>
+<td>runtime multi-block MJCF</td>
+<td>305</td>
+<td>🟢 self-contained</td>
+</tr>
+<tr>
+<td><code>fetch_blockworld/scripted.py</code></td>
+<td>scripted controllers/teachers</td>
+<td>388</td>
+<td>🟡 per-skill, no novel-skill path</td>
+</tr>
+<tr>
+<td><code>fetch_blockworld/teacher.py</code></td>
+<td>BC warm-start</td>
+<td>140</td>
+<td>🟢 generic-ish</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/action_model.py</code></td>
+<td>operator value object</td>
+<td>50</td>
+<td>🔴 unstructured; placeholders unused</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/embedders.py</code></td>
+<td>embedder interface + impls + CLI</td>
+<td>206</td>
+<td>🔴 <code>trainable</code> overloaded/broken</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/backends.py</code></td>
+<td>text backends</td>
+<td>141</td>
+<td>🟢 clean</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/cache.py</code></td>
+<td>disk embedding cache</td>
+<td>90</td>
+<td>🟢 clean</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/trainable_embedding.py</code></td>
+<td>policy-side table extractor</td>
+<td>111</td>
+<td>🔴 table-indexed, fixed N</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/obs_symb_wrapper.py</code></td>
+<td>obs-side embedding inject</td>
+<td>38</td>
+<td>🔴 hardcoded shape (25,)</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/naming.py</code></td>
+<td>run/file naming</td>
+<td>59</td>
+<td>🟢 fine</td>
+</tr>
+<tr>
+<td><code>symb_model_embeddings/mock_env_embedder.py</code></td>
+<td><strong>dead legacy</strong></td>
+<td>11</td>
+<td>🟢 delete</td>
+</tr>
+<tr>
+<td><code>train_multiskill.py</code></td>
+<td>multi-skill driver</td>
+<td>417</td>
+<td>🟡 owns too much glue</td>
+</tr>
+<tr>
+<td><code>plot_embeddings.py</code></td>
+<td>PCA of embedding trajectories</td>
+<td>152</td>
+<td>🟡 only interpretability today</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="3-component-reference-current-system">3. Component reference (current system)</h2>
+<p>Each entry: <strong>Responsibility · Interface · Design decisions · Rigidity / redesign needs.</strong></p>
+<h3 id="31-factevaluator-symbolic-state-extractor">3.1 <code>FactEvaluator</code> — symbolic state extractor</h3>
+<p><strong>Responsibility.</strong> Turn a raw Fetch observation into (a) a structured
+<code>FetchState</code> and (b) a dict of boolean predicates, with all thresholds
+centralized for tuning.</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">FactEvaluator(num_blocks=1, *, object_half_size, near_tol, xy_tol, z_tol,
+              goal_tol, push_distance, lift_height, open_width, closed_width,
+              stack_xy_tol, stack_clear_dist)
+
+.reset_reference(obs) -&gt; None          # snapshot table-z / initial block poses
+.state(obs)           -&gt; FetchState    # numeric decode
+.facts(obs)           -&gt; dict[str,bool]# predicates (see §4.2)
+.is_true(obs, name)   -&gt; bool
+.numeric_summary(obs) -&gt; dict          # for logging/info
+</code></pre>
+<p><strong>Design decisions.</strong>
+- Thresholds live in one place, deliberately decoupled from RL code — good.
+- Reference poses (<code>table_object_z</code>, <code>initial_object_pos</code>) are captured at reset
+  so predicates like <code>object_on_table</code> judge against the <em>randomized resting</em>
+  pose, not the current one.</p>
+<p><strong>Rigidity / redesign needs.</strong> 🟡
+- <strong>Observation layout is hardcoded by slice</strong>: <code>grip=0:3</code>, <code>obj=3:6</code>,
+  <code>fingers=9:11</code>, <code>rot=11:14</code>, <code>has_object = shape&gt;=25</code>, multi-block appended at
+  <code>25 + 9*(i-1)</code>, one-hots trailing. Any env/layout change silently corrupts
+  facts. → Needs an explicit <strong><code>ObservationSchema</code></strong> (§6.8) that names fields so
+  fact code never indexes raw arrays.
+- The <strong>predicate vocabulary is a flat dict of hand-named booleans</strong>. The
+  compositional embedder (§6.2) will want predicate <em>symbols</em> that line up with
+  the operator's precondition/effect predicates. Today the fact names
+  (<code>object_lifted</code>) and the operator predicates (<code>holding ?o</code>) are <strong>different
+  vocabularies</strong> with no mapping — a gap that must close for grounding-aware
+  work.</p>
+<hr />
+<h3 id="32-skillspec-registry-skill_reward-dispatcher">3.2 <code>SkillSpec</code> registry + <code>skill_reward</code> dispatcher</h3>
+<p><strong>Responsibility.</strong> Define each skill (env id, success predicate, step budget,
+PDDL string) and compute its shaped reward.</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">@dataclass(frozen=True)
+class SkillSpec:
+    name: str
+    env_id: str
+    success_fact: str
+    max_episode_steps: int = 75
+    terminate_on_success: bool = True
+    action_model: str | None = None      # free-text PDDL operator
+
+SKILLS: dict[str, SkillSpec]             # 9 skills
+require_skill(name) -&gt; SkillSpec
+
+skill_reward(name, obs, evaluator, *, action, reward_config,
+             pickup_reward_shaper, putdown_reward_shaper, push_reward_shaper,
+             stack_reward_shaper, unstack_reward_shaper)
+    -&gt; (reward: float, success: bool, facts: dict, components: dict)
+</code></pre>
+<p><strong>Design decisions.</strong>
+- Symbolic description travels <em>with</em> the skill (<code>action_model</code> on <code>SkillSpec</code>) —
+  the one place symbolic and control meet today.
+- Reward components are returned for logging/interpretability.</p>
+<p><strong>Rigidity / redesign needs.</strong> 🔴 <strong>This is the highest-coupling file.</strong>
+- <code>skill_reward</code> is a <strong>string-keyed <code>if/elif</code> ladder</strong> that takes <em>one keyword
+  argument per shaper</em>. Adding a skill edits this signature, the ladder, the
+  <code>SKILLS</code> dict, <code>envs.py</code> shaper wiring, <code>FactEvaluator</code>, and <code>scripted.py</code> —
+  ~5 coordinated edits. → Needs a uniform <strong><code>RewardModule</code> interface + a single
+  <code>RewardContext</code></strong> (§6.7) so skills register a reward object, not a branch.
+- <code>action_model</code> is an <strong>opaque string</strong> — see §3.7.</p>
+<hr />
+<h3 id="33-reward-shapers-rewardspy">3.3 Reward shapers (<code>rewards/*.py</code>)</h3>
+<p><strong>Responsibility.</strong> Per-skill dense, staged, stateful reward (e.g. pickup has
+7 stages: reach → above → descend → grip → off-table → lift → success, each with
+one-time bonuses and progress terms clipped against noise).</p>
+<p><strong>Interface (today).</strong> Each shaper is a <code>@dataclass</code> with <code>reset()</code> and a
+<code>compute(**skill_specific_kwargs) -&gt; (reward, components[, success])</code>. <strong>The
+signatures differ per shaper</strong> (pickup takes <code>grip_pos, object_pos, lift, …</code>;
+stack takes <code>mover_pos, base_pos, …</code>).</p>
+<p><strong>Rigidity / redesign needs.</strong> 🔴
+- <strong>Non-uniform <code>compute</code> signatures</strong> are why the dispatcher needs per-shaper
+  kwargs. → Standardize on <code>compute(ctx: RewardContext) -&gt; RewardResult</code>.
+- <strong>Reward scales differ wildly</strong> across skills (pickup peaks ~+15 success bonus
+  + staged bonuses; <code>reach_top</code> is <code>-‖grip-top‖ + 2</code>; push has its own). In
+  multi-skill training the <strong>shared value function sees inconsistent return
+  magnitudes per skill</strong> — a genuine <em>confound</em> for the very ablation the project
+  runs (does semantic embedding beat mock?). → §6.7 proposes a normalization /
+  reward-scale contract.
+- Shapers are stateful and reset from <code>FetchSkillEnv.reset</code> — fine, but the
+  ownership is implicit.</p>
+<hr />
+<h3 id="34-fetchskillenv-make_skill_env">3.4 <code>FetchSkillEnv</code> + <code>make_skill_env</code></h3>
+<p><strong>Responsibility.</strong> Wrap a native/(multi-block) Fetch env into a single-skill
+task: swap reward/termination, expose facts in <code>info</code>, prepare non-trivial reset
+states (putdown starts from a scripted grasp).</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">make_skill_env(skill_name, render_mode=None, seed=None) -&gt; FetchSkillEnv
+FetchSkillEnv(env, skill: SkillSpec, evaluator=None)
+  .reset() -&gt; (obs, info{facts, numeric_state, skill, [scripted_pickup_*]})
+  .step(a) -&gt; (obs, reward, terminated, truncated,
+               info{is_success, facts, numeric_state, skill, reward_components})
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🟡
+- The constructor <strong>instantiates all five shapers by <code>if skill.name == …</code></strong>.
+  → Should ask a <code>RewardModule</code> factory (§6.7).
+- Otherwise a clean Gymnasium <code>Wrapper</code>; the <code>info</code> schema (§4.4) is a good,
+  stable surface to build eval/interpretability on.</p>
+<hr />
+<h3 id="35-multiblock_envpy-runtime-multi-block-scene">3.5 <code>multiblock_env.py</code> — runtime multi-block scene</h3>
+<p><strong>Responsibility.</strong> Provide stack/unstack scenes (Gymnasium-Robotics ships only
+single-block Fetch) by <strong>synthesizing an MJCF at runtime</strong> that <code>&lt;include&gt;</code>s the
+stock assets by absolute path, then registers <code>FetchStackEnv-v0</code> /
+<code>FetchUnstackEnv-v0</code>.</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">build_multiblock_xml(num_blocks, assets_dir=None) -&gt; str
+MujocoFetchMultiBlockEnv(num_blocks=2, start_stacked=False, reward_type=&quot;sparse&quot;)
+# obs layout: [0:25 standard] + per-extra-block[pos3,rel3,rot3] + mover_onehot(N) + base_onehot(N)
+# each reset samples mover_index != base_index, appended as one-hots
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🟢 Well-encapsulated and self-contained (no
+site-packages edits). The <strong>only</strong> coupling worth noting: the observation layout
+it emits is the same one <code>FactEvaluator</code> decodes by hand — both should read a
+shared <code>ObservationSchema</code> (§6.8) so they can never drift.</p>
+<hr />
+<h3 id="36-scripted-controllers-bc-scriptedpy-teacherpy">3.6 Scripted controllers + BC (<code>scripted.py</code>, <code>teacher.py</code>)</h3>
+<p><strong>Responsibility.</strong> (a) Reset preparation (<code>run_scripted_pickup</code>). (b) A
+stateless per-skill teacher <code>scripted_teacher_action(name, obs, evaluator)</code> used
+to collect demonstrations. (c) <code>behavior_clone_policy</code> — supervised warm-start of
+the SB3 policy by MSE on teacher actions before RL.</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">scripted_teacher_action(skill_name, obs, evaluator, config?) -&gt; action[4]
+collect_teacher_dataset(env, skill_name, config, *, seed) -&gt; TeacherDataset
+behavior_clone_policy(model, dataset, TeacherConfig) -&gt; None
+warm_start_with_teacher(model, env, skill_name, config, *, seed) -&gt; None
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🟡
+- <code>scripted_teacher_action</code> is a <strong>string-keyed dispatch</strong> with per-skill helpers
+  — same additive-cost problem as the reward ladder.
+- <strong>Structural blocker for rung 4:</strong> a <em>novel</em> (held-out) operator has <strong>no
+  scripted teacher</strong> by definition, so any zero-shot claim must work <em>without</em>
+  BC. Today hard skills lean on BC to succeed at all. The research plan needs an
+  explicit answer: teacher only for <em>seen</em> skills; novel skills evaluated on RL /
+  embedding transfer alone.
+- BC updates <strong>all</strong> policy params (including the embedding table when trainable)
+  — worth being deliberate about whether BC should move embeddings.</p>
+<hr />
+<h3 id="37-symbolicactionmodel-the-operator-value-object">3.7 <code>SymbolicActionModel</code> — the operator value object</h3>
+<p><strong>Responsibility.</strong> The env-independent description of an operator that an
+embedder consumes.</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">@dataclass(frozen=True)
+class SymbolicActionModel:
+    name: str
+    description: str | None = None          # full PDDL string (free text)
+    # --- declared but NEVER populated or read: ---
+    types: tuple[str,...] = ()
+    parameters: tuple[str,...] = ()
+    preconditions: tuple[str,...] = ()
+    effects: tuple[str,...] = ()
+    def text(self, source) -&gt; str           # &quot;name&quot; | &quot;action_model&quot;
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🔴 <strong>This is the crux of the whole redesign.</strong>
+- The compositional fields exist as <strong>placeholders and are never filled</strong> — every
+  embedder today uses only <code>name</code> or the whole <code>description</code> string. So the
+  system is "compositional" in name only.
+- There is <strong>no parser</strong> from the PDDL string to structured parts. Compositional
+  embedding (rung 3) is impossible until <code>SymbolicActionModel</code> becomes a real
+  <strong>structured operator</strong> (typed params + predicate lists) and a parser exists.
+  → §6.1.</p>
+<hr />
+<h3 id="38-symbolicembedder-interface-mocktext-embedderconfig">3.8 <code>SymbolicEmbedder</code> interface + <code>Mock</code>/<code>Text</code> + <code>EmbedderConfig</code></h3>
+<p><strong>Responsibility.</strong> Map a <code>SymbolicActionModel</code> to a fixed 1-D vector; expose a
+config + argparse surface for ablations.</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">class SymbolicEmbedder(ABC):
+    trainable: bool = False
+    def embed(self, action_model) -&gt; np.ndarray   # 1-D
+
+MockEmbedder(size)        # sha256(name) → RNG → vector   (distinct, meaningless)
+TextEmbedder(backend, source=&quot;name&quot;|&quot;action_model&quot;)
+
+@dataclass(frozen=True)
+class EmbedderConfig:
+    kind=&quot;mock&quot;|&quot;text&quot;; source; backend; model; size; trainable=False
+build_embedder(config, *, cache=None) -&gt; SymbolicEmbedder
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🔴
+- <strong><code>build_embedder(trainable=True)</code> raises <code>NotImplementedError</code>.</strong> Yet trainable
+  embeddings <em>are</em> implemented — in <code>SkillEmbeddingExtractor</code>. So the word
+  "trainable" has <strong>two contradictory meanings</strong>: (i) "produce a learnable
+  embedder object" (unimplemented) vs (ii) "set <code>requires_grad</code> on the policy's
+  table" (implemented). <code>train_multiskill.py</code> works around this by forcibly
+  <code>replace(config, trainable=False)</code> when building initial values. → The redesign
+  must <strong>unify</strong> these: an embedder pipeline that is <em>optionally an <code>nn.Module</code></em>
+  and can live either as frozen data or as a policy submodule (§6.5).
+- The <code>embed(action_model) -&gt; np.ndarray</code> contract is <strong>numpy, single-vector,
+  stateless</strong> — fine for frozen text/mock, but a <em>learnable compositional</em>
+  embedder needs a torch, batched, differentiable path. The interface should
+  admit both (§6.2–§6.5).</p>
+<hr />
+<h3 id="39-text-backends-cache">3.9 Text backends + cache</h3>
+<p><strong>Responsibility.</strong> <code>TextEmbeddingBackend.embed_text(str) -&gt; vec</code>, with
+<code>OpenAIBackend</code> (real) and <code>HashBackend</code> (offline, reproducible baseline), routed
+through a JSON <code>DiskEmbeddingCache</code> (atomic writes, merge-on-flush).</p>
+<p><strong>Rigidity / redesign needs.</strong> 🟢 Clean, well-abstracted, reusable as-is. One
+research note: the <em>only</em> semantically-meaningful signal comes from <code>openai</code>;
+the reproducible default (<code>hash</code>) is meaningless by design — so the headline
+"does semantics help?" result <strong>requires API calls</strong>, while CI-friendly runs
+can't answer it. Worth documenting as an experimental constraint, not a code
+defect.</p>
+<hr />
+<h3 id="310-conditioning-mechanism-a-envwrapper-obs-side-frozen">3.10 Conditioning mechanism A — <code>EnvWrapper</code> (obs-side, frozen)</h3>
+<p><strong>Responsibility.</strong> Inject a constant embedding vector into the observation dict
+under <code>symb_embedding</code> (single-skill path, <code>train_skill.py</code>/<code>rollout_skill.py</code>).</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">EnvWrapper(env, symb_embedding: np.ndarray)
+# observation_space = Dict(observation(25,), achieved_goal(3), desired_goal(3), symb_embedding(k,))
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🔴
+- <strong>Hardcodes <code>observation</code> shape <code>(25,)</code></strong> → cannot wrap stack/unstack
+  (multi-block obs are longer). So the obs-side path silently excludes the very
+  two-parameter operators that the compositional story needs most.
+- It is <strong>one of two</strong> unrelated conditioning schemes (see 3.11). Two schemas,
+  two code paths, no shared contract. → §6.5 replaces both.</p>
+<hr />
+<h3 id="311-conditioning-mechanism-b-skillonehotwrapper-skillembeddingextractor">3.11 Conditioning mechanism B — <code>SkillOneHotWrapper</code> + <code>SkillEmbeddingExtractor</code></h3>
+<p><strong>Responsibility.</strong> Multi-skill conditioning: put a <strong>one-hot skill id</strong> in the
+obs; keep the <strong>embedding table inside the policy</strong> as an <code>nn.Parameter</code>; select
+a row by <code>onehot @ table</code> (so gradients flow when trainable).</p>
+<p><strong>Interface (today).</strong></p>
+<pre><code class="language-python">SkillOneHotWrapper(env, skill_index, num_skills)      # obs[&quot;skill_onehot&quot;] = e_i
+SkillEmbeddingExtractor(obs_space, init_embeddings[N,d], trainable)
+  forward(obs) -&gt; concat( flatten(obs \ skill_onehot), onehot @ table )
+  current_embeddings() -&gt; np.ndarray                   # for logging
+</code></pre>
+<p><strong>Rigidity / redesign needs.</strong> 🔴 <strong>This is the wall in front of rung 4.</strong>
+- Conditioning is <strong>by table index</strong>, and the table has a <strong>fixed <code>N =
+  num_skills</code> fixed at construction</strong>. There is <strong>no way to condition on an
+  operator that has no reserved row</strong> → <strong>zero-shot is structurally impossible</strong>
+  here.
+- The one-hot encodes <em>identity</em>, deliberately discarding structure — which is
+  the right <em>baseline</em> but the wrong <em>general mechanism</em>. → The policy must be
+  able to accept a <strong>conditioning vector by value</strong>, computed per-episode from
+  the operator by the embedding pipeline, so a novel operator's vector works with
+  no retraining (§6.5, C3).</p>
+<hr />
+<h3 id="312-entrypoints-orchestration">3.12 Entrypoints &amp; orchestration</h3>
+<ul>
+<li><code>train_skill.py</code> (rung 1), <code>train_multiskill.py</code> (rung 2), <code>rollout_skill.py</code>
+  (eval/render, single-skill only), <code>scripts/train_all_methods.sh</code>
+  (scheme × mode sweep), <code>plot_embeddings.py</code> (PCA of embedding trajectories).</li>
+<li><code>naming.py</code> gives every run a filename encoding skill/algo/embed-tag/teacher/seed
+  so runs never overwrite — good, but it is also <strong>the only "experiment config"
+  that exists</strong>; there is no single serializable spec (§6.9).</li>
+</ul>
+<p><strong>Rigidity / redesign needs.</strong> 🟡 <code>train_multiskill.py</code> (417 LOC) owns env
+construction, initial-embedding building, BC pooling, extractor discovery,
+logging <em>and</em> the training loop. It should orchestrate small components, not
+implement them.</p>
+<hr />
+<h2 id="4-cross-cutting-schemas-consolidated">4. Cross-cutting schemas (consolidated)</h2>
+<h3 id="41-observation-vector-layout-single-multi-block">4.1 Observation vector layout (single + multi-block)</h3>
+<pre><code>index         field                     notes
+0:3           gripper position
+3:6           object0 position          present iff len(obs) &gt;= 25 (has_object)
+6:9           object0 relative-to-grip
+9:11          gripper finger state      gripper_width = sum(9:11)
+11:14         object0 rotation (euler)
+14:25         velocities / misc (standard Fetch)
+-- multi-block only (num_blocks N &gt; 1): --
+25 + 9*(i-1) + [0:3, 3:6, 6:9]   block_i pos, rel, rot   for i in 1..N-1
+onehot_base + [0:N]              mover one-hot
+onehot_base + [N:2N]             base one-hot            onehot_base = 25 + 9*(N-1)
+</code></pre>
+<p><em>Consumed by <code>FactEvaluator.state()</code> via literal indices; produced by
+<code>multiblock_env._get_obs()</code>. These two must agree and currently do so only by
+convention — see §6.8.</em></p>
+<h3 id="42-fact-predicate-schema-single-block-core">4.2 Fact predicate schema (single-block core)</h3>
+<p><code>has_object, object_on_table, object_lifted, gripper_near_object,
+gripper_above_object, gripper_touching_object_top, gripper_open, gripper_closed,
+holding_object, object_at_goal, object_moved_{left,right,forward,backward}</code></p>
+<p>Multi-block adds: <code>has_two_blocks, mover_lifted, mover_on_table,
+gripper_near_mover, mover_held, blocks_stacked, mover_clear_of_base</code>.</p>
+<h3 id="43-symbolic-action-model-schema">4.3 Symbolic action-model schema</h3>
+<p><strong>Today:</strong> <code>{name, description(PDDL string)}</code> used; <code>{types, parameters,
+preconditions, effects}</code> declared-but-empty. <strong>Proposed structured form:</strong> §6.1.</p>
+<h3 id="44-info-dict-schema-stable-surface-for-evalinterpretability">4.4 <code>info</code> dict schema (stable surface for eval/interpretability)</h3>
+<pre><code>reset: facts, numeric_state, skill, [scripted_pickup_success, scripted_pickup_steps]
+step : is_success(float), facts, numeric_state, skill, reward_components(dict)
+multi: + info[&quot;skill&quot;] set by MultiSkillEnv each reset
+</code></pre>
+<h3 id="45-embedding-contract-today-fractured">4.5 Embedding contract (today, fractured)</h3>
+<table>
+<thead>
+<tr>
+<th>Path</th>
+<th>Where embedding lives</th>
+<th>Keyed by</th>
+<th>Trainable?</th>
+<th>Multi-block?</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>EnvWrapper</code></td>
+<td><code>obs["symb_embedding"]</code> (data)</td>
+<td>precomputed vector</td>
+<td>no</td>
+<td>❌ (shape 25 hardcoded)</td>
+</tr>
+<tr>
+<td><code>SkillEmbeddingExtractor</code></td>
+<td>policy <code>nn.Parameter</code> table</td>
+<td>one-hot index</td>
+<td>yes/no</td>
+<td>✅</td>
+</tr>
+</tbody>
+</table>
+<p><strong>One contract should replace both</strong> — §6.5.</p>
+<hr />
+<h2 id="5-design-tensions-rigidity-register">5. Design tensions &amp; rigidity register</h2>
+<p>The blocking issues, ranked by how much they impede the research direction.
+"Blast radius" = files that must change together.</p>
+<table>
+<thead>
+<tr>
+<th>#</th>
+<th>Issue</th>
+<th>Why it blocks research</th>
+<th>Blast radius</th>
+<th>Sev</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>1</td>
+<td><strong>No zero-shot conditioning path</strong> — policy conditions by fixed-N table index</td>
+<td>Rung 4 impossible; can't feed a novel operator's vector</td>
+<td><code>trainable_embedding.py</code>, <code>train_multiskill.py</code>, policy</td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>2</td>
+<td><strong>Operator is an opaque string</strong> — structured fields unused, no parser</td>
+<td>Rung 3 (compositional embedding) has no substrate</td>
+<td><code>action_model.py</code>, embedders</td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>3</td>
+<td><strong>Two unrelated conditioning schemes</strong> (obs-side vs policy-side), no shared contract</td>
+<td>Every new capability must be built twice / chooses one silo</td>
+<td><code>obs_symb_wrapper.py</code>, <code>trainable_embedding.py</code>, both trainers</td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>4</td>
+<td><strong><code>trainable</code> overloaded</strong>; <code>build_embedder(trainable=True)</code> raises while trainability lives elsewhere</td>
+<td>Learnable <em>compositional</em> embedder has no home in the embedder API</td>
+<td><code>embedders.py</code>, <code>train_multiskill.py</code></td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>5</td>
+<td><strong>Reward dispatcher is a string ladder w/ per-shaper kwargs</strong></td>
+<td>Adding/holding-out skills is ~5 coordinated edits; error-prone</td>
+<td><code>skills.py</code>, <code>envs.py</code>, <code>rewards/*</code>, <code>scripted.py</code></td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>6</td>
+<td><strong>Non-uniform reward scale across skills</strong></td>
+<td>Confounds the shared-policy ablation (semantic vs mock)</td>
+<td><code>rewards/*</code>, <code>skills.py</code></td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>7</td>
+<td><strong>Obs layout hardcoded by slice in fact code</strong></td>
+<td>Fragile to any env/space change; blocks clean var-block support</td>
+<td><code>facts.py</code>, <code>multiblock_env.py</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>8</td>
+<td><strong><code>EnvWrapper</code> hardcodes obs shape (25,)</strong></td>
+<td>Single-skill embedding path can't run stack/unstack</td>
+<td><code>obs_symb_wrapper.py</code></td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>9</td>
+<td><strong>No teacher for novel skills</strong> (scripted per-skill)</td>
+<td>Zero-shot must run without BC; current hard skills depend on it</td>
+<td><code>scripted.py</code>, <code>teacher.py</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>10</td>
+<td><strong>No evaluation harness / no committed metrics</strong> (<code>models/</code> empty)</td>
+<td>Can't substantiate any research claim</td>
+<td>— (missing)</td>
+<td>🔴</td>
+</tr>
+<tr>
+<td>11</td>
+<td><strong>Interpretability = PCA of table only</strong></td>
+<td>Rung 5 needs ablation/arithmetic/probing</td>
+<td><code>plot_embeddings.py</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>12</td>
+<td><strong>No single serializable experiment config</strong> — spread across argparse + env vars + 3 dataclasses; filename is the record</td>
+<td>Reproducibility &amp; sweep management fragile</td>
+<td>entrypoints, <code>scripts/*</code>, <code>naming.py</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>13</td>
+<td><strong>Fact vocab ≠ operator predicate vocab</strong></td>
+<td>Grounding-aware / component-to-predicate work has no mapping</td>
+<td><code>facts.py</code>, <code>action_model.py</code></td>
+<td>🟡</td>
+</tr>
+<tr>
+<td>14</td>
+<td><strong>Dead code</strong> <code>mock_env_embedder.py</code> (torch, stale skill names)</td>
+<td>Confuses the embedding story</td>
+<td>1 file</td>
+<td>🟢</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="6-target-architecture-proposed-interfaces">6. Target architecture (proposed interfaces)</h2>
+<p>Design principles: <strong>(P1)</strong> one contract per concept, no parallel silos;
+<strong>(P2)</strong> everything the research varies is a swappable component behind a small
+interface; <strong>(P3)</strong> the same embedding pipeline works frozen <em>or</em> learnable and
+<em>by value</em> (so novel operators need no special case); <strong>(P4)</strong> interpretability
+is a first-class output, not an afterthought.</p>
+<p>Each interface below is written so it can be adopted independently.</p>
+<h3 id="61-structuredoperator-pddl-parser-fixes-2-13">6.1 <code>StructuredOperator</code> + PDDL parser  <em>(fixes #2, #13)</em></h3>
+<p>Replace the opaque string with a parsed structure; keep the string as the parser
+input.</p>
+<pre><code class="language-python">@dataclass(frozen=True)
+class Predicate:
+    name: str                      # e.g. &quot;on&quot;, &quot;clear&quot;, &quot;holding&quot;
+    args: tuple[str, ...]          # variable names, e.g. (&quot;?o&quot;, &quot;?b&quot;)
+
+@dataclass(frozen=True)
+class Param:
+    var: str                       # &quot;?o&quot;
+    type: str                      # &quot;block&quot;
+
+@dataclass(frozen=True)
+class Effect:
+    predicate: Predicate
+    add: bool                      # True = add, False = delete ((not ...))
+
+@dataclass(frozen=True)
+class StructuredOperator:
+    name: str
+    params: tuple[Param, ...]
+    preconditions: tuple[Predicate, ...]
+    effects: tuple[Effect, ...]
+    raw: str | None = None         # original PDDL, for text-embedder fallback
+
+def parse_pddl_operator(text: str) -&gt; StructuredOperator: ...
+def operator_from_spec(spec: SkillSpec) -&gt; StructuredOperator: ...
+</code></pre>
+<p><code>SymbolicActionModel</code> becomes a thin adapter over <code>StructuredOperator</code> (or is
+replaced by it). All existing PDDL strings in <code>SKILLS</code> already parse into this.</p>
+<h3 id="62-componentembedder-embeds-atomic-pieces-enables-rung-3">6.2 <code>ComponentEmbedder</code> — embeds atomic pieces  <em>(enables rung 3)</em></h3>
+<pre><code class="language-python">class ComponentEmbedder(Protocol):
+    dim: int
+    def embed_predicate(self, p: Predicate) -&gt; Tensor: ...
+    def embed_param(self, p: Param) -&gt; Tensor: ...
+    def embed_type(self, t: str) -&gt; Tensor: ...
+</code></pre>
+<p>Two natural implementations, both behind the same Protocol:
+- <strong><code>LearnableComponentEmbedder</code></strong> — <code>nn.Embedding</code> over a symbol vocabulary
+  (predicate names, types, arg-roles). Differentiable; the primary research object.
+- <strong><code>TextComponentEmbedder</code></strong> — reuse §3.9 backends to embed each symbol's text
+  (frozen; strong baseline; needs no vocabulary).</p>
+<h3 id="63-aggregator-components-one-operator-vector-enables-rung-3">6.3 <code>Aggregator</code> — components → one operator vector  <em>(enables rung 3)</em></h3>
+<pre><code class="language-python">class Aggregator(nn.Module):
+    out_dim: int
+    def forward(self, op: StructuredOperator,
+                emb: ComponentEmbedder) -&gt; Tensor: ...   # (out_dim,) or (B,out_dim)
+</code></pre>
+<p>Interchangeable implementations (this is the core ablation axis for the thesis):
+- <code>MeanPoolAggregator</code> (order-invariant baseline),
+- <code>DeepSetsAggregator</code> (learned permutation-invariant),
+- <code>AttentionAggregator</code> / small transformer over the component set,
+- <code>GraphAggregator</code> (GNN over the predicate–argument graph — captures which
+  predicates share variables).</p>
+<h3 id="64-embeddingpipeline-the-composition-unifies-4">6.4 <code>EmbeddingPipeline</code> — the composition  <em>(unifies #4)</em></h3>
+<pre><code class="language-python">class EmbeddingPipeline(Protocol):
+    dim: int
+    trainable: bool
+    def embed(self, op: StructuredOperator) -&gt; Tensor: ...   # torch, batchable
+    def as_numpy(self, op) -&gt; np.ndarray: ...                # frozen convenience
+</code></pre>
+<p>Concrete: <code>CompositionalPipeline(component_embedder, aggregator)</code> and, for
+baselines, <code>WholeStringPipeline(text_backend)</code> and <code>MockPipeline</code> — all the same
+interface. This <strong>single interface replaces the split</strong> between
+<code>build_embedder</code> (frozen numpy) and the extractor's table (learnable torch):
+frozen pipelines expose <code>.as_numpy</code>; learnable ones are <code>nn.Module</code>s dropped into
+the policy (§6.5). Retire <code>EmbedderConfig.trainable</code>'s double meaning.</p>
+<h3 id="65-conditioningmodule-one-way-the-embedding-reaches-the-policy-fixes-1-3-8">6.5 <code>ConditioningModule</code> — one way the embedding reaches the policy  <em>(fixes #1, #3, #8)</em></h3>
+<p>The keystone. The env emits an <strong>operator handle</strong> (and/or a precomputed vector)
+in the observation; a single policy-side module turns it into the conditioning
+vector, so <em>how it's produced</em> (table / text / compositional) and <em>whether it's
+learnable</em> are internal details — and <strong>novel operators need no table row</strong>.</p>
+<pre><code class="language-python"># Observation carries the operator, by value or by reference:
+obs[&quot;operator_id&quot;]   : int          # index into a known operator set (optional)
+obs[&quot;operator_embed&quot;]: float[dim]   # precomputed vector (frozen path)
+# (For learnable/compositional, the env passes an operator handle the module
+#  can embed; for fixed sets, an id suffices.)
+
+class ConditioningModule(BaseFeaturesExtractor):
+    &quot;&quot;&quot;features = concat(flatten(base_obs), conditioning_vector).&quot;&quot;&quot;
+    def __init__(self, obs_space, pipeline: EmbeddingPipeline | None,
+                 embedding_table: Optional[Tensor], mode: Literal[
+                     &quot;table&quot;, &quot;by_value&quot;, &quot;compositional&quot;]): ...
+    def forward(self, obs) -&gt; Tensor: ...
+    def current_embeddings(self) -&gt; np.ndarray: ...   # keep the logging hook
+</code></pre>
+<ul>
+<li><code>mode="table"</code> reproduces today's <code>SkillEmbeddingExtractor</code> (baseline).</li>
+<li><code>mode="by_value"</code> reads <code>obs["operator_embed"]</code> → <strong>frozen zero-shot works</strong>.</li>
+<li><code>mode="compositional"</code> runs the learnable <code>EmbeddingPipeline</code> on the operator
+  handle → <strong>learnable zero-shot</strong>, gradients into components/aggregator.</li>
+</ul>
+<p>This one module makes <code>EnvWrapper</code> and <code>SkillOneHotWrapper</code>+<code>SkillEmbeddingExtractor</code>
+two <em>configs</em> of the same thing instead of two subsystems.</p>
+<h3 id="66-skillregistry-decouple-symbolic-reward-env-teacher-fixes-5">6.6 <code>SkillRegistry</code> — decouple symbolic / reward / env / teacher  <em>(fixes #5)</em></h3>
+<pre><code class="language-python">@dataclass(frozen=True)
+class Skill:
+    name: str
+    operator: StructuredOperator          # §6.1
+    env_binding: EnvBinding               # env_id + kwargs + step budget
+    reward: RewardModule                  # §6.7
+    success_predicate: str
+    teacher: TeacherPolicy | None         # §6.10; None ⇒ held-out/novel
+    terminate_on_success: bool = True
+
+class SkillRegistry:
+    def register(self, skill: Skill) -&gt; None: ...
+    def get(self, name) -&gt; Skill: ...
+    def holdout(self, names) -&gt; tuple[train_set, eval_set]: ...  # for zero-shot splits
+</code></pre>
+<p><code>holdout</code> makes "train on {A,B,C}, evaluate zero-shot on {D}" a first-class
+operation — the experiment rung 4 needs.</p>
+<h3 id="67-rewardmodule-rewardcontext-fixes-5-6">6.7 <code>RewardModule</code> + <code>RewardContext</code>  <em>(fixes #5, #6)</em></h3>
+<pre><code class="language-python">@dataclass(frozen=True)
+class RewardContext:
+    state: FetchState          # decoded once, shared
+    facts: dict[str, bool]
+    action: np.ndarray
+    success: bool
+
+@dataclass(frozen=True)
+class RewardResult:
+    reward: float
+    components: dict[str, float]
+    success: bool              # shaper may refine (putdown/stack “released”)
+
+class RewardModule(Protocol):
+    def reset(self) -&gt; None: ...
+    def compute(self, ctx: RewardContext) -&gt; RewardResult: ...
+    # optional: declare return-scale so multi-skill training can normalize
+    scale_hint: float
+</code></pre>
+<p>The <code>skill_reward</code> ladder collapses to <code>skill.reward.compute(ctx)</code>. A
+<code>RewardNormalizer</code> (using <code>scale_hint</code> or running stats) addresses the
+cross-skill magnitude confound (#6) explicitly.</p>
+<h3 id="68-observationschema-named-fields-no-literal-slices-fixes-7">6.8 <code>ObservationSchema</code> — named fields, no literal slices  <em>(fixes #7)</em></h3>
+<pre><code class="language-python">@dataclass(frozen=True)
+class ObservationSchema:
+    num_blocks: int
+    def grip(self, raw) -&gt; np.ndarray: ...
+    def block_pos(self, raw, i) -&gt; np.ndarray: ...
+    def block_rot(self, raw, i) -&gt; np.ndarray: ...
+    def gripper_width(self, raw) -&gt; float: ...
+    def mover_base_indices(self, raw) -&gt; tuple[int,int] | None: ...
+</code></pre>
+<p><code>multiblock_env</code> and <code>FactEvaluator</code> both depend on <strong>this</strong>, so the producer and
+consumer of the layout can never silently diverge.</p>
+<h3 id="69-experimentconfig-one-serializable-spec-fixes-12">6.9 <code>ExperimentConfig</code> — one serializable spec  <em>(fixes #12)</em></h3>
+<p>A single dataclass (YAML/JSON-dumpable) that fully determines a run:
+<code>{skills, holdout, algo, timesteps, seed, pipeline_spec, conditioning_mode,
+teacher_spec, reward_norm, sampling}</code>. <code>naming.py</code> derives the filename <em>from</em>
+it; the config is written next to the model. Sweeps enumerate configs, not env
+vars.</p>
+<h3 id="610-teacherpolicy-evalinterpretability-fixes-9-10-11">6.10 <code>TeacherPolicy</code> + eval/interpretability  <em>(fixes #9, #10, #11)</em></h3>
+<pre><code class="language-python">class TeacherPolicy(Protocol):
+    def action(self, obs, evaluator) -&gt; np.ndarray: ...   # None for novel skills
+
+class EvaluationHarness:
+    def success_rates(self, model, skills, *, episodes, seeds) -&gt; dict[str,float]
+    def zero_shot(self, model, held_out_skills, *, episodes) -&gt; dict[str,float]
+
+class InterpretabilityToolkit:
+    def project(self, embeddings) -&gt; np.ndarray                 # PCA/UMAP (have PCA)
+    def component_ablation(self, op, pipeline, model, env) -&gt; dict # Δsuccess per predicate/effect
+    def arithmetic(self, ops, pipeline) -&gt; ...                  # pickup−putdown analogies
+    def interpolate(self, opA, opB, model, env) -&gt; curve        # success vs. blend
+</code></pre>
+<p><code>component_ablation</code> — drop one predicate/effect from a <code>StructuredOperator</code>,
+recompose the embedding, measure the shared policy's Δsuccess — is the payoff of
+compositionality: it makes the embedding <strong>interpretable at the symbol level</strong>.</p>
+<h3 id="611-current-target-mapping">6.11 Current → target mapping</h3>
+<table>
+<thead>
+<tr>
+<th>Today</th>
+<th>Replaced/subsumed by</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>SymbolicActionModel(description=str)</code></td>
+<td><code>StructuredOperator</code> + <code>parse_pddl_operator</code> (§6.1)</td>
+</tr>
+<tr>
+<td><code>MockEmbedder</code>, <code>TextEmbedder</code></td>
+<td><code>MockPipeline</code>, <code>WholeStringPipeline</code> (§6.4) — same iface as new <code>CompositionalPipeline</code></td>
+</tr>
+<tr>
+<td><code>build_embedder</code> + <code>trainable</code> flag</td>
+<td><code>EmbeddingPipeline</code> (frozen <code>.as_numpy</code> vs learnable <code>nn.Module</code>) (§6.4)</td>
+</tr>
+<tr>
+<td><code>EnvWrapper</code> (obs-side)</td>
+<td><code>ConditioningModule mode="by_value"</code> (§6.5)</td>
+</tr>
+<tr>
+<td><code>SkillOneHotWrapper</code>+<code>SkillEmbeddingExtractor</code></td>
+<td><code>ConditioningModule mode="table"/"compositional"</code> (§6.5)</td>
+</tr>
+<tr>
+<td><code>SKILLS</code> dict + <code>skill_reward</code> ladder</td>
+<td><code>SkillRegistry</code> + <code>RewardModule</code> (§6.6–6.7)</td>
+</tr>
+<tr>
+<td>per-shaper <code>compute(**kwargs)</code></td>
+<td><code>RewardModule.compute(RewardContext)</code> (§6.7)</td>
+</tr>
+<tr>
+<td>slice indices in <code>facts.py</code></td>
+<td><code>ObservationSchema</code> (§6.8)</td>
+</tr>
+<tr>
+<td>argparse + env vars + filename</td>
+<td><code>ExperimentConfig</code> (§6.9)</td>
+</tr>
+<tr>
+<td><code>plot_embeddings.py</code></td>
+<td><code>InterpretabilityToolkit</code> (superset) (§6.10)</td>
+</tr>
+<tr>
+<td><code>mock_env_embedder.py</code></td>
+<td>delete</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="7-migration-path-incremental-each-phase-shippable">7. Migration path (incremental, each phase shippable)</h2>
+<ol>
+<li><strong>Quick hygiene</strong> 🟢 — delete <code>mock_env_embedder.py</code>; fix <code>EnvWrapper</code> to read
+   the real obs shape (or route single-skill through <code>ConditioningModule</code>);
+   document the openai-vs-hash semantic constraint.</li>
+<li><strong>Structured operators</strong> 🔴 — add §6.1 (<code>StructuredOperator</code> + parser),
+   populate from existing <code>SKILLS</code> PDDL strings; keep old embedders working via
+   <code>raw</code>. <em>No behavior change; unlocks everything else.</em></li>
+<li><strong>Unify embedding</strong> 🔴 — introduce <code>EmbeddingPipeline</code> (§6.4); re-express
+   Mock/Text as pipelines; retire the <code>trainable</code> double-meaning.</li>
+<li><strong>Unify conditioning</strong> 🔴 — <code>ConditioningModule</code> (§6.5) with <code>mode="table"</code>
+   reproducing today's results (regression check), then add <code>by_value</code>.</li>
+<li><strong>Compositional pipeline</strong> 🔴 — <code>ComponentEmbedder</code> + <code>Aggregator</code> (§6.2–6.3);
+   run the scheme ablation (mean/DeepSets/attention/GNN) vs mock/text baselines.</li>
+<li><strong>Zero-shot</strong> 🔴 — <code>SkillRegistry.holdout</code> + <code>ConditioningModule mode=
+   "compositional"</code>; measure held-out success with <code>EvaluationHarness</code>.</li>
+<li><strong>Decouple rewards</strong> 🔴 — <code>RewardModule</code>/<code>RewardContext</code> + normalizer; removes
+   the ablation confound (#6). Can proceed in parallel with 2–6.</li>
+<li><strong>Interpretability</strong> 🟡 — <code>InterpretabilityToolkit</code> (component ablation,
+   arithmetic, interpolation).</li>
+<li><strong>Config + eval</strong> 🟡 — <code>ExperimentConfig</code> + <code>EvaluationHarness</code> as the standard
+   run/measure surface.</li>
+</ol>
+<p>Phases 2→4 are the critical path; 5–6 deliver the thesis; 7 protects its
+validity; 8–9 make the results legible and reproducible.</p>
+<hr />
+<h2 id="8-risk-register-research-level-not-code">8. Risk register (research-level, not code)</h2>
+<table>
+<thead>
+<tr>
+<th>Risk</th>
+<th>Nature</th>
+<th>Mitigation hook in the design</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Compositional generalization simply doesn't emerge</td>
+<td>The real, unproven scientific claim</td>
+<td>Aggregator is swappable (§6.3); baselines share the interface for honest comparison</td>
+</tr>
+<tr>
+<td>Embeddings collapse (skills indistinguishable) under training</td>
+<td>Trainable table/pipeline drift</td>
+<td><code>current_embeddings()</code> logging + <code>InterpretabilityToolkit.project</code> as a live monitor</td>
+</tr>
+<tr>
+<td>Reward-scale confound masks the embedding effect</td>
+<td>Methodological</td>
+<td><code>RewardNormalizer</code> + <code>scale_hint</code> (§6.7)</td>
+</tr>
+<tr>
+<td>Zero-shot needs a teacher that novel skills lack</td>
+<td>Structural</td>
+<td><code>teacher=None</code> marks held-out skills; eval path forbids BC on them (§6.6)</td>
+</tr>
+<tr>
+<td>"Semantics helps" only measurable with paid API</td>
+<td>Experimental cost</td>
+<td>keep <code>hash</code> baseline; treat <code>openai</code> runs as the semantic arm, documented</td>
+</tr>
+<tr>
+<td>Aggregator interpretability is opaque (esp. attention/GNN)</td>
+<td>Rung 5</td>
+<td>prefer <code>component_ablation</code> (behavioral, model-agnostic) as the primary probe</td>
+</tr>
+</tbody>
+</table>
+<hr />
+<h2 id="9-appendix">9. Appendix</h2>
+<p><strong>Dead / stale:</strong> <code>symb_model_embeddings/mock_env_embedder.py</code> (torch import,
+skill names <code>pushdown/pushup</code> that don't exist in <code>SKILLS</code>; superseded by
+<code>MockEmbedder</code>).</p>
+<p><strong>Strong, keep-as-is:</strong> <code>backends.py</code>, <code>cache.py</code>, <code>multiblock_env.py</code>,
+<code>naming.py</code> — clean, encapsulated, reusable behind the new interfaces.</p>
+<p><strong>Highest-leverage single change:</strong> §6.5 <code>ConditioningModule</code>. It collapses two
+subsystems into one, and its <code>by_value</code>/<code>compositional</code> modes are the only thing
+that makes zero-shot (the project's headline goal) expressible at all.</p>
+<p><strong>Quick wins (&lt; 1 day each):</strong> delete dead file; fix <code>EnvWrapper</code> shape; add the
+PDDL parser (strings already exist); write the current→target mapping table into
+the code as module docstrings so the migration is self-documenting.</p></body></html>
