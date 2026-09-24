@@ -37,3 +37,8 @@ python train_skill.py --skill pushleft --algo sac --timesteps 100000
 ```bash
 MUJOCO_GL=glfw python rollout_skill.py --skill pickup --algo sac --model models/pickup_sac.zip
 ```
+
+## Experimental dimensions
+
+- **Action model formalism.** Currently PDDL operators (descriptive: preconditions + effects).
+  - TODO: explore other action models, such as refinement action models (operational models), which describe *how* to carry out an action procedurally rather than only *what* changes.
