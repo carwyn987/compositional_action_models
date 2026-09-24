@@ -18,6 +18,7 @@ import numpy as np
 
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper, FetchState
+from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
 
 OPEN, CLOSE = 1.0, -1.0
 
@@ -116,21 +117,24 @@ def format_state(state) -> str:
     return f"gripper={np.round(state.gripper_position, 3)} fingers={state.finger_width:.3f} {blocks}"
 
 
+def format_facts(facts) -> str:
+    return " ".join(sorted(f"({' '.join((fact.name, *fact.args))})" for fact in facts)) or "-"
+
+
 def main() -> None:
     args = parse_args()
     environment_kwargs = {}
     if args.num_blocks is not None:
         environment_kwargs["num_blocks"] = args.num_blocks
-    env = FetchEnvStateAnnotationWrapper(
-        gym.make(
-            args.env_id,
-            render_mode=None if args.no_render else "human",
-            width=args.window_width,
-            height=args.window_height,
-            max_episode_steps=args.max_episode_steps,
-            **environment_kwargs,
-        )
+    base_env = gym.make(
+        args.env_id,
+        render_mode=None if args.no_render else "human",
+        width=args.window_width,
+        height=args.window_height,
+        max_episode_steps=args.max_episode_steps,
+        **environment_kwargs,
     )
+    env = FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env))
     env.action_space.seed(args.seed)
     policy = POLICIES[args.policy](env)
 
@@ -140,10 +144,17 @@ def main() -> None:
             policy.reset()
             block_start_z = {name: p[2] for name, p in info["environment_state"].block_positions.items()}
             print(f"=== episode {episode} env={args.env_id} policy={args.policy} ===")
+            print(f"facts at start: {format_facts(info['facts'])}")
 
             for t in range(args.max_episode_steps):
                 action = policy(info["environment_state"])
+                previous_facts = info["facts"]
                 obs, reward, terminated, truncated, info = env.step(action)
+                if info["facts"] != previous_facts:
+                    print(
+                        f"t={t:03d} facts added: {format_facts(info['facts'] - previous_facts)}"
+                        f"  removed: {format_facts(previous_facts - info['facts'])}"
+                    )
                 if t % args.print_every == 0 or terminated or truncated:
                     print(f"t={t:03d} action={np.round(action, 2)} {format_state(info['environment_state'])}")
                 if not args.no_render:
