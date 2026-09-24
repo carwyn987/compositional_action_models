@@ -1,1 +1,5 @@
+gymnasium==1.3.0
+gymnasium-robotics==1.4.2
+mujoco==3.9.0
+numpy
 pytest==9.1.1
