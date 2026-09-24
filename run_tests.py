@@ -1,3 +1,4 @@
+#!/usr/bin/env python3
 """Run every test under tests/: python run_tests.py [pytest args, e.g. -m unit]"""
 
 import sys

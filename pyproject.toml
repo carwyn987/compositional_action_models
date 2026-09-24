@@ -18,5 +18,6 @@ testpaths = ["tests"]
 pythonpath = ["src"]
 markers = [
     "unit: fast, isolated tests of a single module",
+    "integration: tests that run a simulator (seconds)",
 ]
 strict_markers = true
