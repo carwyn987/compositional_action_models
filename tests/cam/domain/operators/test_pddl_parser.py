@@ -4,12 +4,11 @@ Expected API:
     tokenize(text: str) -> list[str]
     parse_sexpr(text: str) -> list          # nested lists of str
     parse_operator(text: str) -> PDDLOperator
-
-Skipped until the module exists.
 """
 
 import pytest
 
+from cam.domain.operators import pddl_parser
 from cam.domain.operators.pddl import (
     Effect,
     PDDLOperator,
@@ -17,60 +16,7 @@ from cam.domain.operators.pddl import (
     Predicate,
     TypedParameter,
 )
-from tests.cam.domain.conftest import PICKUP_PDDL
-
-pddl_parser = pytest.importorskip("cam.domain.operators.pddl_parser")
-
-# Operator strings from deprecated/fetch_blockworld/skills.py.
-LEGACY_OPERATORS = {
-    "pickup": (
-        "(:action pickup :parameters (?o - block) "
-        ":precondition (and (on-table ?o) (clear ?o) (gripper-empty)) "
-        ":effect (and (holding ?o) (not (on-table ?o)) (not (gripper-empty))))"
-    ),
-    "putdown": (
-        "(:action putdown :parameters (?o - block) "
-        ":precondition (holding ?o) "
-        ":effect (and (on-table ?o) (clear ?o) (gripper-empty) (not (holding ?o))))"
-    ),
-    "pushleft": (
-        "(:action pushleft :parameters (?o - block) "
-        ":precondition (and (on-table ?o) (gripper-empty)) "
-        ":effect (moved-left ?o))"
-    ),
-    "pushright": (
-        "(:action pushright :parameters (?o - block) "
-        ":precondition (and (on-table ?o) (gripper-empty)) "
-        ":effect (moved-right ?o))"
-    ),
-    "pushforward": (
-        "(:action pushforward :parameters (?o - block) "
-        ":precondition (and (on-table ?o) (gripper-empty)) "
-        ":effect (moved-forward ?o))"
-    ),
-    "pushbackward": (
-        "(:action pushbackward :parameters (?o - block) "
-        ":precondition (and (on-table ?o) (gripper-empty)) "
-        ":effect (moved-backward ?o))"
-    ),
-    "reach_top": (
-        "(:action reach_top :parameters (?o - block) "
-        ":precondition (clear ?o) "
-        ":effect (gripper-at-top ?o))"
-    ),
-    "stack": (
-        "(:action stack :parameters (?o - block ?b - block) "
-        ":precondition (and (holding ?o) (clear ?b)) "
-        ":effect (and (on ?o ?b) (clear ?o) (gripper-empty) "
-        "(not (holding ?o)) (not (clear ?b))))"
-    ),
-    "unstack": (
-        "(:action unstack :parameters (?o - block ?b - block) "
-        ":precondition (and (on ?o ?b) (clear ?o) (gripper-empty)) "
-        ":effect (and (on-table ?o) (clear ?b) (not (on ?o ?b))))"
-    ),
-}
-
+from tests.cam.domain.conftest import LEGACY_OPERATORS, PICKUP_PDDL
 
 # --- tokenize ---------------------------------------------------------------
 
