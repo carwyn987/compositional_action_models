@@ -14,7 +14,8 @@ class FetchState:
 
 
 class FetchEnvStateAnnotationWrapper(gym.Wrapper):
-    """Adds info["environment_state"], a FetchState of the current observation.
+    """Adds info["environment_state"], a FetchState of the current observation, and
+    info["objects"], the scene's objects by name and type ({"block0": "block", ...}).
 
     Works for the stock single-block Fetch object tasks and FetchMultiBlock-v0.
     Observations are passed through unchanged. Layout of obs["observation"]:
@@ -34,12 +35,18 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
 
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
-        return obs, {**info, "environment_state": self.extract_state(obs)}
+        return obs, {**info, **self._annotations(obs)}
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        info = {**info, "environment_state": self.extract_state(obs)}
-        return obs, reward, terminated, truncated, info
+        return obs, reward, terminated, truncated, {**info, **self._annotations(obs)}
+
+    def _annotations(self, obs: dict) -> dict:
+        state = self.extract_state(obs)
+        return {
+            "environment_state": state,
+            "objects": {name: "block" for name in state.block_positions},
+        }
 
     @classmethod
     def count_blocks(cls, observation_size: int) -> int:

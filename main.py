@@ -16,6 +16,7 @@ from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
 from cam.skills.registry import SKILL_REGISTRY, build_skill
+from cam.skills.skill import Skill
 
 
 def parse_args(argv: list[str] | None = None) -> dict:
@@ -69,21 +70,40 @@ def setup_environment(config: dict) -> gym.Env:
     return FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(env))
 
 
-def train(config: dict, env: gym.Env) -> list[float]:
-    """Run up to max_episodes episodes of up to max_steps_per_episode steps; return episode returns."""
+def train(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
+    """Run up to max_episodes episodes of up to max_steps_per_episode steps; return episode returns.
+
+    Skills take turns across episodes. Each episode targets one grounding of its
+    skill, chosen at random among those whose preconditions hold after reset, and
+    ends early when that grounding's effects hold.
+    """
+    rng = np.random.default_rng(config["seed"])
     episode_returns = []
     for episode in range(config["max_episodes"]):
+        skill = skills[episode % len(skills)]
         obs, info = env.reset(seed=config["seed"] if episode == 0 else None)
+        candidates = skill.applicable_groundings(info["facts"], info["objects"])
+        if not candidates:
+            print(f"episode {episode:04d} skipped: no applicable grounding of {skill.name}")
+            continue
+        grounded = candidates[rng.integers(len(candidates))]
+
         episode_return = 0.0
+        success = False
         for step in range(config["max_steps_per_episode"]):
             action = env.action_space.sample()  # TODO: replace with the policy's action for obs
             obs, reward, terminated, truncated, info = env.step(action)
             episode_return += float(reward)
-            if terminated or truncated:
+            success = grounded.effects_hold(info["facts"])
+            if success or terminated or truncated:
                 break
         episode_returns.append(episode_return)
-        print(f"episode {episode:04d} steps={step + 1:4d} return={episode_return:8.2f}")
-    print(f"mean return over {len(episode_returns)} episodes: {np.mean(episode_returns):.2f}")
+        print(
+            f"episode {episode:04d} {str(grounded):20s} steps={step + 1:4d} "
+            f"return={episode_return:8.2f} success={success}"
+        )
+    if episode_returns:
+        print(f"mean return over {len(episode_returns)} episodes: {np.mean(episode_returns):.2f}")
     return episode_returns
 
 
@@ -95,7 +115,7 @@ def main(argv: list[str] | None = None) -> None:
 
     env = setup_environment(config)
     try:
-        train(config, env)
+        train(config, env, skills)
     finally:
         env.close()
 

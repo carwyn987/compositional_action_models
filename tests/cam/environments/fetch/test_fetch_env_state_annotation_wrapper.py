@@ -76,4 +76,5 @@ def test_wrapper_annotates_multiblock_environment(num_blocks):
     obs, info = env.reset(seed=0)
     assert env.num_blocks == num_blocks
     assert list(info["environment_state"].block_positions) == [f"block{i}" for i in range(num_blocks)]
+    assert info["objects"] == {f"block{i}": "block" for i in range(num_blocks)}
     env.close()
