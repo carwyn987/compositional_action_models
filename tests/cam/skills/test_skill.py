@@ -1,6 +1,7 @@
 import pytest
 
-from cam.domain.operators.pddl import PDDLOperator, Predicate
+from cam.domain.pddl.pddl import PDDLOperator
+from cam.domain.symbols import Predicate
 from cam.skills.pickup_skill import PickupSkill
 from cam.skills.putdown_skill import PutdownSkill
 

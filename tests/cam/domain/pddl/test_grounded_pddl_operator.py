@@ -1,9 +1,9 @@
 import pytest
 
-from cam.domain.operators.grounded_operator import GroundedOperator, ground
-from cam.domain.operators.pddl import Predicate
-from cam.domain.operators.pddl_parser import parse_operator
+from cam.domain.pddl.grounded_pddl_operator import GroundedPDDLOperator, ground
+from cam.domain.pddl.pddl_parser import parse_operator
 from cam.domain.symbolic_action_model import applicable_groundings, groundings
+from cam.domain.symbols import Predicate
 from tests.cam.domain.conftest import LEGACY_OPERATORS
 
 # pickup_operator (conftest): pre (on-table ?o) (clear ?o) (gripper-empty) (not (holding ?o));
@@ -96,13 +96,13 @@ def test_applicable_groundings_filter_by_preconditions(pickup_operator):
 
 @pytest.mark.unit
 def test_direct_construction_requires_one_argument_per_parameter(pickup_operator):
-    """GroundedOperator itself rejects an argument count that does not match the operator."""
+    """GroundedPDDLOperator itself rejects an argument count that does not match the operator."""
     with pytest.raises(ValueError):
-        GroundedOperator(pickup_operator, ("block0", "block1"))
+        GroundedPDDLOperator(pickup_operator, ("block0", "block1"))
 
 
 @pytest.mark.unit
 def test_groundings_are_equal_and_hashable_by_operator_and_arguments(pickup_operator):
     """Two groundings of the same operator on the same objects are interchangeable (e.g. as set members)."""
-    assert ground(pickup_operator, BLOCK0) == GroundedOperator(pickup_operator, ("block0",))
+    assert ground(pickup_operator, BLOCK0) == GroundedPDDLOperator(pickup_operator, ("block0",))
     assert len({ground(pickup_operator, BLOCK0), ground(pickup_operator, BLOCK0)}) == 1

@@ -3,7 +3,7 @@
 from abc import ABC, abstractmethod
 
 from cam.domain.action_model_library.loader import load_symbolic_action_model
-from cam.domain.operators.pddl import Predicate
+from cam.domain.symbols import Predicate
 from cam.domain.symbolic_action_model import (
     GroundedSymbolicActionModel,
     SymbolicActionModel,

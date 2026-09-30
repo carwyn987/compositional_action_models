@@ -7,14 +7,10 @@ predicates true in a state (closed world). Each format (PDDL, ...) implements
 both classes; skills and training use only these interfaces.
 """
 
-from __future__ import annotations
-
 from abc import ABC, abstractmethod
 from itertools import product
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from cam.domain.operators.pddl import Predicate, TypedParameter
+from cam.domain.symbols import Predicate, TypedParameter
 
 
 class GroundedSymbolicActionModel(ABC):

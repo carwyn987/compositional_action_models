@@ -14,7 +14,7 @@ from typing import Callable
 import gymnasium as gym
 import numpy as np
 
-from cam.domain.operators.pddl import Predicate
+from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchState
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
 

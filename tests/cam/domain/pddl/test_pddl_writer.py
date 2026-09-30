@@ -1,4 +1,4 @@
-"""Tests for cam.domain.operators.pddl_writer.
+"""Tests for cam.domain.pddl.pddl_writer.
 
 Canonical form produced by to_pddl:
     - one line, single spaces
@@ -12,15 +12,10 @@ Together with the parser this closes the loop:
 
 import pytest
 
-from cam.domain.operators.pddl import (
-    Effect,
-    PDDLOperator,
-    Precondition,
-    Predicate,
-    TypedParameter,
-)
-from cam.domain.operators.pddl_parser import parse_operator
-from cam.domain.operators.pddl_writer import to_pddl
+from cam.domain.pddl.pddl import Effect, PDDLOperator, Precondition
+from cam.domain.pddl.pddl_parser import parse_operator
+from cam.domain.pddl.pddl_writer import to_pddl
+from cam.domain.symbols import Predicate, TypedParameter
 from tests.cam.domain.conftest import LEGACY_OPERATORS, PICKUP_PDDL
 
 # Canonical renderings of two legacy operators whose source is not canonical.

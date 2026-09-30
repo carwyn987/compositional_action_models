@@ -1,4 +1,4 @@
-"""Tests for cam.domain.operators.pddl_parser.
+"""Tests for cam.domain.pddl.pddl_parser.
 
 Expected API:
     tokenize(text: str) -> list[str]
@@ -8,14 +8,9 @@ Expected API:
 
 import pytest
 
-from cam.domain.operators import pddl_parser
-from cam.domain.operators.pddl import (
-    Effect,
-    PDDLOperator,
-    Precondition,
-    Predicate,
-    TypedParameter,
-)
+from cam.domain.pddl import pddl_parser
+from cam.domain.pddl.pddl import Effect, PDDLOperator, Precondition
+from cam.domain.symbols import Predicate, TypedParameter
 from tests.cam.domain.conftest import LEGACY_OPERATORS, PICKUP_PDDL
 
 # --- tokenize ---------------------------------------------------------------

@@ -1,4 +1,4 @@
-"""PDDL operator data types: Predicate, TypedParameter, Precondition, Effect, PDDLOperator.
+"""PDDL operator data types: Precondition, Effect, PDDLOperator.
 
 Pure domain objects: no dependency on torch, gym, RL, or logging.
 """
@@ -6,18 +6,7 @@ Pure domain objects: no dependency on torch, gym, RL, or logging.
 from dataclasses import dataclass
 
 from cam.domain.symbolic_action_model import SymbolicActionModel
-
-
-@dataclass(frozen=True)
-class TypedParameter:
-    name: str  # e.g. "?o"
-    type: str  # e.g. "block"
-
-
-@dataclass(frozen=True)
-class Predicate:
-    name: str  # e.g. "on"
-    args: tuple[str, ...]  # e.g. ("?o", "?b")
+from cam.domain.symbols import Predicate, TypedParameter
 
 
 @dataclass(frozen=True)
@@ -40,6 +29,6 @@ class PDDLOperator(SymbolicActionModel):
     effects: tuple[Effect, ...]
 
     def ground(self, binding: dict[str, str]):
-        from cam.domain.operators.grounded_operator import ground  # grounded_operator imports this module
+        from cam.domain.pddl.grounded_pddl_operator import ground  # grounded_pddl_operator imports this module
 
         return ground(self, binding)

@@ -7,7 +7,7 @@ e.g. pddl/pickup.pddl.
 from importlib.resources import files
 from importlib.resources.abc import Traversable
 
-from cam.domain.operators.pddl_parser import parse_operator
+from cam.domain.pddl.pddl_parser import parse_operator
 from cam.domain.symbolic_action_model import SymbolicActionModel
 
 

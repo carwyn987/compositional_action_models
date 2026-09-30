@@ -3,12 +3,13 @@
 from dataclasses import dataclass
 from functools import cached_property
 
-from cam.domain.operators.pddl import Effect, PDDLOperator, Precondition, Predicate
+from cam.domain.pddl.pddl import Effect, PDDLOperator, Precondition
 from cam.domain.symbolic_action_model import GroundedSymbolicActionModel
+from cam.domain.symbols import Predicate
 
 
 @dataclass(frozen=True)
-class GroundedOperator(GroundedSymbolicActionModel):
+class GroundedPDDLOperator(GroundedSymbolicActionModel):
     """An operator applied to specific objects.
 
     preconditions and effects are the operator's, with every variable replaced
@@ -59,7 +60,7 @@ class GroundedOperator(GroundedSymbolicActionModel):
         return f"{self.operator.name}({', '.join(self.arguments)})"
 
 
-def ground(operator: PDDLOperator, binding: dict[str, str]) -> GroundedOperator:
+def ground(operator: PDDLOperator, binding: dict[str, str]) -> GroundedPDDLOperator:
     """Bind every operator parameter to an object, e.g. {"?o": "block0"}."""
     parameter_names = [param.name for param in operator.parameters]
     missing = [name for name in parameter_names if name not in binding]
@@ -69,5 +70,5 @@ def ground(operator: PDDLOperator, binding: dict[str, str]) -> GroundedOperator:
             f"binding for {operator.name} must bind exactly {parameter_names}; "
             f"missing {missing}, unknown {extra}"
         )
-    return GroundedOperator(operator, tuple(binding[name] for name in parameter_names))
+    return GroundedPDDLOperator(operator, tuple(binding[name] for name in parameter_names))
 

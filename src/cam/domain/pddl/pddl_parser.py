@@ -4,13 +4,8 @@ Supported subset: typed parameters, and a conjunction (or a single literal) of
 positive / `(not ...)` literals for both :precondition and :effect.
 """
 
-from cam.domain.operators.pddl import (
-    Effect,
-    PDDLOperator,
-    Precondition,
-    Predicate,
-    TypedParameter,
-)
+from cam.domain.pddl.pddl import Effect, PDDLOperator, Precondition
+from cam.domain.symbols import Predicate, TypedParameter
 
 SExpr = str | list["SExpr"]
 

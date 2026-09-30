@@ -1,6 +1,7 @@
 import pytest
 
-from cam.domain.operators.pddl import Precondition, Predicate
+from cam.domain.pddl.pddl import Precondition
+from cam.domain.symbols import Predicate
 
 
 @pytest.mark.unit

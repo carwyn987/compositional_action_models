@@ -1,12 +1,7 @@
 import pytest
 
-from cam.domain.operators.pddl import (
-    Effect,
-    PDDLOperator,
-    Precondition,
-    Predicate,
-    TypedParameter,
-)
+from cam.domain.pddl.pddl import Effect, PDDLOperator, Precondition
+from cam.domain.symbols import Predicate, TypedParameter
 
 PICKUP_PDDL = (
     "(:action pickup :parameters (?o - block) "

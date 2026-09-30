@@ -1,7 +1,7 @@
 import pytest
 
 from cam.domain.action_model_library.loader import load_symbolic_action_model
-from cam.domain.operators.pddl import PDDLOperator
+from cam.domain.pddl.pddl import PDDLOperator
 
 
 @pytest.mark.unit

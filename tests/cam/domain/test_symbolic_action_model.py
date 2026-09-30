@@ -2,7 +2,7 @@ from dataclasses import dataclass
 
 import pytest
 
-from cam.domain.operators.pddl import Predicate, TypedParameter
+from cam.domain.symbols import Predicate, TypedParameter
 from cam.domain.symbolic_action_model import (
     GroundedSymbolicActionModel,
     SymbolicActionModel,
