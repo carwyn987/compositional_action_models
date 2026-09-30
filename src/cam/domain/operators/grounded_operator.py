@@ -2,13 +2,13 @@
 
 from dataclasses import dataclass
 from functools import cached_property
-from itertools import product
 
 from cam.domain.operators.pddl import Effect, PDDLOperator, Precondition, Predicate
+from cam.domain.symbolic_action_model import GroundedSymbolicActionModel
 
 
 @dataclass(frozen=True)
-class GroundedOperator:
+class GroundedOperator(GroundedSymbolicActionModel):
     """An operator applied to specific objects.
 
     preconditions and effects are the operator's, with every variable replaced
@@ -71,22 +71,3 @@ def ground(operator: PDDLOperator, binding: dict[str, str]) -> GroundedOperator:
         )
     return GroundedOperator(operator, tuple(binding[name] for name in parameter_names))
 
-
-def groundings(operator: PDDLOperator, objects: dict[str, str]) -> list[GroundedOperator]:
-    """Every assignment of distinct objects to the operator's parameters whose types match.
-
-    objects maps object name to type, e.g. {"block0": "block", "block1": "block"}.
-    """
-    candidates = [[obj for obj, obj_type in objects.items() if obj_type == param.type] for param in operator.parameters]
-    return [
-        ground(operator, {param.name: obj for param, obj in zip(operator.parameters, assignment)})
-        for assignment in product(*candidates)
-        if len(set(assignment)) == len(assignment)
-    ]
-
-
-def applicable_groundings(
-    operator: PDDLOperator, facts: frozenset[Predicate], objects: dict[str, str]
-) -> list[GroundedOperator]:
-    """The groundings whose preconditions hold in facts."""
-    return [grounded for grounded in groundings(operator, objects) if grounded.preconditions_hold(facts)]

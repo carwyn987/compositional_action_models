@@ -3,8 +3,12 @@
 from abc import ABC, abstractmethod
 
 from cam.domain.action_model_library.loader import load_symbolic_action_model
-from cam.domain.operators.grounded_operator import GroundedOperator, applicable_groundings, ground
 from cam.domain.operators.pddl import Predicate
+from cam.domain.symbolic_action_model import (
+    GroundedSymbolicActionModel,
+    SymbolicActionModel,
+    applicable_groundings,
+)
 
 
 class Skill(ABC):
@@ -22,17 +26,17 @@ class Skill(ABC):
 
     def __init__(self, config: dict):
         self.config = config
-        self.symbolic_action_model = load_symbolic_action_model(
+        self.symbolic_action_model: SymbolicActionModel = load_symbolic_action_model(
             self.name, config["symbolic_action_model_format"]
         )
 
-    def ground(self, binding: dict[str, str]) -> GroundedOperator:
+    def ground(self, binding: dict[str, str]) -> GroundedSymbolicActionModel:
         """This skill's action model with its parameters bound, e.g. {"?o": "block0"}."""
-        return ground(self.symbolic_action_model, binding)
+        return self.symbolic_action_model.ground(binding)
 
     def applicable_groundings(
         self, facts: frozenset[Predicate], objects: dict[str, str]
-    ) -> list[GroundedOperator]:
+    ) -> list[GroundedSymbolicActionModel]:
         """Groundings of this skill's action model over objects (name -> type) whose
         preconditions hold in facts."""
         return applicable_groundings(self.symbolic_action_model, facts, objects)

@@ -5,6 +5,8 @@ Pure domain objects: no dependency on torch, gym, RL, or logging.
 
 from dataclasses import dataclass
 
+from cam.domain.symbolic_action_model import SymbolicActionModel
+
 
 @dataclass(frozen=True)
 class TypedParameter:
@@ -31,8 +33,13 @@ class Effect:
 
 
 @dataclass(frozen=True)
-class PDDLOperator:
+class PDDLOperator(SymbolicActionModel):
     name: str
     parameters: tuple[TypedParameter, ...]
     preconditions: tuple[Precondition, ...]
     effects: tuple[Effect, ...]
+
+    def ground(self, binding: dict[str, str]):
+        from cam.domain.operators.grounded_operator import ground  # grounded_operator imports this module
+
+        return ground(self, binding)

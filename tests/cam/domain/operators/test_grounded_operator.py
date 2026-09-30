@@ -1,8 +1,9 @@
 import pytest
 
-from cam.domain.operators.grounded_operator import GroundedOperator, applicable_groundings, ground, groundings
+from cam.domain.operators.grounded_operator import GroundedOperator, ground
 from cam.domain.operators.pddl import Predicate
 from cam.domain.operators.pddl_parser import parse_operator
+from cam.domain.symbolic_action_model import applicable_groundings, groundings
 from tests.cam.domain.conftest import LEGACY_OPERATORS
 
 # pickup_operator (conftest): pre (on-table ?o) (clear ?o) (gripper-empty) (not (holding ?o));
