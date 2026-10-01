@@ -6,7 +6,7 @@
     python scripts/visualize_environment.py --env-id FetchPush-v4
     python scripts/visualize_environment.py --no-render --episodes 5
 
-Policies act on the FetchState in info["environment_state"].
+The scripted policy picks up block0.
 Actions are [dx, dy, dz, gripper] in [-1, 1]; gripper > 0 opens, < 0 closes.
 """
 
@@ -17,76 +17,18 @@ import gymnasium as gym
 import numpy as np
 
 from cam.environments.fetch import fetch_multiblock_environment
-from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper, FetchState
+from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
-
-OPEN, CLOSE = 1.0, -1.0
-
-
-class RandomPolicy:
-    def __init__(self, action_space: gym.Space):
-        self.action_space = action_space
-
-    def reset(self) -> None:
-        pass
-
-    def __call__(self, state: FetchState) -> np.ndarray:
-        return self.action_space.sample()
-
-
-class ScriptedPickupPolicy:
-    """Approach above the target block, descend, close, lift. Deterministic given states."""
-
-    APPROACH_HEIGHT = 0.10
-    LIFT_HEIGHT = 0.15
-    REACHED_TOLERANCE = 0.01
-    CLOSE_STEPS = 10
-    GAIN = 10.0
-
-    def __init__(self, block: str = "block0"):
-        self.block = block
-
-    def reset(self) -> None:
-        self.phase = "approach"
-        self.close_steps_taken = 0
-        self.block_start = None
-
-    def __call__(self, state: FetchState) -> np.ndarray:
-        gripper = state.gripper_position
-        block = state.block_positions[self.block]
-        if self.block_start is None:
-            self.block_start = block.copy()
-
-        if self.phase == "approach":
-            target = block + [0.0, 0.0, self.APPROACH_HEIGHT]
-            if self._reached(gripper, target):
-                self.phase = "descend"
-            return self._servo(gripper, target, OPEN)
-        if self.phase == "descend":
-            if self._reached(gripper, block):
-                self.phase = "close"
-            return self._servo(gripper, block, OPEN)
-        if self.phase == "close":
-            self.close_steps_taken += 1
-            if self.close_steps_taken >= self.CLOSE_STEPS:
-                self.phase = "lift"
-            return np.array([0.0, 0.0, 0.0, CLOSE], dtype=np.float32)
-        return self._servo(gripper, self.block_start + [0.0, 0.0, self.LIFT_HEIGHT], CLOSE)
-
-    def _reached(self, gripper: np.ndarray, target: np.ndarray) -> bool:
-        """True when the gripper is within REACHED_TOLERANCE of target."""
-        return float(np.linalg.norm(gripper - target)) < self.REACHED_TOLERANCE
-
-    def _servo(self, gripper: np.ndarray, target: np.ndarray, gripper_command: float) -> np.ndarray:
-        """Proportional step toward target (clipped to [-1, 1]), with the given gripper command."""
-        delta = np.clip(self.GAIN * (target - gripper), -1.0, 1.0)
-        return np.array([*delta, gripper_command], dtype=np.float32)
-
+from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy
+from cam.logging_config import configure_logging
+from cam.policies.policy import RandomPolicy
+from cam.skills.registry import build_skill
 
 POLICIES = {
     "random": lambda env: RandomPolicy(env.action_space),
-    "scripted-pickup": lambda env: ScriptedPickupPolicy(),
+    "scripted-pickup": lambda env: FetchScriptedPickupPolicy(),
 }
+PICKUP_BLOCK0 = build_skill("pickup", {"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,12 +59,9 @@ def format_state(state) -> str:
     return f"gripper={np.round(state.gripper_position, 3)} fingers={state.finger_width:.3f} {blocks}"
 
 
-def format_facts(facts) -> str:
-    return " ".join(sorted(f"({' '.join((fact.name, *fact.args))})" for fact in facts)) or "-"
-
-
 def main() -> None:
     args = parse_args()
+    configure_logging()
     environment_kwargs = {}
     if args.num_blocks is not None:
         environment_kwargs["num_blocks"] = args.num_blocks
@@ -144,17 +83,10 @@ def main() -> None:
             policy.reset()
             block_start_z = {name: p[2] for name, p in info["environment_state"].block_positions.items()}
             print(f"=== episode {episode} env={args.env_id} policy={args.policy} ===")
-            print(f"facts at start: {format_facts(info['facts'])}")
 
             for t in range(args.max_episode_steps):
-                action = policy(info["environment_state"])
-                previous_facts = info["facts"]
+                action = policy(obs, info, PICKUP_BLOCK0)
                 obs, reward, terminated, truncated, info = env.step(action)
-                if info["facts"] != previous_facts:
-                    print(
-                        f"t={t:03d} facts added: {format_facts(info['facts'] - previous_facts)}"
-                        f"  removed: {format_facts(previous_facts - info['facts'])}"
-                    )
                 if t % args.print_every == 0 or terminated or truncated:
                     print(f"t={t:03d} action={np.round(action, 2)} {format_state(info['environment_state'])}")
                 if not args.no_render:

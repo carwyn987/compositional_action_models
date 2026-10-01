@@ -8,15 +8,18 @@ definitions serve any number of blocks.
 """
 
 import inspect
+import logging
 from itertools import permutations
 from typing import Callable
 
 import gymnasium as gym
 import numpy as np
 
-from cam.domain.symbols import Predicate
+from cam.domain.symbols import Predicate, format_facts
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchState
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
+
+logger = logging.getLogger(__name__)
 
 TABLE_REST_Z = 0.425  # block centre height when resting on the table
 Z_TOLERANCE = 0.01  # height tolerance for resting on the table / on another block
@@ -83,12 +86,19 @@ class FetchPredicateEvaluationWrapper(gym.Wrapper):
 
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
-        return obs, {**info, "facts": self.evaluate(info["environment_state"])}
+        self.facts = self.evaluate(info["environment_state"])
+        logger.info("facts at reset: %s", format_facts(self.facts))
+        return obs, {**info, "facts": self.facts}
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        info = {**info, "facts": self.evaluate(info["environment_state"])}
-        return obs, reward, terminated, truncated, info
+        facts = self.evaluate(info["environment_state"])
+        if facts != self.facts:
+            logger.info(
+                "facts added: %s  removed: %s", format_facts(facts - self.facts), format_facts(self.facts - facts)
+            )
+            self.facts = facts
+        return obs, reward, terminated, truncated, {**info, "facts": facts}
 
     @staticmethod
     def evaluate(state: FetchState) -> frozenset[Predicate]:

@@ -5,3 +5,4 @@ from cam.skills.skill import Skill
 
 class PutdownSkill(Skill):
     name = "putdown"
+    setup_skills = ("pickup",)

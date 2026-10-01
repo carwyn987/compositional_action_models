@@ -15,6 +15,7 @@ from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
+from cam.logging_config import configure_logging
 from cam.skills.registry import SKILL_REGISTRY, build_skill
 from cam.skills.skill import Skill
 
@@ -109,6 +110,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
 
 def main(argv: list[str] | None = None) -> None:
     config = parse_args(argv)
+    configure_logging()
     skills = [build_skill(skill_name, config) for skill_name in config["skills"]]
     for skill in skills:
         print(skill.symbolic_action_model)

@@ -16,3 +16,11 @@ class TypedParameter:
 class Predicate:
     name: str  # e.g. "on"
     args: tuple[str, ...]  # variables ("?o", "?b") or objects ("block0", "block1")
+
+    def __str__(self) -> str:
+        return f"({' '.join((self.name, *self.args))})"
+
+
+def format_facts(facts) -> str:
+    """Sorted, space-separated facts, e.g. "(clear block0) (gripper-empty)"; "-" when empty."""
+    return " ".join(sorted(str(fact) for fact in facts)) or "-"
