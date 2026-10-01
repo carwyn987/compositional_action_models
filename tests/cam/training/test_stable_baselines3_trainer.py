@@ -2,7 +2,8 @@ import pytest
 
 pytest.importorskip("stable_baselines3")
 
-from main import parse_args, setup_environment  # noqa: E402
+from main import parse_args  # noqa: E402
+from cam.experiments.environment_setup import setup_environment  # noqa: E402
 from cam.skills.registry import build_skill  # noqa: E402
 from cam.training.stable_baselines3_trainer import train_stable_baselines3  # noqa: E402
 

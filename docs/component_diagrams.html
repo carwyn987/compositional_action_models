@@ -1,0 +1,414 @@
+<!doctype html><html><head><meta charset="utf-8"><title>Component diagrams</title>
+<style>body{font-family:sans-serif;margin:2rem;}</style></head><body>
+<h1>Component diagrams</h1>
+<p>Three views of the code as implemented: the component map (packages, entry</p>
+<p>points, and how they connect), the data flow of one training episode, and a</p>
+<p>class diagram. Solid boxes are implemented; dashed grey boxes are planned.</p>
+<p>Arrows point from a component to what it uses, wraps or produces.</p>
+<p>`docs/component_diagrams.html` renders the same diagrams in a browser.</p>
+<h2>Component map</h2>
+<pre class="mermaid">
+flowchart LR
+    %% ---------------- entry points ----------------
+    subgraph entry[&quot;Entry points (repo root / scripts)&quot;]
+        main[&quot;main.py&lt;br/&gt;parse_args · setup_environment&lt;br/&gt;train · run_random_actions&quot;]
+        runskill[&quot;scripts/run_skill.py&lt;br/&gt;one skill, scripted / random policy&quot;]
+        viz[&quot;scripts/visualize_environment.py&lt;br/&gt;render Fetch + scripted pickup&quot;]
+        tb[&quot;scripts/start_tensorboard.sh&quot;]
+        tests[&quot;run_tests.py&lt;br/&gt;pytest: unit / integration&quot;]
+    end
+
+    %% ---------------- domain ----------------
+    subgraph domain[&quot;cam.domain (no simulator, no torch)&quot;]
+        direction TB
+        symbols[&quot;symbols.py&lt;br/&gt;Predicate · TypedParameter · format_facts&quot;]
+        iface[&quot;symbolic_action_model.py&lt;br/&gt;SymbolicActionModel · GroundedSymbolicActionModel&lt;br/&gt;groundings · applicable_groundings&quot;]
+        pddl[&quot;pddl/pddl.py&lt;br/&gt;Precondition · Effect · PDDLOperator&quot;]
+        grounded[&quot;pddl/grounded_pddl_operator.py&lt;br/&gt;GroundedPDDLOperator · ground&quot;]
+        parser[&quot;pddl/pddl_parser.py&lt;br/&gt;parse_operator&quot;]
+        writer[&quot;pddl/pddl_writer.py&lt;br/&gt;to_pddl&quot;]
+        loader[&quot;action_model_library/loader.py&lt;br/&gt;load_symbolic_action_model&quot;]
+        files[(&quot;action_model_library/pddl/&lt;br/&gt;pickup.pddl · putdown.pddl&quot;)]
+    end
+
+    %% ---------------- skills ----------------
+    subgraph skills[&quot;cam.skills&quot;]
+        direction TB
+        skill[&quot;skill.py: Skill&lt;br/&gt;symbolic_action_model · setup_skills&lt;br/&gt;ground · applicable_groundings&quot;]
+        concrete[&quot;PickupSkill · PutdownSkill&lt;br/&gt;(putdown setup_skills = pickup)&quot;]
+        registry[&quot;registry.py&lt;br/&gt;SKILL_REGISTRY · build_skill&quot;]
+    end
+
+    %% ---------------- environments ----------------
+    subgraph envs[&quot;cam.environments&quot;]
+        direction TB
+        gymfetch[&quot;Gymnasium-Robotics Fetch&quot;]
+        multiblock[&quot;fetch/fetch_multiblock_environment.py&lt;br/&gt;FetchMultiBlock-v0 (1-5 blocks)&quot;]
+        annot[&quot;fetch/fetch_env_state_annotation_wrapper.py&lt;br/&gt;drops goal keys; info: environment_state,&lt;br/&gt;objects, object_features&quot;]
+        preds[&quot;fetch/fetch_predicate_evaluation_wrapper.py&lt;br/&gt;FETCH_PREDICATES → info: facts&quot;]
+        skillenv[&quot;skill_environment.py: SkillEnvironment&lt;br/&gt;skill per reset · setup chain · grounding&lt;br/&gt;success · reward&quot;]
+        scripted[&quot;fetch/fetch_scripted_policies.py&lt;br/&gt;scripted pickup / putdown&quot;]
+        fetchrewards[&quot;fetch/fetch_rewards.py&lt;br/&gt;FetchPickupReward (shaped)&quot;]
+    end
+
+    %% ---------------- policies, rewards ----------------
+    subgraph policies[&quot;cam.policies / cam.rewards&quot;]
+        direction TB
+        policy[&quot;policies/policy.py&lt;br/&gt;Policy · RandomPolicy&quot;]
+        reward[&quot;rewards/reward_function.py&lt;br/&gt;RewardFunction · SparseReward&quot;]
+    end
+
+    %% ---------------- representations ----------------
+    subgraph reps[&quot;cam.representations (numpy)&quot;]
+        direction TB
+        openc[&quot;operator_encoder.py: OperatorEncoder&quot;]
+        multihot[&quot;pddl_multi_hot_operator_encoder.py&lt;br/&gt;positional + name-only literal features&quot;]
+        onehot[&quot;one_hot_operator_encoder.py&lt;br/&gt;baseline&quot;]
+        groundenc[&quot;grounding_encoder.py&lt;br/&gt;per-parameter slots&quot;]
+    end
+
+    %% ---------------- training ----------------
+    subgraph training[&quot;cam.training&quot;]
+        direction TB
+        policyobs[&quot;policy_observation_wrapper.py&lt;br/&gt;observation · operator_embedding · grounding&quot;]
+        sb3[&quot;stable_baselines3_trainer.py&lt;br/&gt;SAC / PPO · SuccessRateCallback&quot;]
+    end
+
+    logcfg[&quot;cam/logging_config.py&lt;br/&gt;configure_logging&quot;]
+
+    %% ---------------- planned ----------------
+    subgraph planned[&quot;Planned&quot;]
+        direction TB
+        learnedenc[&quot;Learned / aggregating operator encoders&quot;]
+        evalh[&quot;Evaluation harness (zero-shot, fine-tuning metrics)&quot;]
+        learnedsetup[&quot;Setup by learned skill policies&quot;]
+    end
+
+    %% domain
+    pddl -- implements --&gt; iface
+    grounded -- implements --&gt; iface
+    pddl -.-&gt;|ground| grounded
+    pddl --&gt; symbols
+    iface --&gt; symbols
+    parser --&gt; pddl
+    writer --&gt; pddl
+    loader --&gt; parser
+    loader --&gt; files
+
+    %% skills
+    skill -- loads via --&gt; loader
+    skill -- uses --&gt; iface
+    concrete -- is-a --&gt; skill
+    registry --&gt; concrete
+
+    %% environment stack (inner → outer)
+    multiblock -- extends --&gt; gymfetch
+    annot -- wraps --&gt; multiblock
+    preds -- wraps --&gt; annot
+    preds -- facts use --&gt; symbols
+    skillenv -- wraps --&gt; preds
+    skillenv --&gt; skill
+    skillenv -- setup chain runs --&gt; policy
+    skillenv -- reward from --&gt; reward
+    scripted -- implements --&gt; policy
+    fetchrewards -- implements --&gt; reward
+
+    %% representations
+    multihot -- implements --&gt; openc
+    onehot -- implements --&gt; openc
+    multihot --&gt; pddl
+    groundenc --&gt; iface
+
+    %% training
+    policyobs -- wraps --&gt; skillenv
+    policyobs --&gt; openc
+    policyobs --&gt; groundenc
+    sb3 -- trains on --&gt; policyobs
+
+    %% entry points
+    main --&gt; registry
+    main -- builds --&gt; policyobs
+    main --&gt; sb3
+    main --&gt; logcfg
+    runskill -- builds --&gt; skillenv
+    runskill --&gt; scripted
+    viz -- builds --&gt; preds
+    viz --&gt; scripted
+    tb -.-&gt;|reads logs of| sb3
+    tests -.-&gt; domain
+    tests -.-&gt; skills
+    tests -.-&gt; envs
+    tests -.-&gt; reps
+    tests -.-&gt; training
+
+    %% planned wiring
+    learnedenc -.-&gt; openc
+    evalh -.-&gt; skillenv
+    learnedsetup -.-&gt; skillenv
+
+    classDef plannedStyle fill:#eeeeee,stroke:#999999,stroke-dasharray:5 5,color:#666666
+    class learnedenc,evalh,learnedsetup plannedStyle
+</pre>
+<h2>One training episode</h2>
+<pre class="mermaid">
+sequenceDiagram
+    participant A as SB3 (SAC / PPO)
+    participant O as PolicyObservationWrapper
+    participant S as SkillEnvironment
+    participant F as Predicate ∘ Annotation ∘ Fetch
+    participant P as setup Policy (scripted)
+
+    A-&gt;&gt;O: reset()
+    O-&gt;&gt;S: reset()
+    S-&gt;&gt;S: choose skill (option or next in turn)
+    S-&gt;&gt;F: reset()
+    F--&gt;&gt;S: obs, info{environment_state, objects, object_features, facts}
+    loop each setup skill (e.g. pickup before putdown)
+        S-&gt;&gt;S: choose applicable grounding of the setup skill
+        loop until its effects hold
+            S-&gt;&gt;P: action for (obs, info, grounding)
+            S-&gt;&gt;F: step(action)
+            F--&gt;&gt;S: obs, info{facts, ...}
+        end
+    end
+    S-&gt;&gt;S: choose applicable grounding of the episode skill
+    S--&gt;&gt;O: obs, info{skill, grounded_action_model, setup, ...}
+    O--&gt;&gt;A: {observation, operator_embedding, grounding}
+    loop each step (≤ max_steps_per_episode)
+        A-&gt;&gt;O: step(action)
+        O-&gt;&gt;S: step(action)
+        S-&gt;&gt;F: step(action)
+        F--&gt;&gt;S: obs, info{facts, ...}
+        S-&gt;&gt;S: success = effects_hold(facts), reward = RewardFunction(...)
+        S--&gt;&gt;O: obs, reward, terminated=success, truncated, info
+        O--&gt;&gt;A: policy observation, reward, terminated, truncated, info{is_success, skill, ...}
+    end
+</pre>
+<h2>Class diagram</h2>
+<p>Classes and modules as implemented, grouped by package (see `%%` comments).</p>
+<p>`&lt;&lt;abstract&gt;&gt;` marks interfaces, `&lt;&lt;module&gt;&gt;` groups module-level functions and</p>
+<p>constants, `&lt;&lt;external&gt;&gt;` marks library classes. Methods ending in `*` are abstract.</p>
+<pre class="mermaid">
+classDiagram
+    direction TB
+
+    %% ---- domain ----
+    class Predicate {
+        +name: str
+        +args: tuple~str~
+    }
+    class TypedParameter {
+        +name: str
+        +type: str
+    }
+    class SymbolicActionModel {
+        &lt;&lt;abstract&gt;&gt;
+        +name: str
+        +parameters: tuple~TypedParameter~
+        +ground(binding) GroundedSymbolicActionModel*
+    }
+    class GroundedSymbolicActionModel {
+        &lt;&lt;abstract&gt;&gt;
+        +arguments: tuple~str~
+        +lifted_model: SymbolicActionModel
+        +preconditions_hold(facts) bool*
+        +effects_hold(facts) bool*
+    }
+    class symbolic_action_model {
+        &lt;&lt;module&gt;&gt;
+        +groundings(model, objects) list
+        +applicable_groundings(model, facts, objects) list
+    }
+    class loader {
+        &lt;&lt;module&gt;&gt;
+        +SYMBOLIC_ACTION_MODEL_FORMATS: dict
+        +load_symbolic_action_model(skill_name, format) SymbolicActionModel
+    }
+
+    %% ---- domain.pddl ----
+    class PDDLOperator {
+        +preconditions: tuple~Precondition~
+        +effects: tuple~Effect~
+        +ground(binding) GroundedPDDLOperator
+    }
+    class GroundedPDDLOperator {
+        +operator: PDDLOperator
+        +arguments: tuple~str~
+        +preconditions_hold(facts) bool
+        +effects_hold(facts) bool
+    }
+    class Precondition {
+        +predicate: Predicate
+        +negated: bool
+    }
+    class Effect {
+        +predicate: Predicate
+        +delete: bool
+    }
+    class pddl_parser {
+        &lt;&lt;module&gt;&gt;
+        +parse_operator(text) PDDLOperator
+    }
+    class pddl_writer {
+        &lt;&lt;module&gt;&gt;
+        +to_pddl(operator) str
+    }
+
+    %% ---- skills ----
+    class Skill {
+        &lt;&lt;abstract&gt;&gt;
+        +name() str*
+        +setup_skills: tuple~str~
+        +symbolic_action_model: SymbolicActionModel
+        +ground(binding) GroundedSymbolicActionModel
+        +applicable_groundings(facts, objects) list
+    }
+    class PickupSkill
+    class PutdownSkill {
+        +setup_skills = pickup
+    }
+    class registry {
+        &lt;&lt;module&gt;&gt;
+        +SKILL_REGISTRY: dict
+        +build_skill(skill_name, config) Skill
+    }
+
+    %% ---- policies, rewards ----
+    class Policy {
+        &lt;&lt;abstract&gt;&gt;
+        +reset()
+        +__call__(obs, info, grounded) ndarray*
+    }
+    class RandomPolicy
+    class RewardFunction {
+        &lt;&lt;abstract&gt;&gt;
+        +reset(grounded, info)
+        +__call__(grounded, action, info, success) tuple*
+    }
+    class SparseReward
+
+    %% ---- environments ----
+    class GymWrapper {
+        &lt;&lt;external&gt;&gt;
+    }
+    class MujocoFetchEnv {
+        &lt;&lt;external&gt;&gt;
+    }
+    class FetchMultiBlockEnv {
+        +num_blocks: int
+    }
+    class FetchState {
+        +gripper_position: ndarray
+        +finger_width: float
+        +block_positions: dict
+    }
+    class FetchEnvStateAnnotationWrapper {
+        +num_blocks: int
+        +extract_state(obs) FetchState
+    }
+    class FetchPredicateEvaluationWrapper {
+        +evaluate(state) frozenset~Predicate~
+    }
+    class fetch_predicates {
+        &lt;&lt;module&gt;&gt;
+        +FETCH_PREDICATES: dict
+        +FETCH_PREDICATE_ARITIES: dict
+    }
+    class SkillEnvironment {
+        +skills: dict
+        +setup_policies: dict
+        +reward_functions: dict
+        +grounded_action_model: GroundedSymbolicActionModel
+        +reset(seed, options) tuple
+        +step(action) tuple
+    }
+    class FetchScriptedPickupPolicy
+    class FetchScriptedPutdownPolicy
+    class FetchPickupReward {
+        +config: FetchPickupRewardConfig
+    }
+
+    %% ---- representations ----
+    class OperatorEncoder {
+        &lt;&lt;abstract&gt;&gt;
+        +dim() int*
+        +encode(model) ndarray*
+    }
+    class PDDLMultiHotOperatorEncoder {
+        +features: list
+        +max_arity: int
+    }
+    class OneHotOperatorEncoder
+    class GroundingEncoder {
+        +max_arity: int
+        +max_objects: int
+        +encode(grounded, objects, object_features) ndarray
+    }
+
+    %% ---- training ----
+    class PolicyObservationWrapper {
+        +operator_encoder: OperatorEncoder
+        +grounding_encoder: GroundingEncoder
+    }
+    class stable_baselines3_trainer {
+        &lt;&lt;module&gt;&gt;
+        +train_stable_baselines3(env, algorithm, total_timesteps, run_directory) model
+    }
+    class SuccessRateCallback
+
+    %% inheritance
+    SymbolicActionModel &lt;|-- PDDLOperator
+    GroundedSymbolicActionModel &lt;|-- GroundedPDDLOperator
+    Skill &lt;|-- PickupSkill
+    Skill &lt;|-- PutdownSkill
+    Policy &lt;|-- RandomPolicy
+    Policy &lt;|-- FetchScriptedPickupPolicy
+    Policy &lt;|-- FetchScriptedPutdownPolicy
+    RewardFunction &lt;|-- SparseReward
+    RewardFunction &lt;|-- FetchPickupReward
+    MujocoFetchEnv &lt;|-- FetchMultiBlockEnv
+    GymWrapper &lt;|-- FetchEnvStateAnnotationWrapper
+    GymWrapper &lt;|-- FetchPredicateEvaluationWrapper
+    GymWrapper &lt;|-- SkillEnvironment
+    GymWrapper &lt;|-- PolicyObservationWrapper
+    OperatorEncoder &lt;|-- PDDLMultiHotOperatorEncoder
+    OperatorEncoder &lt;|-- OneHotOperatorEncoder
+
+    %% composition / aggregation
+    SymbolicActionModel *-- TypedParameter
+    PDDLOperator *-- Precondition
+    PDDLOperator *-- Effect
+    Precondition *-- Predicate
+    Effect *-- Predicate
+    GroundedPDDLOperator o-- PDDLOperator
+    Skill o-- SymbolicActionModel
+    SkillEnvironment o-- Skill
+    SkillEnvironment o-- Policy : setup
+    SkillEnvironment o-- RewardFunction
+    SkillEnvironment o-- GroundedSymbolicActionModel : episode
+    FetchPredicateEvaluationWrapper o-- FetchEnvStateAnnotationWrapper : wraps
+    SkillEnvironment o-- FetchPredicateEvaluationWrapper : wraps
+    PolicyObservationWrapper o-- SkillEnvironment : wraps
+    PolicyObservationWrapper o-- OperatorEncoder
+    PolicyObservationWrapper o-- GroundingEncoder
+
+    %% dependencies
+    SymbolicActionModel ..&gt; GroundedSymbolicActionModel : ground()
+    symbolic_action_model ..&gt; SymbolicActionModel
+    loader ..&gt; pddl_parser
+    pddl_parser ..&gt; PDDLOperator : creates
+    pddl_writer ..&gt; PDDLOperator : reads
+    Skill ..&gt; loader
+    Skill ..&gt; symbolic_action_model
+    registry ..&gt; PickupSkill
+    registry ..&gt; PutdownSkill
+    FetchEnvStateAnnotationWrapper ..&gt; FetchState : creates
+    FetchPredicateEvaluationWrapper ..&gt; fetch_predicates
+    FetchPredicateEvaluationWrapper ..&gt; Predicate : creates
+    PDDLMultiHotOperatorEncoder ..&gt; PDDLOperator : encodes
+    GroundingEncoder ..&gt; GroundedSymbolicActionModel : encodes
+    stable_baselines3_trainer ..&gt; PolicyObservationWrapper : trains on
+    stable_baselines3_trainer ..&gt; SuccessRateCallback
+</pre>
+<script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs"; mermaid.initialize({startOnLoad: true});</script>
+</body></html>
