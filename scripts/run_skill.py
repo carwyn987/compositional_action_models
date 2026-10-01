@@ -55,7 +55,7 @@ def main() -> None:
     )
     setup_policies = {name: policy_class() for name, policy_class in SCRIPTED_POLICIES.items()}
     skill_env = SkillEnvironment(
-        FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env)), skill, setup_policies
+        FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env)), [skill], setup_policies
     )
     env = gym.wrappers.TimeLimit(skill_env, args.max_steps)
     env.action_space.seed(args.seed)

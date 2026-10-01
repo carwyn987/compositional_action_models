@@ -59,7 +59,7 @@ class DoNothing(Policy):
 @pytest.mark.unit
 def test_reset_chooses_an_applicable_grounding():
     """A skill without setup targets one of its applicable groundings, reported in info."""
-    env = SkillEnvironment(TwoBlockFactsEnv(), PickupSkill(PDDL_CONFIG))
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)])
     _, info = env.reset(seed=0)
     assert str(info["grounded_action_model"]) in {"pickup(block0)", "pickup(block1)"}
     assert info["setup"] == [] and info["is_success"] == 0.0
@@ -68,7 +68,7 @@ def test_reset_chooses_an_applicable_grounding():
 @pytest.mark.unit
 def test_step_rewards_and_terminates_when_effects_hold():
     """Reward 0 until the grounding's effects hold; then reward 1, terminated, is_success."""
-    env = SkillEnvironment(TwoBlockFactsEnv(), PickupSkill(PDDL_CONFIG))
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)])
     _, info = env.reset(seed=0)
     target = info["grounded_action_model"].arguments[0]
 
@@ -82,7 +82,7 @@ def test_step_rewards_and_terminates_when_effects_hold():
 @pytest.mark.unit
 def test_setup_chain_runs_declared_skills():
     """putdown declares setup_skills=("pickup",): reset runs pickup, so putdown targets the held block."""
-    env = SkillEnvironment(TwoBlockFactsEnv(), PutdownSkill(PDDL_CONFIG), {"pickup": GraspTarget()})
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()})
     _, info = env.reset(seed=0)
     (setup_action, steps), = info["setup"]
     assert str(setup_action).startswith("pickup(") and steps == 1
@@ -97,7 +97,7 @@ def test_setup_chain_of_several_skills():
         setup_skills = ("pickup", "putdown")
 
     policies = {"pickup": GraspTarget(), "putdown": Release()}
-    env = SkillEnvironment(TwoBlockFactsEnv(), PickupAfterPickupAndPutdown(PDDL_CONFIG), policies)
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupAfterPickupAndPutdown(PDDL_CONFIG)], policies)
     _, info = env.reset(seed=0)
     assert [str(grounded).split("(")[0] for grounded, _ in info["setup"]] == ["pickup", "putdown"]
     assert str(info["grounded_action_model"]).startswith("pickup(")
@@ -107,15 +107,44 @@ def test_setup_chain_of_several_skills():
 def test_missing_setup_policy_is_rejected():
     """Every declared setup skill needs a policy; the error is raised at construction."""
     with pytest.raises(ValueError):
-        SkillEnvironment(TwoBlockFactsEnv(), PutdownSkill(PDDL_CONFIG))
+        SkillEnvironment(TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)])
 
 
 @pytest.mark.unit
 def test_reset_raises_when_setup_never_succeeds():
     """A setup policy that never reaches its effects makes reset give up after max_setup_attempts."""
     env = SkillEnvironment(
-        TwoBlockFactsEnv(), PutdownSkill(PDDL_CONFIG), {"pickup": DoNothing()},
+        TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)], {"pickup": DoNothing()},
         max_steps_per_setup_skill=5, max_setup_attempts=3,
     )
     with pytest.raises(RuntimeError):
         env.reset(seed=0)
+
+
+@pytest.mark.unit
+def test_reset_option_selects_the_skill():
+    """reset(options={"skill": name}) runs an episode of that skill, including its setup chain."""
+    env = SkillEnvironment(
+        TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()}
+    )
+    _, info = env.reset(seed=0, options={"skill": "putdown"})
+    assert info["skill"] == "putdown" and len(info["setup"]) == 1
+    _, info = env.reset(options={"skill": "pickup"})
+    assert info["skill"] == "pickup" and info["setup"] == []
+
+
+@pytest.mark.unit
+def test_skills_take_turns_without_a_reset_option():
+    """Without a skill option, episodes cycle through the skills in the order given."""
+    env = SkillEnvironment(
+        TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()}
+    )
+    assert [env.reset(seed=0)[1]["skill"] for _ in range(3)] == ["pickup", "putdown", "pickup"]
+
+
+@pytest.mark.unit
+def test_unknown_skill_option_is_rejected():
+    """Asking for a skill the environment was not built with is an error."""
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)])
+    with pytest.raises(ValueError):
+        env.reset(options={"skill": "putdown"})

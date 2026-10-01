@@ -15,9 +15,13 @@ from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
+from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy, FetchScriptedPutdownPolicy
+from cam.environments.skill_environment import SkillEnvironment
 from cam.logging_config import configure_logging
 from cam.skills.registry import SKILL_REGISTRY, build_skill
 from cam.skills.skill import Skill
+
+SETUP_AND_EPISODE_STEP_LIMIT = 10_000  # inner limit; the episode limit is applied outside SkillEnvironment
 
 
 def parse_args(argv: list[str] | None = None) -> dict:
@@ -53,58 +57,58 @@ def parse_args(argv: list[str] | None = None) -> dict:
     return vars(args)
 
 
-def setup_environment(config: dict) -> gym.Env:
-    """gym.make(environment) with a step limit, wrapped to annotate info["environment_state"] and info["facts"]."""
+def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
+    """Fetch environment annotated with state and facts, running episodes of the given skills.
+
+    Wrapping, inside out: gym.make → FetchEnvStateAnnotationWrapper (environment_state, objects)
+    → FetchPredicateEvaluationWrapper (facts) → SkillEnvironment (setup chain, grounding, success,
+    reward) → TimeLimit (max_steps_per_episode, setup steps excluded).
+    """
     environment_kwargs = {}
     if config["num_blocks"] is not None:
         environment_kwargs["num_blocks"] = config["num_blocks"]
     if config["render"]:
         environment_kwargs.update(width=config["window_width"], height=config["window_height"])
 
-    env = gym.make(
+    base_env = gym.make(
         config["environment_id"],
         render_mode="human" if config["render"] else None,
-        max_episode_steps=config["max_steps_per_episode"],
+        max_episode_steps=SETUP_AND_EPISODE_STEP_LIMIT,
         **environment_kwargs,
     )
+    setup_policies = {"pickup": FetchScriptedPickupPolicy(), "putdown": FetchScriptedPutdownPolicy()}
+    skill_env = SkillEnvironment(
+        FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env)), skills, setup_policies
+    )
+    env = gym.wrappers.TimeLimit(skill_env, config["max_steps_per_episode"])
     env.action_space.seed(config["seed"])
-    return FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(env))
+    return env
 
 
 def train(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
     """Run up to max_episodes episodes of up to max_steps_per_episode steps; return episode returns.
 
-    Skills take turns across episodes. Each episode targets one grounding of its
-    skill, chosen at random among those whose preconditions hold after reset, and
-    ends early when that grounding's effects hold.
+    Skills take turns across episodes; the environment sets up each episode and
+    ends it once the episode's grounded action succeeds.
     """
-    rng = np.random.default_rng(config["seed"])
     episode_returns = []
     for episode in range(config["max_episodes"]):
         skill = skills[episode % len(skills)]
-        obs, info = env.reset(seed=config["seed"] if episode == 0 else None)
-        candidates = skill.applicable_groundings(info["facts"], info["objects"])
-        if not candidates:
-            print(f"episode {episode:04d} skipped: no applicable grounding of {skill.name}")
-            continue
-        grounded = candidates[rng.integers(len(candidates))]
+        obs, info = env.reset(seed=config["seed"] if episode == 0 else None, options={"skill": skill.name})
 
         episode_return = 0.0
-        success = False
         for step in range(config["max_steps_per_episode"]):
             action = env.action_space.sample()  # TODO: replace with the policy's action for obs
             obs, reward, terminated, truncated, info = env.step(action)
             episode_return += float(reward)
-            success = grounded.effects_hold(info["facts"])
-            if success or terminated or truncated:
+            if terminated or truncated:
                 break
         episode_returns.append(episode_return)
         print(
-            f"episode {episode:04d} {str(grounded):20s} steps={step + 1:4d} "
-            f"return={episode_return:8.2f} success={success}"
+            f"episode {episode:04d} {str(info['grounded_action_model']):20s} steps={step + 1:4d} "
+            f"return={episode_return:8.2f} success={bool(info['is_success'])}"
         )
-    if episode_returns:
-        print(f"mean return over {len(episode_returns)} episodes: {np.mean(episode_returns):.2f}")
+    print(f"mean return over {len(episode_returns)} episodes: {np.mean(episode_returns):.2f}")
     return episode_returns
 
 
@@ -115,7 +119,7 @@ def main(argv: list[str] | None = None) -> None:
     for skill in skills:
         print(skill.symbolic_action_model)
 
-    env = setup_environment(config)
+    env = setup_environment(config, skills)
     try:
         train(config, env, skills)
     finally:
