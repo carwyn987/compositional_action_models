@@ -10,7 +10,8 @@ task over one or more skills. Each episode is one grounded action of one skill
            where it applies, then choose a random grounding whose
            preconditions hold
     step   the episode ends (terminated) once the grounding's effects hold;
-           reward is 1.0 on that step, else 0.0
+           the reward comes from the skill's reward function (SparseReward,
+           1.0 on success and 0.0 otherwise, unless another is given)
 
 Each setup skill is executed like an episode of its own: a random applicable
 grounding is chosen and its policy acts until that grounding's effects hold.
@@ -35,6 +36,7 @@ import gymnasium as gym
 
 from cam.domain.symbolic_action_model import GroundedSymbolicActionModel
 from cam.policies.policy import Policy
+from cam.rewards.reward_function import RewardFunction, SparseReward
 from cam.skills.registry import build_skill
 from cam.skills.skill import Skill
 
@@ -49,6 +51,7 @@ class SkillEnvironment(gym.Wrapper):
         grounded_action_model   the episode's grounded action, e.g. putdown(block2)   (reset, step)
         is_success              1.0 once its effects hold, else 0.0                   (reset, step)
         setup                   [(grounded setup action, steps taken), ...]           (reset)
+        reward_components       named terms of the step's reward                     (step)
     """
 
     def __init__(
@@ -56,6 +59,7 @@ class SkillEnvironment(gym.Wrapper):
         env: gym.Env,
         skills: list[Skill],
         setup_policies: dict[str, Policy] | None = None,
+        reward_functions: dict[str, RewardFunction] | None = None,
         max_steps_per_setup_skill: int = 100,
         max_setup_attempts: int = 10,
     ):
@@ -72,6 +76,7 @@ class SkillEnvironment(gym.Wrapper):
         )
         if missing:
             raise ValueError(f"no setup policy for {missing}")
+        self.reward_functions = {name: SparseReward() for name in self.skills} | (reward_functions or {})
         self.max_steps_per_setup_skill = max_steps_per_setup_skill
         self.max_setup_attempts = max_setup_attempts
         self.episodes_started = 0
@@ -95,14 +100,17 @@ class SkillEnvironment(gym.Wrapper):
             if grounded.effects_hold(info["facts"]):
                 logger.warning("episode start: %s effects already hold", grounded)
             self.grounded_action_model = grounded
+            self.reward_functions[self.skill.name].reset(grounded, info)
             return obs, {**self._annotate(info, success=False), "setup": setup}
         raise RuntimeError(f"could not set up {self.skill.name} in {self.max_setup_attempts} attempts")
 
     def step(self, action):
         obs, _, terminated, truncated, info = self.env.step(action)
         success = self.grounded_action_model.effects_hold(info["facts"])
-        reward = 1.0 if success else 0.0
-        return obs, reward, terminated or success, truncated, self._annotate(info, success)
+        reward_function = self.reward_functions[self.skill.name]
+        reward, components = reward_function(self.grounded_action_model, action, info, success)
+        info = {**self._annotate(info, success), "reward_components": components}
+        return obs, reward, terminated or success, truncated, info
 
     def _select_skill(self, skill_name: str | None) -> Skill:
         """The named skill, or the next skill in turn when no name is given."""

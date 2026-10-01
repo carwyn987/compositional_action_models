@@ -78,3 +78,23 @@ def test_wrapper_annotates_multiblock_environment(num_blocks):
     assert list(info["environment_state"].block_positions) == [f"block{i}" for i in range(num_blocks)]
     assert info["objects"] == {f"block{i}": "block" for i in range(num_blocks)}
     env.close()
+
+
+@pytest.mark.integration
+def test_goal_keys_are_dropped(pick_and_place):
+    """Observations keep only "observation"; Fetch's goal keys are removed from the space and the data."""
+    obs, _ = pick_and_place.reset(seed=0)
+    assert list(obs) == ["observation"]
+    assert pick_and_place.observation_space.contains(obs)
+    obs, *_ = pick_and_place.step(pick_and_place.action_space.sample())
+    assert list(obs) == ["observation"]
+
+
+@pytest.mark.integration
+def test_object_features_are_position_and_offset_from_gripper(pick_and_place):
+    """info["object_features"][block] = block position followed by block position minus gripper position."""
+    _, info = pick_and_place.reset(seed=0)
+    state = info["environment_state"]
+    features = info["object_features"]["block0"]
+    np.testing.assert_allclose(features[:3], state.block_positions["block0"], rtol=1e-6)
+    np.testing.assert_allclose(features[3:], state.block_positions["block0"] - state.gripper_position, rtol=1e-5)

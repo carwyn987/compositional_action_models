@@ -31,6 +31,10 @@ class GroundedPDDLOperator(GroundedSymbolicActionModel):
             )
 
     @property
+    def lifted_model(self) -> PDDLOperator:
+        return self.operator
+
+    @property
     def binding(self) -> dict[str, str]:
         return {param.name: obj for param, obj in zip(self.operator.parameters, self.arguments)}
 

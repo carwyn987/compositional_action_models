@@ -15,6 +15,7 @@ from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
+from cam.environments.fetch.fetch_rewards import FETCH_SHAPED_REWARDS
 from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy, FetchScriptedPutdownPolicy
 from cam.environments.skill_environment import SkillEnvironment
 from cam.logging_config import configure_logging
@@ -31,6 +32,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--policy", choices=["scripted", "random"], default="scripted")
     parser.add_argument("--symbolic-action-model-format", choices=sorted(SYMBOLIC_ACTION_MODEL_FORMATS), default="pddl")
     parser.add_argument("--num-blocks", type=int, default=3)
+    parser.add_argument(
+        "--reward", choices=["sparse", "shaped"], default="sparse",
+        help="shaped: Fetch shaped reward where one exists (pickup), sparse otherwise",
+    )
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--max-steps", type=int, default=100, help="episode step limit (setup steps excluded)")
     parser.add_argument("--seed", type=int, default=0)
@@ -54,8 +59,16 @@ def main() -> None:
         max_episode_steps=SETUP_AND_EPISODE_STEP_LIMIT,
     )
     setup_policies = {name: policy_class() for name, policy_class in SCRIPTED_POLICIES.items()}
+    reward_functions = (
+        {name: reward_class() for name, reward_class in FETCH_SHAPED_REWARDS.items()}
+        if args.reward == "shaped"
+        else {}
+    )
     skill_env = SkillEnvironment(
-        FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env)), [skill], setup_policies
+        FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env)),
+        [skill],
+        setup_policies,
+        reward_functions,
     )
     env = gym.wrappers.TimeLimit(skill_env, args.max_steps)
     env.action_space.seed(args.seed)
@@ -69,14 +82,16 @@ def main() -> None:
             print(f"=== episode {episode} target={info['grounded_action_model']} setup: {setup}")
 
             policy.reset()
+            episode_return = 0.0
             for t in range(args.max_steps):
                 obs, reward, terminated, truncated, info = env.step(policy(obs, info, info["grounded_action_model"]))
+                episode_return += reward
                 if args.render:
                     time.sleep(args.sleep)
                 if terminated or truncated:
                     break
             successes += int(info["is_success"])
-            print(f"    success={bool(info['is_success'])} steps={t + 1} reward={reward}")
+            print(f"    success={bool(info['is_success'])} steps={t + 1} return={episode_return:.2f}")
     finally:
         env.close()
     print(f"success rate: {successes}/{args.episodes}")

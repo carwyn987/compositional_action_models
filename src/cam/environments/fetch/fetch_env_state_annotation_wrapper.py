@@ -14,11 +14,15 @@ class FetchState:
 
 
 class FetchEnvStateAnnotationWrapper(gym.Wrapper):
-    """Adds info["environment_state"], a FetchState of the current observation, and
-    info["objects"], the scene's objects by name and type ({"block0": "block", ...}).
+    """Adds to info:
+        environment_state   FetchState of the current observation
+        objects             the scene's objects by name and type ({"block0": "block", ...})
+        object_features     per object, its position and position relative to the gripper (6,)
 
     Works for the stock single-block Fetch object tasks and FetchMultiBlock-v0.
-    Observations are passed through unchanged. Layout of obs["observation"]:
+    Observations keep only obs["observation"]: Fetch's achieved_goal (a copy of
+    block0's position) and desired_goal (a random target for Fetch's own task)
+    are dropped. Layout of obs["observation"]:
         0:3    gripper position
         3:6    block0 position
         9:11   finger joint positions
@@ -26,26 +30,34 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
     Blocks are named block0..block{N-1}; N is determined by the observation length.
     """
 
+    OBJECT_TYPES = ["block"]
+    OBJECT_FEATURE_DIM = 6  # position (3) + position relative to the gripper (3)
     BASE_OBSERVATION_SIZE = 25
     EXTRA_BLOCK_SIZE = 9
 
     def __init__(self, env: gym.Env):
         super().__init__(env)
         self.num_blocks = self.count_blocks(env.observation_space["observation"].shape[0])
+        self.observation_space = gym.spaces.Dict({"observation": env.observation_space["observation"]})
 
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
-        return obs, {**info, **self._annotations(obs)}
+        return {"observation": obs["observation"]}, {**info, **self._annotations(obs)}
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
-        return obs, reward, terminated, truncated, {**info, **self._annotations(obs)}
+        info = {**info, **self._annotations(obs)}
+        return {"observation": obs["observation"]}, reward, terminated, truncated, info
 
     def _annotations(self, obs: dict) -> dict:
         state = self.extract_state(obs)
         return {
             "environment_state": state,
             "objects": {name: "block" for name in state.block_positions},
+            "object_features": {
+                name: np.concatenate([position, position - state.gripper_position]).astype(np.float32)
+                for name, position in state.block_positions.items()
+            },
         }
 
     @classmethod

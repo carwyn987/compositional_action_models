@@ -7,6 +7,8 @@ predicates true in a state (closed world). Each format (PDDL, ...) implements
 both classes; skills and training use only these interfaces.
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
 from itertools import product
 
@@ -15,6 +17,7 @@ from cam.domain.symbols import Predicate, TypedParameter
 
 class GroundedSymbolicActionModel(ABC):
     arguments: tuple[str, ...]  # objects bound to the lifted model's parameters, in order
+    lifted_model: SymbolicActionModel  # the model before grounding, e.g. pickup(?o)
 
     @abstractmethod
     def preconditions_hold(self, facts: frozenset[Predicate]) -> bool:

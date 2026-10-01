@@ -14,13 +14,29 @@ import numpy as np
 from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
-from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FetchPredicateEvaluationWrapper
+from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
+    FETCH_PREDICATE_ARITIES,
+    FetchPredicateEvaluationWrapper,
+)
+from cam.environments.fetch.fetch_rewards import FETCH_SHAPED_REWARDS
 from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy, FetchScriptedPutdownPolicy
 from cam.environments.skill_environment import SkillEnvironment
+from cam.representations.grounding_encoder import GroundingEncoder
+from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
+from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
+from cam.training.policy_observation_wrapper import PolicyObservationWrapper
 from cam.logging_config import configure_logging
 from cam.skills.registry import SKILL_REGISTRY, build_skill
 from cam.skills.skill import Skill
 
+# Operator embedding methods: (config, skills) -> OperatorEncoder. multi-hot's vocabulary comes from the
+# predicates the environment evaluates, so it is the same for any skill set (and for repaired operators).
+OPERATOR_ENCODERS = {
+    "multi-hot": lambda config, skills: PDDLMultiHotOperatorEncoder(
+        FETCH_PREDICATE_ARITIES, config["max_operator_arity"]
+    ),
+    "one-hot": lambda config, skills: OneHotOperatorEncoder([skill.symbolic_action_model for skill in skills]),
+}
 SETUP_AND_EPISODE_STEP_LIMIT = 10_000  # inner limit; the episode limit is applied outside SkillEnvironment
 
 
@@ -50,6 +66,18 @@ def parse_args(argv: list[str] | None = None) -> dict:
     training.add_argument("--max-episodes", type=int, default=10)
     training.add_argument("--max-steps-per-episode", type=int, default=100)
     training.add_argument("--seed", type=int, default=0)
+    training.add_argument(
+        "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
+        help="how the lifted action model is embedded for the policy (docs/policy_inputs.md)",
+    )
+    training.add_argument(
+        "--max-operator-arity", type=int, default=3,
+        help="most parameters any operator may have; fixes the multi-hot vocabulary and grounding slots",
+    )
+    training.add_argument(
+        "--reward", choices=["sparse", "shaped"], default="sparse",
+        help="shaped: Fetch shaped reward where one exists (pickup), sparse otherwise",
+    )
 
     args = parser.parse_args(argv)
     if args.num_blocks is not None and args.environment_id != fetch_multiblock_environment.ENVIRONMENT_ID:
@@ -58,29 +86,49 @@ def parse_args(argv: list[str] | None = None) -> dict:
 
 
 def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
-    """Fetch environment annotated with state and facts, running episodes of the given skills.
-
-    Wrapping, inside out: gym.make → FetchEnvStateAnnotationWrapper (environment_state, objects)
-    → FetchPredicateEvaluationWrapper (facts) → SkillEnvironment (setup chain, grounding, success,
-    reward) → TimeLimit (max_steps_per_episode, setup steps excluded).
-    """
+    """Fetch environment running episodes of the given skills, with observations for the policy
+    (docs/policy_inputs.md). The wrappers are listed outermost first."""
     environment_kwargs = {}
     if config["num_blocks"] is not None:
         environment_kwargs["num_blocks"] = config["num_blocks"]
     if config["render"]:
         environment_kwargs.update(width=config["window_width"], height=config["window_height"])
-
-    base_env = gym.make(
-        config["environment_id"],
-        render_mode="human" if config["render"] else None,
-        max_episode_steps=SETUP_AND_EPISODE_STEP_LIMIT,
-        **environment_kwargs,
-    )
     setup_policies = {"pickup": FetchScriptedPickupPolicy(), "putdown": FetchScriptedPutdownPolicy()}
-    skill_env = SkillEnvironment(
-        FetchPredicateEvaluationWrapper(FetchEnvStateAnnotationWrapper(base_env)), skills, setup_policies
+    reward_functions = (
+        {name: reward_class() for name, reward_class in FETCH_SHAPED_REWARDS.items()}
+        if config["reward"] == "shaped"
+        else {}
     )
-    env = gym.wrappers.TimeLimit(skill_env, config["max_steps_per_episode"])
+    operator_encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills) # This is static, not trained, right now. TODO: Replace with trainable embeddings
+    grounding_encoder = GroundingEncoder(
+        object_types=FetchEnvStateAnnotationWrapper.OBJECT_TYPES,
+        max_objects=fetch_multiblock_environment.MAX_BLOCKS,
+        feature_dim=FetchEnvStateAnnotationWrapper.OBJECT_FEATURE_DIM,
+        max_arity=config["max_operator_arity"],
+    )
+
+    env = PolicyObservationWrapper(  # policy observation: state, operator embedding, grounding
+        gym.wrappers.TimeLimit(  # episode step limit (setup steps not counted)
+            SkillEnvironment(  # per episode: skill, setup chain, grounding, success, reward
+                FetchPredicateEvaluationWrapper(  # info["facts"]
+                    FetchEnvStateAnnotationWrapper(  # info["environment_state", "objects", "object_features"]; drops goal keys
+                        gym.make(  # the Fetch simulator
+                            config["environment_id"],
+                            render_mode="human" if config["render"] else None,
+                            max_episode_steps=SETUP_AND_EPISODE_STEP_LIMIT,  # high, so setup is never cut off
+                            **environment_kwargs,
+                        )
+                    )
+                ),
+                skills,
+                setup_policies,
+                reward_functions,
+            ),
+            config["max_steps_per_episode"],
+        ),
+        operator_encoder,
+        grounding_encoder,
+    )
     env.action_space.seed(config["seed"])
     return env
 

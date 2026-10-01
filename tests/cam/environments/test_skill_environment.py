@@ -5,6 +5,7 @@ import pytest
 from cam.domain.symbols import Predicate
 from cam.environments.skill_environment import SkillEnvironment
 from cam.policies.policy import Policy
+from cam.rewards.reward_function import RewardFunction
 from cam.skills.pickup_skill import PickupSkill
 from cam.skills.putdown_skill import PutdownSkill
 
@@ -148,3 +149,17 @@ def test_unknown_skill_option_is_rejected():
     env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)])
     with pytest.raises(ValueError):
         env.reset(options={"skill": "putdown"})
+
+
+class ConstantReward(RewardFunction):
+    def __call__(self, grounded_action_model, action, info, success):
+        return 0.5, {"constant": 0.5}
+
+
+@pytest.mark.unit
+def test_reward_function_supplies_reward_and_components():
+    """A skill's reward function sets the step reward and info["reward_components"]; success still terminates."""
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], reward_functions={"pickup": ConstantReward()})
+    _, info = env.reset(seed=0)
+    _, reward, terminated, _, info = env.step(grasp(info["grounded_action_model"].arguments[0]))
+    assert (reward, terminated, info["reward_components"]) == (0.5, True, {"constant": 0.5})
