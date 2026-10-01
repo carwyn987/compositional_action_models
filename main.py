@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """Entry point: build skills and an environment from command-line options, then train.
 
-    ./main.py --skills pickup
-    ./main.py --skills pickup putdown --num-blocks 3 --max-episodes 20 --render
-    ./main.py --skills pickup --environment-id FetchPickAndPlace-v4
+    ./main.py --skills pickup putdown --algorithm sac --total-timesteps 200000 --reward shaped
+    ./main.py --skills pickup --algorithm ppo --num-blocks 3
+    ./main.py --skills pickup putdown --algorithm random --max-episodes 20 --render
 """
 
 import argparse
+from pathlib import Path
 
 import gymnasium as gym
 import numpy as np
@@ -63,8 +64,14 @@ def parse_args(argv: list[str] | None = None) -> dict:
     environment.add_argument("--window-height", type=int, default=960)
 
     training = parser.add_argument_group("training")
-    training.add_argument("--max-episodes", type=int, default=10)
+    training.add_argument(
+        "--algorithm", choices=["sac", "ppo", "random"], default="sac",
+        help="sac/ppo: train with Stable-Baselines3; random: run random actions (no learning)",
+    )
+    training.add_argument("--total-timesteps", type=int, default=100_000, help="environment steps (sac/ppo)")
+    training.add_argument("--max-episodes", type=int, default=10, help="episodes to run (random)")
     training.add_argument("--max-steps-per-episode", type=int, default=100)
+    training.add_argument("--output-dir", default="outputs", help="runs are saved to <output-dir>/<run name>/")
     training.add_argument("--seed", type=int, default=0)
     training.add_argument(
         "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
@@ -133,8 +140,28 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
     return env
 
 
-def train(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
-    """Run up to max_episodes episodes of up to max_steps_per_episode steps; return episode returns.
+def run_name(config: dict) -> str:
+    """e.g. pickup-putdown_sac_multi-hot_sparse_seed0"""
+    return "_".join(
+        ["-".join(config["skills"]), config["algorithm"], config["operator_encoder"], config["reward"], f"seed{config['seed']}"]
+    )
+
+
+def train(config: dict, env: gym.Env) -> None:
+    """Train a policy with Stable-Baselines3 (imported here so random runs do not need it)."""
+    from cam.training.stable_baselines3_trainer import train_stable_baselines3
+
+    train_stable_baselines3(
+        env,
+        config["algorithm"],
+        config["total_timesteps"],
+        Path(config["output_dir"]) / run_name(config),
+        seed=config["seed"],
+    )
+
+
+def run_random_actions(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
+    """Run up to max_episodes episodes of random actions; return episode returns.
 
     Skills take turns across episodes; the environment sets up each episode and
     ends it once the episode's grounded action succeeds.
@@ -146,7 +173,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
 
         episode_return = 0.0
         for step in range(config["max_steps_per_episode"]):
-            action = env.action_space.sample()  # TODO: replace with the policy's action for obs
+            action = env.action_space.sample()
             obs, reward, terminated, truncated, info = env.step(action)
             episode_return += float(reward)
             if terminated or truncated:
@@ -169,7 +196,10 @@ def main(argv: list[str] | None = None) -> None:
 
     env = setup_environment(config, skills)
     try:
-        train(config, env, skills)
+        if config["algorithm"] == "random":
+            run_random_actions(config, env, skills)
+        else:
+            train(config, env)
     finally:
         env.close()
 
