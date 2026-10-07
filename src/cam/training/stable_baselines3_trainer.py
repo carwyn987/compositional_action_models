@@ -18,6 +18,7 @@ Hyperparameters follow deprecated/train_skill.py.
 import logging
 from collections import deque
 from pathlib import Path
+from typing import Callable
 
 import gymnasium as gym
 import numpy as np
@@ -26,7 +27,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
-from cam.training.checkpointing import PeriodicSaveCallback, atomic_save_model
+from cam.training.checkpointing import PeriodicSaveCallback, atomic_save_model, atomic_save_replay_buffer
 
 logger = logging.getLogger(__name__)
 
@@ -75,35 +76,67 @@ def train_stable_baselines3(
     hyperparameter_overrides: dict | None = None,
     callbacks: list[BaseCallback] | None = None,
     save_interval: int = 0,
+    resume: bool = False,
+    save_replay_buffer: bool = False,
+    on_save: list[Callable[[], None]] | None = None,
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
-    callbacks are run alongside SuccessRateCallback (e.g. a MetricsCallback for evaluation).
-    model.zip is saved atomically every save_interval steps (0: only at the end), at the end,
-    and when training is interrupted (Ctrl+C) or raises, before the exception propagates.
+    resume=True continues the model in run_directory/model.zip (and its replay_buffer.pkl, if
+    saved) for total_timesteps more steps: the step count, TensorBoard curves and monitor.csv
+    continue. callbacks run alongside SuccessRateCallback (e.g. a MetricsCallback).
+
+    Saving (atomic) happens every save_interval steps (0: only at the end), at the end, and when
+    training is interrupted (Ctrl+C) or raises, before the exception propagates. It writes
+    model.zip, replay_buffer.pkl if save_replay_buffer (off-policy algorithms; can be large),
+    and calls each on_save function (e.g. writing metrics).
     """
     run_directory.mkdir(parents=True, exist_ok=True)
-    monitored_env = Monitor(env, filename=str(run_directory), info_keywords=("is_success", "skill"))
-    hyperparameters = HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})
-    model = ALGORITHMS[algorithm](
-        "MultiInputPolicy",
-        monitored_env,
-        seed=seed,
-        verbose=1,
-        tensorboard_log=str(run_directory / "tensorboard"),
-        **hyperparameters,
-    )
     model_path = run_directory / "model.zip"
+    replay_buffer_path = run_directory / "replay_buffer.pkl"
+    monitored_env = Monitor(
+        env, filename=str(run_directory), info_keywords=("is_success", "skill"), override_existing=not resume
+    )
+    if resume:
+        model = ALGORITHMS[algorithm].load(
+            model_path, env=monitored_env, tensorboard_log=str(run_directory / "tensorboard")
+        )
+        if replay_buffer_path.exists() and hasattr(model, "load_replay_buffer"):
+            model.load_replay_buffer(replay_buffer_path)
+            logger.info("loaded replay buffer from %s", replay_buffer_path)
+        logger.info("resuming %s from step %d", algorithm, model.num_timesteps)
+    else:
+        model = ALGORITHMS[algorithm](
+            "MultiInputPolicy",
+            monitored_env,
+            seed=seed,
+            verbose=1,
+            tensorboard_log=str(run_directory / "tensorboard"),
+            **(HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})),
+        )
+
+    def save() -> None:
+        atomic_save_model(model, model_path)
+        if save_replay_buffer and getattr(model, "replay_buffer", None) is not None:
+            atomic_save_replay_buffer(model, replay_buffer_path)
+        for save_more in on_save or []:
+            save_more()
+
     all_callbacks = [SuccessRateCallback(), *(callbacks or [])]
     if save_interval > 0:
-        all_callbacks.append(PeriodicSaveCallback(save_interval, model_path))
+        all_callbacks.append(PeriodicSaveCallback(save_interval, save))
     logger.info("training %s for %d steps; outputs in %s", algorithm, total_timesteps, run_directory)
     try:
-        model.learn(total_timesteps=total_timesteps, callback=all_callbacks, progress_bar=True)
+        model.learn(
+            total_timesteps=total_timesteps,
+            callback=all_callbacks,
+            reset_num_timesteps=not resume,
+            progress_bar=True,
+        )
     except BaseException:
-        atomic_save_model(model, model_path)
+        save()
         logger.warning("training stopped at step %d; saved model to %s", model.num_timesteps, model_path)
         raise
-    atomic_save_model(model, model_path)
-    logger.info("saved model to %s", model_path)
+    save()
+    logger.info("training finished at step %d; saved model to %s", model.num_timesteps, model_path)
     return model

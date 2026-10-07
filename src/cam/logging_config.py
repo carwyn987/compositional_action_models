@@ -14,3 +14,10 @@ def configure_logging(level: int | str = logging.INFO) -> None:
     logger.handlers[:] = [handler]
     logger.setLevel(level)
     logger.propagate = False
+
+
+def add_log_file(path) -> None:
+    """Also write log records from the cam package to path (appending), with full timestamps."""
+    handler = logging.FileHandler(path)
+    handler.setFormatter(logging.Formatter(LOG_FORMAT, datefmt="%Y-%m-%d %H:%M:%S"))
+    logging.getLogger("cam").addHandler(handler)

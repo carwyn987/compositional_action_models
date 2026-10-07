@@ -15,13 +15,25 @@ results are:
 Evaluation episodes are not counted as training steps. Every evaluation reseeds
 the evaluation environment with the same seed, so all points on a curve are
 measured on the same scenes.
+
+Stopping: training stops after an evaluation in which every skill in stop_skills
+has reached success_threshold (deterministic), or, with patience > 0, after
+`patience` evaluations without improvement of the mean deterministic success rate
+over all skills. The reason is logged and written to metrics.json.
+
+Resuming: pass the run's metrics.json contents as `metrics`; curves and training
+experience counters continue from it. write_metrics() also stores the current
+counters ("progress"), so saving it with each checkpoint keeps them consistent
+with the model.
 """
 
 import json
 import logging
+from dataclasses import asdict
 from pathlib import Path
 
 import gymnasium as gym
+import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
 from cam.evaluation.evaluation import evaluate
@@ -44,6 +56,9 @@ class MetricsCallback(BaseCallback):
         run_directory: Path,
         success_threshold: float = 0.95,
         seed: int = 0,
+        stop_skills: list[str] | None = None,
+        patience: int = 0,
+        metrics: dict | None = None,
     ):
         super().__init__()
         self.eval_env = eval_env
@@ -53,15 +68,49 @@ class MetricsCallback(BaseCallback):
         self.run_directory = Path(run_directory)
         self.success_threshold = success_threshold
         self.seed = seed
-        self.curves = {mode: LearningCurve() for mode in MODES}
+        self.stop_skills = list(stop_skills or [])
+        unknown = [skill for skill in self.stop_skills if skill not in skill_names]
+        if unknown:
+            raise ValueError(f"stop skills {unknown} are not among the trained skills {skill_names}")
+        self.patience = patience
+        self.best_mean_success = -1.0
+        self.evaluations_without_improvement = 0
+        self.stop_reason: str | None = None
         self.next_evaluation_step = 0
-        self.episodes = 0
-        self.skill_steps: dict[str, int] = {}
-        self.skill_episodes: dict[str, int] = {}
+        if metrics:
+            self.curves = {mode: LearningCurve.from_dict(metrics["curves"][mode]) for mode in MODES}
+            saved = metrics.get("progress") or asdict(TrainingProgress(0, 0, {}, {}))
+            self._restore_progress(TrainingProgress(**saved))
+        else:
+            self.curves = {mode: LearningCurve() for mode in MODES}
+            self._restore_progress(TrainingProgress(0, 0, {}, {}))
+
+    def _restore_progress(self, progress: TrainingProgress) -> None:
+        self.saved_progress = progress
+        self.episodes = progress.episodes
+        self.skill_steps = dict(progress.skill_steps)
+        self.skill_episodes = dict(progress.skill_episodes)
 
     def _on_training_start(self) -> None:
+        self._reconcile_with_model()
         self._evaluate()
         self.next_evaluation_step = self.num_timesteps + self.eval_interval
+
+    def _reconcile_with_model(self) -> None:
+        """On resume, drop curve points after the model's step (written after its last checkpoint) and,
+        if the saved counters are not at the model's step, fall back to the last point's counters."""
+        step = self.num_timesteps
+        for curve in self.curves.values():
+            curve.points = [point for point in curve.points if point[0] <= step]
+        if self.saved_progress.steps != step:
+            points = self.curves["deterministic"].points
+            fallback = points[-1][2] if points and points[-1][2] else TrainingProgress(step, 0, {}, {})
+            logger.warning(
+                "saved training counters are at step %d but the model is at step %d; using the counters of the "
+                "last evaluation (step %d), so experience after it is not counted",
+                self.saved_progress.steps, step, fallback.steps,
+            )
+            self._restore_progress(fallback)
 
     def _on_step(self) -> bool:
         for done, info in zip(self.locals["dones"], self.locals["infos"]):
@@ -73,7 +122,7 @@ class MetricsCallback(BaseCallback):
         if self.num_timesteps >= self.next_evaluation_step:
             self._evaluate()
             self.next_evaluation_step += self.eval_interval
-        return True
+        return self.stop_reason is None
 
     def _on_training_end(self) -> None:
         if self.curves["deterministic"].last_step != self.num_timesteps:
@@ -111,7 +160,28 @@ class MetricsCallback(BaseCallback):
                     evaluation.mean_episode_length, evaluation.episode_length_std, evaluation.episodes,
                 )
         self.logger.dump(step)
+        self._check_stop()
         self.write_metrics()
+
+    def _check_stop(self) -> None:
+        curve = self.curves["deterministic"]
+        if self.stop_skills and all(
+            curve.steps_to_threshold(skill, self.success_threshold) is not None for skill in self.stop_skills
+        ):
+            self.stop_reason = f"{', '.join(self.stop_skills)} reached success rate {self.success_threshold}"
+        if self.patience > 0:
+            _, result, _ = curve.points[-1]
+            mean_success = float(np.mean([result.skills[skill].success_rate for skill in self.skill_names]))
+            if mean_success > self.best_mean_success:
+                self.best_mean_success, self.evaluations_without_improvement = mean_success, 0
+            else:
+                self.evaluations_without_improvement += 1
+                if self.evaluations_without_improvement >= self.patience:
+                    self.stop_reason = (
+                        f"mean deterministic success rate has not improved for {self.patience} evaluations"
+                    )
+        if self.stop_reason:
+            logger.info("stopping training at step %d: %s", self.num_timesteps, self.stop_reason)
 
     def summary(self) -> dict:
         """Per mode and skill: zero-shot success rate; training steps, episodes, skill steps and skill
@@ -136,9 +206,12 @@ class MetricsCallback(BaseCallback):
 
     def write_metrics(self) -> None:
         self.run_directory.mkdir(parents=True, exist_ok=True)
+        progress = TrainingProgress(self.num_timesteps, self.episodes, dict(self.skill_steps), dict(self.skill_episodes))
         metrics = {
             "success_threshold": self.success_threshold,
             "episodes_per_skill": self.episodes_per_skill,
+            "stop_reason": self.stop_reason,
+            "progress": asdict(progress),
             "summary": self.summary(),
             "curves": {mode: curve.to_dict() for mode, curve in self.curves.items()},
         }

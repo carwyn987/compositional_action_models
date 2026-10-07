@@ -55,8 +55,12 @@ class LearningCurve:
     points: list[tuple[int, EvaluationResult, TrainingProgress | None]] = field(default_factory=list)
 
     def add(self, step: int, result: EvaluationResult, progress: TrainingProgress | None = None) -> None:
-        if self.points and step <= self.points[-1][0]:
-            raise ValueError(f"step {step} is not after the last evaluated step {self.points[-1][0]}")
+        """Append a point. An evaluation at the last point's step replaces that point (e.g. resuming
+        right after the final evaluation re-evaluates there, possibly with added skills)."""
+        if self.points and step < self.points[-1][0]:
+            raise ValueError(f"step {step} is before the last evaluated step {self.points[-1][0]}")
+        if self.points and step == self.points[-1][0]:
+            self.points.pop()
         self.points.append((step, result, progress))
 
     @property

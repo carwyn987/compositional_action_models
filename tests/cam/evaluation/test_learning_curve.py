@@ -63,11 +63,13 @@ def test_metrics_of_an_unevaluated_skill_are_none():
 
 
 @pytest.mark.unit
-def test_steps_must_increase():
-    """Points are in step order; adding an earlier or repeated step is an error."""
+def test_steps_must_not_go_back():
+    """Points are in step order: an earlier step is an error; the same step replaces the last point."""
     c = curve((100, result(a=0.5)))
     with pytest.raises(ValueError):
-        c.add(100, result(a=0.6))
+        c.add(50, result(a=0.6))
+    c.add(100, result(a=0.7, b=0.1))
+    assert len(c.points) == 1 and c.zero_shot("b").success_rate == 0.1
 
 
 @pytest.mark.unit
