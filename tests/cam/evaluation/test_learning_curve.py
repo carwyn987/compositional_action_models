@@ -1,7 +1,7 @@
 import pytest
 
 from cam.evaluation.evaluation import EvaluationResult, SkillEvaluation
-from cam.evaluation.learning_curve import LearningCurve
+from cam.evaluation.learning_curve import LearningCurve, TrainingProgress
 
 
 def result(**success_rates: float) -> EvaluationResult:
@@ -74,4 +74,19 @@ def test_steps_must_increase():
 def test_curve_round_trips_through_a_dict():
     """to_dict / from_dict (used for metrics.json and resuming) preserve every point."""
     c = curve((0, result(a=0.0)), (100, result(a=0.5, b=0.2)))
+    assert LearningCurve.from_dict(c.to_dict()) == c
+
+
+@pytest.mark.unit
+def test_threshold_in_episodes_and_per_skill_experience():
+    """The same threshold point measured as total episodes, or as the skill's own steps / episodes,
+    counted from the skill's zero-shot point."""
+    c = LearningCurve()
+    c.add(0, result(a=0.0), TrainingProgress(0, 0, {}, {}))
+    c.add(100, result(a=0.5, b=0.0), TrainingProgress(100, 4, {"a": 100}, {"a": 4}))
+    c.add(300, result(a=1.0, b=1.0), TrainingProgress(300, 12, {"a": 220, "b": 80}, {"a": 8, "b": 4}))
+    assert c.steps_to_threshold("a", measure="episodes") == 12
+    assert c.steps_to_threshold("a", measure="skill_steps") == 220
+    assert c.steps_to_threshold("b", measure="steps") == 200  # b's zero-shot point is step 100
+    assert c.steps_to_threshold("b", measure="skill_episodes") == 4
     assert LearningCurve.from_dict(c.to_dict()) == c

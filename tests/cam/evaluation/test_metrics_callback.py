@@ -32,5 +32,9 @@ def test_evaluates_at_start_interval_and_end_and_writes_metrics(tmp_path):
         assert [point["step"] for point in metrics["curves"][mode]["points"]] == [0, 100, 200]
         assert set(metrics["summary"][mode]) == {"pickup", "putdown"}
         assert set(metrics["summary"][mode]["pickup"]) == {
-            "zero_shot_success_rate", "steps_to_threshold", "auc", "final_success_rate",
+            "zero_shot_success_rate", "steps_to_threshold", "episodes_to_threshold",
+            "skill_steps_to_threshold", "skill_episodes_to_threshold", "auc", "final_success_rate",
         }
+    final = metrics["curves"]["deterministic"]["points"][-1]["progress"]
+    assert final["steps"] == 200 and sum(final["skill_steps"].values()) == 200
+    assert final["episodes"] == sum(final["skill_episodes"].values()) > 0

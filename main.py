@@ -3,7 +3,6 @@
 
     ./main.py --skills pickup putdown --algorithm sac --total-timesteps 200000 --reward shaped
     ./main.py --skills pickup --algorithm ppo --num-blocks 3
-    ./main.py --skills pickup putdown --algorithm random --max-episodes 20 --render
 """
 
 import argparse
@@ -11,7 +10,6 @@ import json
 from pathlib import Path
 
 import gymnasium as gym
-import numpy as np
 
 from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
@@ -44,17 +42,22 @@ def parse_args(argv: list[str] | None = None) -> dict:
     environment.add_argument("--window-height", type=int, default=960)
 
     training = parser.add_argument_group("training")
+    training.add_argument("--algorithm", choices=["sac", "ppo"], default="sac", help="Stable-Baselines3 algorithm")
+    training.add_argument("--total-timesteps", type=int, default=100_000, help="training environment steps")
     training.add_argument(
-        "--algorithm", choices=["sac", "ppo", "random"], default="sac",
-        help="sac/ppo: train with Stable-Baselines3; random: run random actions (no learning)",
+        "--max-steps-per-episode", type=int, default=100,
+        help="episode time limit in actions (setup steps excluded); one Fetch action is 0.04 s of simulation, "
+        "moving the gripper target by up to 5 cm per axis (scripted pickup needs about 27)",
     )
-    training.add_argument("--total-timesteps", type=int, default=100_000, help="environment steps (sac/ppo)")
-    training.add_argument("--max-episodes", type=int, default=10, help="episodes to run (random)")
-    training.add_argument("--max-steps-per-episode", type=int, default=100)
     training.add_argument("--output-dir", default="outputs", help="runs are saved to <output-dir>/<run name>/")
+    training.add_argument(
+        "--save-interval", type=int, default=50_000,
+        help="training steps between model.zip checkpoints, saved atomically (0: only at the end); "
+        "the model is also saved when training ends, is interrupted, or crashes",
+    )
 
     evaluation = parser.add_argument_group(
-        "evaluation during training (sac/ppo)",
+        "evaluation during training",
         "Evaluations run at the start (zero-shot), every --eval-interval steps and at the end, deterministic and "
         "stochastic, on a separate environment; results go to TensorBoard and <run>/metrics.json. Each costs about "
         "2 x eval-episodes x skills episodes, so start with an infrequent interval and tune.",
@@ -93,16 +96,17 @@ def run_name(config: dict) -> str:
 
 
 def train(config: dict, env: gym.Env, skills: list[Skill]) -> None:
-    """Train a policy with Stable-Baselines3 (imported here so random runs do not need it).
+    """Train a policy with Stable-Baselines3.
 
     The run directory also gets config.json, the full training config, so the
     same environment can be rebuilt to evaluate the model (scripts/run_skill.py).
     """
+    from cam.training.checkpointing import atomic_write_text
     from cam.training.stable_baselines3_trainer import train_stable_baselines3
 
     run_directory = Path(config["output_dir"]) / run_name(config)
     run_directory.mkdir(parents=True, exist_ok=True)
-    (run_directory / "config.json").write_text(json.dumps(config, indent=2))  # lets run_skill.py rebuild the env
+    atomic_write_text(run_directory / "config.json", json.dumps(config, indent=2))  # lets run_skill.py rebuild the env
     callbacks, eval_env = [], None
     if config["eval_interval"] > 0:
         from cam.evaluation.metrics_callback import MetricsCallback
@@ -121,38 +125,17 @@ def train(config: dict, env: gym.Env, skills: list[Skill]) -> None:
         )
     try:
         train_stable_baselines3(
-            env, config["algorithm"], config["total_timesteps"], run_directory, seed=config["seed"], callbacks=callbacks
+            env,
+            config["algorithm"],
+            config["total_timesteps"],
+            run_directory,
+            seed=config["seed"],
+            callbacks=callbacks,
+            save_interval=config["save_interval"],
         )
     finally:
         if eval_env is not None:
             eval_env.close()
-
-
-def run_random_actions(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
-    """Run up to max_episodes episodes of random actions; return episode returns.
-
-    Skills take turns across episodes; the environment sets up each episode and
-    ends it once the episode's grounded action succeeds.
-    """
-    episode_returns = []
-    for episode in range(config["max_episodes"]):
-        skill = skills[episode % len(skills)]
-        obs, info = env.reset(seed=config["seed"] if episode == 0 else None, options={"skill": skill.name})
-
-        episode_return = 0.0
-        for step in range(config["max_steps_per_episode"]):
-            action = env.action_space.sample()
-            obs, reward, terminated, truncated, info = env.step(action)
-            episode_return += float(reward)
-            if terminated or truncated:
-                break
-        episode_returns.append(episode_return)
-        print(
-            f"episode {episode:04d} {str(info['grounded_action_model']):20s} steps={step + 1:4d} "
-            f"return={episode_return:8.2f} success={bool(info['is_success'])}"
-        )
-    print(f"mean return over {len(episode_returns)} episodes: {np.mean(episode_returns):.2f}")
-    return episode_returns
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -164,10 +147,7 @@ def main(argv: list[str] | None = None) -> None:
 
     env = setup_environment(config, skills)
     try:
-        if config["algorithm"] == "random":
-            run_random_actions(config, env, skills)
-        else:
-            train(config, env, skills)
+        train(config, env, skills)
     finally:
         env.close()
 

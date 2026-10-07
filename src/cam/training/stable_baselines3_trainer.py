@@ -7,7 +7,7 @@ all skills: SkillEnvironment chooses the episode's skill, and the operator
 embedding and grounding tell the policy which skill and objects it is acting on.
 
 Outputs, under <output_dir>/<run_name>/:
-    model.zip          the trained SB3 model
+    model.zip          the SB3 model: saved every save_interval steps, at the end, and on interruption
     monitor.csv        per-episode return, length, is_success, skill
     tensorboard/       SB3 training curves, plus success_rate/<skill> (and eval_<mode>/<skill>/... with a
                        MetricsCallback, which also writes metrics.json)
@@ -25,6 +25,8 @@ from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
+
+from cam.training.checkpointing import PeriodicSaveCallback, atomic_save_model
 
 logger = logging.getLogger(__name__)
 
@@ -72,10 +74,13 @@ def train_stable_baselines3(
     seed: int = 0,
     hyperparameter_overrides: dict | None = None,
     callbacks: list[BaseCallback] | None = None,
+    save_interval: int = 0,
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
     callbacks are run alongside SuccessRateCallback (e.g. a MetricsCallback for evaluation).
+    model.zip is saved atomically every save_interval steps (0: only at the end), at the end,
+    and when training is interrupted (Ctrl+C) or raises, before the exception propagates.
     """
     run_directory.mkdir(parents=True, exist_ok=True)
     monitored_env = Monitor(env, filename=str(run_directory), info_keywords=("is_success", "skill"))
@@ -88,10 +93,17 @@ def train_stable_baselines3(
         tensorboard_log=str(run_directory / "tensorboard"),
         **hyperparameters,
     )
+    model_path = run_directory / "model.zip"
+    all_callbacks = [SuccessRateCallback(), *(callbacks or [])]
+    if save_interval > 0:
+        all_callbacks.append(PeriodicSaveCallback(save_interval, model_path))
     logger.info("training %s for %d steps; outputs in %s", algorithm, total_timesteps, run_directory)
-    model.learn(
-        total_timesteps=total_timesteps, callback=[SuccessRateCallback(), *(callbacks or [])], progress_bar=True
-    )
-    model.save(run_directory / "model")
-    logger.info("saved model to %s", run_directory / "model.zip")
+    try:
+        model.learn(total_timesteps=total_timesteps, callback=all_callbacks, progress_bar=True)
+    except BaseException:
+        atomic_save_model(model, model_path)
+        logger.warning("training stopped at step %d; saved model to %s", model.num_timesteps, model_path)
+        raise
+    atomic_save_model(model, model_path)
+    logger.info("saved model to %s", model_path)
     return model
