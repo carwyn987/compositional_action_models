@@ -32,6 +32,8 @@ from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.experiments.environment_setup import OPERATOR_ENCODERS, setup_environment
 from cam.logging_config import add_log_file, configure_logging
+from cam.representations.text_backends import TEXT_BACKENDS
+from cam.representations.text_operator_encoder import OPERATOR_TEXTS
 from cam.skills.registry import SKILL_REGISTRY, build_skill
 from cam.skills.skill import Skill
 
@@ -43,7 +45,7 @@ PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skil
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
-    "trainable_operator_embedding",
+    "trainable_operator_embedding", "text_backend", "operator_text",
     "symbolic_action_model_format",
 ]
 
@@ -117,8 +119,21 @@ def build_parser() -> argparse.ArgumentParser:
     )
     training.add_argument(
         "--operator-embedding-dim", type=int, default=128,
-        help="size of the operator embedding, shared by embedding methods so conditions are comparable "
-        "(used by: random)",
+        help="size of the operator embedding, shared by all embedding methods so conditions are comparable "
+        "(one-hot and multi-hot are zero-padded to it)",
+    )
+    training.add_argument(
+        "--text-backend", choices=sorted(TEXT_BACKENDS), default="mock",
+        help="--operator-encoder text: mock (offline character n-gram hashing) or openai (key from OPENAI_API_KEY, "
+        "else the file in OPENAI_API_KEY_FILE, default ~/.secrets/openai_api_key)",
+    )
+    training.add_argument(
+        "--operator-text", choices=sorted(OPERATOR_TEXTS), default="pddl",
+        help="--operator-encoder text: embed the canonical PDDL, or a templated paragraph describing the operator",
+    )
+    training.add_argument(
+        "--text-embedding-cache", default="outputs/text_embedding_cache.json",
+        help="--operator-encoder text: cache of embeddings from non-mock backends, so each text is embedded once",
     )
     training.add_argument(
         "--max-operator-arity", type=int, default=3,
@@ -195,7 +210,11 @@ def parse_args(argv: list[str] | None = None) -> dict:
 
 def run_name(config: dict) -> str:
     """e.g. pickup-putdown_sac_multi-hot_sparse_seed0, or ..._random-trainable_... with a trainable embedding"""
-    encoder = config["operator_encoder"] + ("-trainable" if config.get("trainable_operator_embedding") else "")
+    encoder = config["operator_encoder"]
+    if encoder == "text":
+        encoder += f"-{config['text_backend']}-{config['operator_text']}"
+    if config.get("trainable_operator_embedding"):
+        encoder += "-trainable"
     return "_".join(["-".join(config["skills"]), config["algorithm"], encoder, config["reward"], f"seed{config['seed']}"])
 
 

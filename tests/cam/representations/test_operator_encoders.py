@@ -7,6 +7,7 @@ from cam.domain.pddl.pddl import Precondition
 from cam.domain.pddl.pddl_parser import parse_operator
 from cam.domain.symbols import Predicate
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
+from cam.representations.padded_operator_encoder import PaddedOperatorEncoder
 from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
 from cam.representations.random_operator_encoder import RandomOperatorEncoder
 from tests.cam.domain.conftest import LEGACY_OPERATORS
@@ -108,3 +109,19 @@ def test_random_vectors_ignore_operator_structure():
     encoder = RandomOperatorEncoder(64)
     np.testing.assert_array_equal(encoder.encode(PICKUP), encoder.encode(repaired))
     assert encoder.encode(STACK).shape == (64,)
+
+
+@pytest.mark.unit
+def test_padding_keeps_the_encoding_and_fills_with_zeros():
+    """One-hot / multi-hot padded to the shared size: their entries first, zeros after."""
+    padded = PaddedOperatorEncoder(OneHotOperatorEncoder([PICKUP, PUTDOWN]), 128)
+    encoding = padded.encode(PUTDOWN)
+    assert padded.dim == 128 and encoding.shape == (128,)
+    np.testing.assert_array_equal(encoding[:2], [0, 1])
+    assert not encoding[2:].any()
+
+
+@pytest.mark.unit
+def test_padding_rejects_an_encoder_larger_than_the_size():
+    with pytest.raises(ValueError):
+        PaddedOperatorEncoder(encoder(3), 64)  # multi-hot vocabulary of 84

@@ -8,3 +8,4 @@ pytest==9.1.1
 #   CPU: pip install torch --index-url https://download.pytorch.org/whl/cpu
 torch>=2.14
 stable-baselines3[extra]==2.9.0
+openai==3.26.0  # --text-backend openai; API key in ~/.secrets/openai_api_key (or OPENAI_API_KEY)

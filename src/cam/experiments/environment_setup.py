@@ -19,19 +19,37 @@ from cam.environments.skill_environment import SkillEnvironment
 from cam.representations.grounding_encoder import GroundingEncoder
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
 from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
+from cam.representations.embedding_cache import DiskEmbeddingCache
+from cam.representations.padded_operator_encoder import PaddedOperatorEncoder
 from cam.representations.random_operator_encoder import RandomOperatorEncoder
+from cam.representations.text_backends import TEXT_BACKENDS, CachedTextBackend
+from cam.representations.text_operator_encoder import TextOperatorEncoder
 from cam.skills.skill import Skill
 from cam.training.policy_observation_wrapper import PolicyObservationWrapper
 
 # Operator embedding methods: (config, skills) -> OperatorEncoder. multi-hot's vocabulary comes from the
 # predicates the environment evaluates, so it is the same for any skill set (and for repaired operators).
 OPERATOR_ENCODERS = {
-    "multi-hot": lambda config, skills: PDDLMultiHotOperatorEncoder(
-        FETCH_PREDICATE_ARITIES, config["max_operator_arity"]
+    # one-hot and multi-hot are zero-padded to --operator-embedding-dim, so every method has the same size
+    "multi-hot": lambda config, skills: PaddedOperatorEncoder(
+        PDDLMultiHotOperatorEncoder(FETCH_PREDICATE_ARITIES, config["max_operator_arity"]),
+        config["operator_embedding_dim"],
     ),
-    "one-hot": lambda config, skills: OneHotOperatorEncoder([skill.symbolic_action_model for skill in skills]),
+    "one-hot": lambda config, skills: PaddedOperatorEncoder(
+        OneHotOperatorEncoder([skill.symbolic_action_model for skill in skills]), config["operator_embedding_dim"]
+    ),
     "random": lambda config, skills: RandomOperatorEncoder(config["operator_embedding_dim"], seed=config["seed"]),
+    "text": lambda config, skills: TextOperatorEncoder(text_backend(config), config["operator_text"]),
 }
+
+
+def text_backend(config: dict):
+    """The configured text embedding backend at the shared embedding size; backends other than the
+    (deterministic, offline) mock are cached on disk so each operator text is embedded once."""
+    backend = TEXT_BACKENDS[config["text_backend"]](config["operator_embedding_dim"])
+    if config["text_backend"] == "mock":
+        return backend
+    return CachedTextBackend(backend, DiskEmbeddingCache(config["text_embedding_cache"]))
 SETUP_AND_EPISODE_STEP_LIMIT = 10_000  # inner limit; the episode limit is applied outside SkillEnvironment
 
 
