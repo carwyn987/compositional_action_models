@@ -43,6 +43,7 @@ PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skil
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
+    "trainable_operator_embedding",
     "symbolic_action_model_format",
 ]
 
@@ -107,6 +108,12 @@ def build_parser() -> argparse.ArgumentParser:
     training.add_argument(
         "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
         help="how the lifted action model is embedded for the policy (docs/policy_inputs.md)",
+    )
+    training.add_argument(
+        "--trainable-operator-embedding", action="store_true",
+        help="pass the operator embedding through a learnable matrix initialised to the identity, trained with "
+        "the policy: with --operator-encoder random, a learnable vector per operator starting at its random "
+        "vector; with multi-hot, a learnable compositional (sum) embedding",
     )
     training.add_argument(
         "--operator-embedding-dim", type=int, default=128,
@@ -187,10 +194,19 @@ def parse_args(argv: list[str] | None = None) -> dict:
 
 
 def run_name(config: dict) -> str:
-    """e.g. pickup-putdown_sac_multi-hot_sparse_seed0"""
-    return "_".join(
-        ["-".join(config["skills"]), config["algorithm"], config["operator_encoder"], config["reward"], f"seed{config['seed']}"]
-    )
+    """e.g. pickup-putdown_sac_multi-hot_sparse_seed0, or ..._random-trainable_... with a trainable embedding"""
+    encoder = config["operator_encoder"] + ("-trainable" if config.get("trainable_operator_embedding") else "")
+    return "_".join(["-".join(config["skills"]), config["algorithm"], encoder, config["reward"], f"seed{config['seed']}"])
+
+
+def policy_kwargs(config: dict) -> dict | None:
+    """Policy options for a new model: the trainable operator embedding's features extractor, shared by
+    actor and critic (for SAC, then trained through the critic loss)."""
+    if not config.get("trainable_operator_embedding"):
+        return None
+    from cam.policies.feature_extractors import TrainableOperatorEmbeddingExtractor
+
+    return {"features_extractor_class": TrainableOperatorEmbeddingExtractor, "share_features_extractor": True}
 
 
 def resume_command(run_directory: Path) -> str:
@@ -235,6 +251,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             resume=resume,
             save_replay_buffer=config["save_replay_buffer"],
             on_save=on_save,
+            policy_kwargs=policy_kwargs(config),
         )
     finally:
         if eval_env is not None:

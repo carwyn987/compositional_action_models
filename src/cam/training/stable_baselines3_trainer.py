@@ -79,6 +79,7 @@ def train_stable_baselines3(
     resume: bool = False,
     save_replay_buffer: bool = False,
     on_save: list[Callable[[], None]] | None = None,
+    policy_kwargs: dict | None = None,
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
@@ -90,6 +91,8 @@ def train_stable_baselines3(
     training is interrupted (Ctrl+C) or raises, before the exception propagates. It writes
     model.zip, replay_buffer.pkl if save_replay_buffer (off-policy algorithms; can be large),
     and calls each on_save function (e.g. writing metrics).
+
+    policy_kwargs go to a new model's policy (e.g. a features extractor); a resumed model keeps its own.
     """
     run_directory.mkdir(parents=True, exist_ok=True)
     model_path = run_directory / "model.zip"
@@ -112,6 +115,7 @@ def train_stable_baselines3(
             seed=seed,
             verbose=1,
             tensorboard_log=str(run_directory / "tensorboard"),
+            policy_kwargs=policy_kwargs,
             **(HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})),
         )
 
