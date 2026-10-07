@@ -42,7 +42,7 @@ MODES = ["train-evaluate", "train", "evaluate"]
 PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render"]
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
-    "algorithm", "environment_id", "num_blocks", "operator_encoder", "max_operator_arity",
+    "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
     "symbolic_action_model_format",
 ]
 
@@ -107,6 +107,11 @@ def build_parser() -> argparse.ArgumentParser:
     training.add_argument(
         "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
         help="how the lifted action model is embedded for the policy (docs/policy_inputs.md)",
+    )
+    training.add_argument(
+        "--operator-embedding-dim", type=int, default=128,
+        help="size of the operator embedding, shared by embedding methods so conditions are comparable "
+        "(used by: random)",
     )
     training.add_argument(
         "--max-operator-arity", type=int, default=3,

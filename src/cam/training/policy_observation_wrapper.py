@@ -28,7 +28,7 @@ class PolicyObservationWrapper(gym.Wrapper):
         self.observation_space = gym.spaces.Dict(
             {
                 "observation": env.observation_space["observation"],
-                "operator_embedding": gym.spaces.Box(0.0, 1.0, (operator_encoder.dim,), np.float32),
+                "operator_embedding": gym.spaces.Box(-np.inf, np.inf, (operator_encoder.dim,), np.float32),
                 "grounding": gym.spaces.Box(-np.inf, np.inf, (grounding_encoder.dim,), np.float32),
             }
         )

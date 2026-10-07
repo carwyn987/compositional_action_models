@@ -2,6 +2,7 @@
 
 Each implementation is one embedding method:
     OneHotOperatorEncoder         one entry per training operator; no structure (baseline)
+    RandomOperatorEncoder         fixed random unit vector per operator name; no structure (baseline)
     PDDLMultiHotOperatorEncoder   one entry per literal feature; structure, nothing learned
 Learned methods (embed each literal, then aggregate by mean, attention, slots,
 ...) implement the same interface. An encoder is built from the training

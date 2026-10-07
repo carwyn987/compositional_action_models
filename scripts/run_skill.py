@@ -35,6 +35,7 @@ DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model
     "num_blocks": 3,
     "reward": "sparse",
     "operator_encoder": "multi-hot",
+    "operator_embedding_dim": 128,
     "max_operator_arity": 3,
     "max_steps_per_episode": 100,
     "seed": 0,

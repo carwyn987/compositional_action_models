@@ -19,6 +19,7 @@ from cam.environments.skill_environment import SkillEnvironment
 from cam.representations.grounding_encoder import GroundingEncoder
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
 from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
+from cam.representations.random_operator_encoder import RandomOperatorEncoder
 from cam.skills.skill import Skill
 from cam.training.policy_observation_wrapper import PolicyObservationWrapper
 
@@ -29,6 +30,7 @@ OPERATOR_ENCODERS = {
         FETCH_PREDICATE_ARITIES, config["max_operator_arity"]
     ),
     "one-hot": lambda config, skills: OneHotOperatorEncoder([skill.symbolic_action_model for skill in skills]),
+    "random": lambda config, skills: RandomOperatorEncoder(config["operator_embedding_dim"], seed=config["seed"]),
 }
 SETUP_AND_EPISODE_STEP_LIMIT = 10_000  # inner limit; the episode limit is applied outside SkillEnvironment
 

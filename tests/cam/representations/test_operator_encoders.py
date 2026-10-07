@@ -8,6 +8,7 @@ from cam.domain.pddl.pddl_parser import parse_operator
 from cam.domain.symbols import Predicate
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
 from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
+from cam.representations.random_operator_encoder import RandomOperatorEncoder
 from tests.cam.domain.conftest import LEGACY_OPERATORS
 
 PREDICATE_ARITIES = {"holding": 1, "on-table": 1, "clear": 1, "on": 2, "gripper-empty": 0}
@@ -86,3 +87,24 @@ def test_one_hot_baseline_marks_training_operators_only():
     np.testing.assert_array_equal(one_hot.encode(PUTDOWN), [0, 1])
     with pytest.raises(ValueError):
         one_hot.encode(STACK)
+
+
+@pytest.mark.unit
+def test_random_vectors_are_fixed_per_operator_and_seed():
+    """The same operator and seed always give the same unit vector (also across encoder instances);
+    other operators or seeds give different vectors."""
+    vector = RandomOperatorEncoder(128, seed=0).encode(PICKUP)
+    assert vector.shape == (128,) and np.linalg.norm(vector) == pytest.approx(1.0)
+    np.testing.assert_array_equal(vector, RandomOperatorEncoder(128, seed=0).encode(PICKUP))
+    assert not np.allclose(vector, RandomOperatorEncoder(128, seed=0).encode(PUTDOWN))
+    assert not np.allclose(vector, RandomOperatorEncoder(128, seed=1).encode(PICKUP))
+
+
+@pytest.mark.unit
+def test_random_vectors_ignore_operator_structure():
+    """Operators are identified by name: a changed operator that keeps its name keeps its vector,
+    and any operator (seen or not) can be encoded."""
+    repaired = dataclasses.replace(PICKUP, effects=PICKUP.effects[:1])
+    encoder = RandomOperatorEncoder(64)
+    np.testing.assert_array_equal(encoder.encode(PICKUP), encoder.encode(repaired))
+    assert encoder.encode(STACK).shape == (64,)
