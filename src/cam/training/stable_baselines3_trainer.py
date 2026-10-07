@@ -9,7 +9,8 @@ embedding and grounding tell the policy which skill and objects it is acting on.
 Outputs, under <output_dir>/<run_name>/:
     model.zip          the trained SB3 model
     monitor.csv        per-episode return, length, is_success, skill
-    tensorboard/       SB3 training curves, plus success_rate/<skill>
+    tensorboard/       SB3 training curves, plus success_rate/<skill> (and eval_<mode>/<skill>/... with a
+                       MetricsCallback, which also writes metrics.json)
 
 Hyperparameters follow deprecated/train_skill.py.
 """
@@ -70,8 +71,12 @@ def train_stable_baselines3(
     run_directory: Path,
     seed: int = 0,
     hyperparameter_overrides: dict | None = None,
+    callbacks: list[BaseCallback] | None = None,
 ) -> BaseAlgorithm:
-    """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory."""
+    """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
+
+    callbacks are run alongside SuccessRateCallback (e.g. a MetricsCallback for evaluation).
+    """
     run_directory.mkdir(parents=True, exist_ok=True)
     monitored_env = Monitor(env, filename=str(run_directory), info_keywords=("is_success", "skill"))
     hyperparameters = HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})
@@ -84,7 +89,9 @@ def train_stable_baselines3(
         **hyperparameters,
     )
     logger.info("training %s for %d steps; outputs in %s", algorithm, total_timesteps, run_directory)
-    model.learn(total_timesteps=total_timesteps, callback=SuccessRateCallback(), progress_bar=True)
+    model.learn(
+        total_timesteps=total_timesteps, callback=[SuccessRateCallback(), *(callbacks or [])], progress_bar=True
+    )
     model.save(run_directory / "model")
     logger.info("saved model to %s", run_directory / "model.zip")
     return model

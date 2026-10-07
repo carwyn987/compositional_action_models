@@ -52,6 +52,19 @@ def parse_args(argv: list[str] | None = None) -> dict:
     training.add_argument("--max-episodes", type=int, default=10, help="episodes to run (random)")
     training.add_argument("--max-steps-per-episode", type=int, default=100)
     training.add_argument("--output-dir", default="outputs", help="runs are saved to <output-dir>/<run name>/")
+
+    evaluation = parser.add_argument_group(
+        "evaluation during training (sac/ppo)",
+        "Evaluations run at the start (zero-shot), every --eval-interval steps and at the end, deterministic and "
+        "stochastic, on a separate environment; results go to TensorBoard and <run>/metrics.json. Each costs about "
+        "2 x eval-episodes x skills episodes, so start with an infrequent interval and tune.",
+    )
+    evaluation.add_argument("--eval-interval", type=int, default=50_000, help="training steps between evaluations; 0 disables")
+    evaluation.add_argument("--eval-episodes", type=int, default=20, help="episodes per skill per evaluation")
+    evaluation.add_argument(
+        "--success-threshold", type=float, default=0.95,
+        help="success rate (over --eval-episodes) for steps_to_threshold",
+    )
     training.add_argument("--seed", type=int, default=0)
     training.add_argument(
         "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
@@ -79,7 +92,7 @@ def run_name(config: dict) -> str:
     )
 
 
-def train(config: dict, env: gym.Env) -> None:
+def train(config: dict, env: gym.Env, skills: list[Skill]) -> None:
     """Train a policy with Stable-Baselines3 (imported here so random runs do not need it).
 
     The run directory also gets config.json, the full training config, so the
@@ -90,7 +103,29 @@ def train(config: dict, env: gym.Env) -> None:
     run_directory = Path(config["output_dir"]) / run_name(config)
     run_directory.mkdir(parents=True, exist_ok=True)
     (run_directory / "config.json").write_text(json.dumps(config, indent=2))  # lets run_skill.py rebuild the env
-    train_stable_baselines3(env, config["algorithm"], config["total_timesteps"], run_directory, seed=config["seed"])
+    callbacks, eval_env = [], None
+    if config["eval_interval"] > 0:
+        from cam.evaluation.metrics_callback import MetricsCallback
+
+        eval_env = setup_environment(config | {"render": False}, skills)
+        callbacks.append(
+            MetricsCallback(
+                eval_env,
+                [skill.name for skill in skills],
+                config["eval_interval"],
+                config["eval_episodes"],
+                run_directory,
+                success_threshold=config["success_threshold"],
+                seed=config["seed"] + 10_000,  # evaluation scenes differ from training's
+            )
+        )
+    try:
+        train_stable_baselines3(
+            env, config["algorithm"], config["total_timesteps"], run_directory, seed=config["seed"], callbacks=callbacks
+        )
+    finally:
+        if eval_env is not None:
+            eval_env.close()
 
 
 def run_random_actions(config: dict, env: gym.Env, skills: list[Skill]) -> list[float]:
@@ -132,7 +167,7 @@ def main(argv: list[str] | None = None) -> None:
         if config["algorithm"] == "random":
             run_random_actions(config, env, skills)
         else:
-            train(config, env)
+            train(config, env, skills)
     finally:
         env.close()
 
