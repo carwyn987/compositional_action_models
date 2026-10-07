@@ -47,3 +47,12 @@ def test_resume_rejects_options_that_change_the_observation(tmp_path):
     with pytest.raises(SystemExit):
         parse_args(["--run-directory", str(tmp_path), "--operator-encoder", "one-hot"])
     assert parse_args(["--run-directory", str(tmp_path), "--total-timesteps", "5"])["total_timesteps"] == 5
+
+
+@pytest.mark.unit
+def test_resume_keeps_saved_options_that_differ_from_the_defaults(tmp_path):
+    """A run saved with non-default options (e.g. --algorithm ppo) resumes with them when they are not
+    given again; only options typed on the command line override the saved config."""
+    (tmp_path / "config.json").write_text(json.dumps(parse_args(["--skills", "pickup", "--algorithm", "ppo", "--seed", "3"])))
+    config = parse_args(["--run-directory", str(tmp_path), "--skills", "pickup", "putdown"])
+    assert (config["algorithm"], config["seed"], config["skills"]) == ("ppo", 3, ["pickup", "putdown"])

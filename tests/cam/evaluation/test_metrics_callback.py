@@ -79,3 +79,32 @@ def test_step_returns_false_once_stopping():
     assert callback._on_step() is True
     callback.stop_reason = "test"
     assert callback._on_step() is False
+
+
+@pytest.mark.unit
+def test_resume_at_the_last_evaluation_only_evaluates_added_skills(monkeypatch):
+    """Resuming at the last evaluated step skips skills already evaluated there and merges added skills
+    into that point (no duplicate evaluation at the same step)."""
+    import cam.evaluation.metrics_callback as metrics_callback_module
+    from cam.evaluation.evaluation import EvaluationResult, SkillEvaluation
+
+    evaluated = []
+
+    def fake_evaluate(env, policy, skill_names, episodes, seed=None):
+        evaluated.append(list(skill_names))
+        return EvaluationResult({skill: SkillEvaluation(1, 1.0, 0.0, 1.0, 0.0, 5.0, 0.0) for skill in skill_names})
+
+    monkeypatch.setattr(metrics_callback_module, "evaluate", fake_evaluate)
+    callback = callback_with_curve([{"a": 0.5, "b": 0.5}])  # one point at step 0
+    callback.num_timesteps, callback.model = 0, None
+    monkeypatch.setattr(callback, "write_metrics", lambda: None)
+    monkeypatch.setattr(type(callback), "logger", property(lambda self: __import__("unittest.mock").mock.MagicMock()))
+
+    callback.skill_names = ["a", "b"]
+    callback._on_training_start()
+    assert evaluated == []  # nothing new to evaluate at step 0
+
+    callback.skill_names = ["a", "b", "c"]
+    callback._on_training_start()
+    assert evaluated == [["c"], ["c"]]  # deterministic and stochastic, only the added skill
+    assert sorted(callback.curves["deterministic"].points[-1][1].skills) == ["a", "b", "c"]

@@ -47,10 +47,8 @@ LOCKED_ON_RESUME = [
 ]
 
 
-def build_parser(argument_default=None) -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(
-        description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter, argument_default=argument_default
-    )
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument(
         "--mode", choices=MODES, default="train-evaluate",
         help="train-evaluate: train with evaluation during training; train: no evaluation; "
@@ -147,6 +145,14 @@ def build_parser(argument_default=None) -> argparse.ArgumentParser:
     return parser
 
 
+def explicit_options(argv: list[str] | None) -> dict:
+    """Only the options given on the command line (every default suppressed, including declared ones)."""
+    parser = build_parser()
+    for action in parser._actions:
+        action.default = argparse.SUPPRESS
+    return vars(parser.parse_args(argv))
+
+
 def parse_args(argv: list[str] | None = None) -> dict:
     """The run config: defaults, then the run's saved config.json (with --run-directory; except the
     PER_INVOCATION options), then explicit options."""
@@ -158,7 +164,7 @@ def parse_args(argv: list[str] | None = None) -> dict:
         if not config_path.exists():
             parser.error(f"{args.run_directory} has no config.json")
         saved = {key: value for key, value in json.loads(config_path.read_text()).items() if key not in PER_INVOCATION}
-        explicit = vars(build_parser(argparse.SUPPRESS).parse_args(argv))
+        explicit = explicit_options(argv)
         changed = [key for key in LOCKED_ON_RESUME if key in explicit and explicit[key] != saved.get(key)]
         if changed:
             parser.error(f"cannot change {changed} of an existing run (they define its observation and algorithm)")

@@ -36,7 +36,7 @@ import gymnasium as gym
 import numpy as np
 from stable_baselines3.common.callbacks import BaseCallback
 
-from cam.evaluation.evaluation import evaluate
+from cam.evaluation.evaluation import EvaluationResult, evaluate
 from cam.evaluation.learning_curve import MEASURES, LearningCurve, TrainingProgress
 from cam.policies.stable_baselines3_policy import StableBaselines3Policy
 from cam.training.checkpointing import atomic_write_text
@@ -93,7 +93,14 @@ class MetricsCallback(BaseCallback):
 
     def _on_training_start(self) -> None:
         self._reconcile_with_model()
-        self._evaluate()
+        points = self.curves["deterministic"].points
+        if points and points[-1][0] == self.num_timesteps:
+            # Resumed right at the last evaluation: evaluate only skills added since (their zero-shot point).
+            missing = [skill for skill in self.skill_names if skill not in points[-1][1].skills]
+            if missing:
+                self._evaluate(missing)
+        else:
+            self._evaluate()
         self.next_evaluation_step = self.num_timesteps + self.eval_interval
 
     def _reconcile_with_model(self) -> None:
@@ -128,7 +135,10 @@ class MetricsCallback(BaseCallback):
         if self.curves["deterministic"].last_step != self.num_timesteps:
             self._evaluate()
 
-    def _evaluate(self) -> None:
+    def _evaluate(self, skill_names: list[str] | None = None) -> None:
+        """Evaluate skill_names (default: all skills). Evaluating a subset at the last point's step adds
+        its results to that point instead of re-evaluating the others."""
+        skill_names = skill_names or self.skill_names
         step = self.num_timesteps
         progress = TrainingProgress(step, self.episodes, dict(self.skill_steps), dict(self.skill_episodes))
         self.logger.record("progress/episodes", progress.episodes)
@@ -137,10 +147,13 @@ class MetricsCallback(BaseCallback):
             self.logger.record(f"progress/{skill}/episodes", progress.skill_episodes.get(skill, 0))
         for mode, deterministic in MODES.items():
             policy = StableBaselines3Policy(self.model, deterministic=deterministic)
-            result = evaluate(self.eval_env, policy, self.skill_names, self.episodes_per_skill, seed=self.seed)
+            result = evaluate(self.eval_env, policy, skill_names, self.episodes_per_skill, seed=self.seed)
             curve = self.curves[mode]
+            if curve.points and curve.points[-1][0] == step:
+                result = EvaluationResult(curve.points[-1][1].skills | result.skills)
             curve.add(step, result, progress)
-            for skill, evaluation in result.skills.items():
+            for skill in skill_names:  # only the skills just evaluated
+                evaluation = result.skills[skill]
                 prefix = f"eval_{mode}/{skill}"
                 self.logger.record(f"{prefix}/success_rate", evaluation.success_rate)
                 self.logger.record(f"{prefix}/success_rate_std", evaluation.success_rate_std)
