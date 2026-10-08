@@ -135,6 +135,30 @@ def test_tree_and_slots_ignore_literal_order_and_padding(architecture):
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("architecture", ARCHITECTURES)
+def test_extractor_embedding_has_unit_norm_even_when_the_composition_grows(architecture):
+    """The extractor normalizes the composed embedding to zero mean and unit norm, so its scale cannot
+    explode during training (the tree's grew ~170x in 2048 PPO steps before this): here the
+    composition's output is scaled up 1000x and the embedding the policy sees is unchanged."""
+    import gymnasium as gym
+
+    space = gym.spaces.Dict({
+        "observation": gym.spaces.Box(-np.inf, np.inf, (5,)),
+        "operator_embedding": gym.spaces.Box(-np.inf, np.inf, (LAYOUT.size,)),
+    })
+    extractor = CompositionalOperatorExtractor(space, architecture, LAYOUT, 16, 32)
+    x = structure(PICKUP, STACK)
+    embedding = extractor.operator_embedding(x)
+    # Norm 1 up to LayerNorm's eps (1e-5), which slightly shrinks outputs whose variance is small.
+    torch.testing.assert_close(embedding.norm(dim=1), torch.ones(2), atol=1e-3, rtol=0)
+    torch.testing.assert_close(embedding.mean(dim=1), torch.zeros(2), atol=1e-6, rtol=0)
+    with torch.no_grad():
+        for parameter in extractor.composition.parameters():
+            parameter.mul_(1000.0 ** (1 / 8))  # inflate the composition's weights; output grows by orders of magnitude
+    torch.testing.assert_close(extractor.operator_embedding(x).norm(dim=1), torch.ones(2), atol=1e-3, rtol=0)
+
+
+@pytest.mark.unit
 def test_layout_rejects_predicates_above_the_maximum_arity():
     """max_predicate_arity is a fixed maximum: an environment predicate with more arguments is an error."""
     with pytest.raises(ValueError):

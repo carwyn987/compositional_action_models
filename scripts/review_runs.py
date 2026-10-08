@@ -147,11 +147,35 @@ def section_embeddings(runs: list[Path]) -> list[str]:
                 cosine = float(a @ b / (a.norm() * b.norm() + 1e-12))
                 pairs.append(f"{first}-{second} distance {(a - b).norm():.3g} cosine {cosine:.3f}")
         lines.append(f"   {run.name}: norms {norms}; {'; '.join(pairs)}")
+        if config.get("operator_encoder") == "compositional":
+            raw = composition_norms(config, model_path)
+            lines.append(f"     before normalization: norms {', '.join(f'{name} {norm:.3g}' for name, norm in raw.items())}")
     return lines
 
 
 def learned_embeddings(config: dict, model_path: Path) -> dict:
     """Each skill's operator embedding as the saved policy computes it (encoder, then the learned extractor)."""
+    import numpy as np
+    import torch
+
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.policies.stable_baselines3_policy import ALGORITHMS
+    from cam.skills.registry import build_skill
+
+    skills = [build_skill(name, config) for name in config["skills"]]
+    encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills)
+    inputs = torch.as_tensor(np.stack([encoder.encode(skill.symbolic_action_model) for skill in skills]))
+    policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
+    extractor = policy.features_extractor if hasattr(policy, "features_extractor") else policy.actor.features_extractor
+    with torch.no_grad():
+        outputs = extractor.operator_embedding(inputs)
+    return {skill.name: output for skill, output in zip(skills, outputs)}
+
+
+def composition_norms(config: dict, model_path: Path) -> dict:
+    """Compositional runs only: each skill's composed embedding norm before the extractor normalizes it. The
+    normalized embedding always has norm 1, so this is where a growing composition still shows (and it is
+    what policies trained before the normalization was added actually saw)."""
     import numpy as np
     import torch
 
@@ -166,11 +190,8 @@ def learned_embeddings(config: dict, model_path: Path) -> dict:
     policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
     extractor = policy.features_extractor if hasattr(policy, "features_extractor") else policy.actor.features_extractor
     with torch.no_grad():
-        if config.get("operator_encoder") == "compositional":
-            outputs = extractor.composition(unpack(inputs, extractor.layout))
-        else:
-            outputs = extractor.operator_embedding(inputs)
-    return {skill.name: output for skill, output in zip(skills, outputs)}
+        composed = extractor.composition(unpack(inputs.float(), extractor.layout))
+    return {skill.name: float(norm) for skill, norm in zip(skills, composed.norm(dim=1))}
 
 
 def main() -> None:
