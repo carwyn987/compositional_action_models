@@ -30,7 +30,12 @@ import gymnasium as gym
 
 from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
-from cam.experiments.environment_setup import OPERATOR_ENCODERS, setup_environment
+from cam.experiments.environment_setup import (
+    COMPOSITIONAL_ARCHITECTURES,
+    OPERATOR_ENCODERS,
+    compositional_layout,
+    setup_environment,
+)
 from cam.logging_config import add_log_file, configure_logging
 from cam.representations.text_backends import TEXT_BACKENDS
 from cam.representations.text_operator_encoder import OPERATOR_TEXTS
@@ -45,7 +50,8 @@ PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skil
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
-    "trainable_operator_embedding", "text_backend", "operator_text",
+    "trainable_operator_embedding", "text_backend", "operator_text", "compositional_architecture",
+    "component_embedding_dim", "max_operator_literals", "compositional_name", "slots", "slot_iterations",
     "symbolic_action_model_format",
 ]
 
@@ -144,6 +150,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="shaped: Fetch shaped reward where one exists (pickup), sparse otherwise",
     )
 
+    compositional = parser.add_argument_group(
+        "compositional embedding (--operator-encoder compositional)",
+        "The operator's components (types, variables, predicates, literals, name) have learnable embeddings, "
+        "composed inside the policy into the operator embedding (--operator-embedding-dim) and trained with "
+        "it. See src/cam/representations/compositional_embedding.py.",
+    )
+    compositional.add_argument(
+        "--compositional-architecture", choices=sorted(COMPOSITIONAL_ARCHITECTURES), default="tree",
+        help="tree: learned NOT / AND / PRE / EFF / OPERATOR functions following the PDDL syntax; slots: slot "
+        "attention over component tokens; geometric: components on a grid, read by a CNN and slot attention",
+    )
+    compositional.add_argument(
+        "--component-embedding-dim", type=int, default=32, help="size of every component embedding",
+    )
+    compositional.add_argument(
+        "--max-operator-literals", type=int, default=16, help="most preconditions + effects any operator may have",
+    )
+    compositional.add_argument(
+        "--compositional-name", choices=["text", "none"], default="text",
+        help="include the operator name, text-embedded with --text-backend, or leave it out",
+    )
+    compositional.add_argument("--slots", type=int, default=4, help="slots (slots and geometric architectures)")
+    compositional.add_argument(
+        "--slot-iterations", type=int, default=3, help="slot attention rounds (slots and geometric architectures)",
+    )
+
     evaluation = parser.add_argument_group(
         "evaluation",
         "During training (train-evaluate), evaluations run at the start (zero-shot), every --eval-interval steps "
@@ -202,6 +234,8 @@ def parse_args(argv: list[str] | None = None) -> dict:
         parser.error("--skills is required for a new run")
     if config["num_blocks"] is not None and config["environment_id"] != fetch_multiblock_environment.ENVIRONMENT_ID:
         parser.error(f"--num-blocks applies only to --environment-id {fetch_multiblock_environment.ENVIRONMENT_ID}")
+    if config["operator_encoder"] == "compositional" and config["trainable_operator_embedding"]:
+        parser.error("compositional embeddings are always trained with the policy; drop --trainable-operator-embedding")
     unknown_stop_skills = [skill for skill in config["stop_skills"] if skill not in config["skills"]]
     if unknown_stop_skills:
         parser.error(f"--stop-skills {unknown_stop_skills} are not among --skills {config['skills']}")
@@ -213,14 +247,34 @@ def run_name(config: dict) -> str:
     encoder = config["operator_encoder"]
     if encoder == "text":
         encoder += f"-{config['text_backend']}-{config['operator_text']}"
+    elif encoder == "compositional":
+        encoder += f"-{config['compositional_architecture']}"
     if config.get("trainable_operator_embedding"):
         encoder += "-trainable"
     return "_".join(["-".join(config["skills"]), config["algorithm"], encoder, config["reward"], f"seed{config['seed']}"])
 
 
 def policy_kwargs(config: dict) -> dict | None:
-    """Policy options for a new model: the trainable operator embedding's features extractor, shared by
-    actor and critic (for SAC, then trained through the critic loss)."""
+    """Policy options for a new model: the features extractor of a compositional or trainable operator
+    embedding, shared by actor and critic (for SAC, then trained through the critic loss)."""
+    if config["operator_encoder"] == "compositional":
+        from cam.representations.compositional_embedding import CompositionalOperatorExtractor
+
+        architecture = config["compositional_architecture"]
+        return {
+            "features_extractor_class": CompositionalOperatorExtractor,
+            "features_extractor_kwargs": {
+                "architecture": COMPOSITIONAL_ARCHITECTURES[architecture],
+                "layout": compositional_layout(config),
+                "component_dim": config["component_embedding_dim"],
+                "output_dim": config["operator_embedding_dim"],
+                "architecture_kwargs": (
+                    {} if architecture == "tree"
+                    else {"num_slots": config["slots"], "slot_iterations": config["slot_iterations"]}
+                ),
+            },
+            "share_features_extractor": True,
+        }
     if not config.get("trainable_operator_embedding"):
         return None
     from cam.policies.feature_extractors import TrainableOperatorEmbeddingExtractor
