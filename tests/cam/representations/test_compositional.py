@@ -1,4 +1,5 @@
-"""Compositional operator embeddings: the structure array, the three architectures, and training through main."""
+"""Compositional operator embeddings (representations/compositional/): the structure array, the three
+architectures, and training through main."""
 
 import dataclasses
 
@@ -11,21 +12,21 @@ pytest.importorskip("stable_baselines3")
 from stable_baselines3 import PPO  # noqa: E402
 
 from cam.domain.pddl.pddl_parser import parse_operator  # noqa: E402
-from cam.representations.compositional_embedding import (  # noqa: E402
-    CompositionalOperatorExtractor,
+from cam.representations.compositional.extractor import CompositionalOperatorExtractor  # noqa: E402
+from cam.representations.compositional.geometric import GeometricComposition  # noqa: E402
+from cam.representations.compositional.slots import SlotComposition  # noqa: E402
+from cam.representations.compositional.structure import (  # noqa: E402
     OperatorLayout,
-    SlotComposition,
     StructuredOperatorEncoder,
-    TreeComposition,
     unpack,
 )
-from cam.representations.geometric_embedding import GeometricComposition  # noqa: E402
+from cam.representations.compositional.tree import TreeComposition  # noqa: E402
 from cam.representations.text_backends import MockTextBackend  # noqa: E402
 from main import main, parse_args, run_name  # noqa: E402
 from tests.cam.domain.conftest import LEGACY_OPERATORS  # noqa: E402
 
 ARITIES = {"holding": 1, "on-table": 1, "clear": 1, "on": 2, "gripper-empty": 0}  # ids: sorted names + 1
-LAYOUT = OperatorLayout.from_predicate_arities(ARITIES, ["block"], max_parameters=3, max_literals=8)
+LAYOUT = OperatorLayout.from_predicate_arities(ARITIES, ["block"], max_predicate_arity=2, max_parameters=3, max_literals=8)
 PICKUP, STACK = parse_operator(LEGACY_OPERATORS["pickup"]), parse_operator(LEGACY_OPERATORS["stack"])
 ARCHITECTURES = [TreeComposition, SlotComposition, GeometricComposition]
 
@@ -43,11 +44,11 @@ def on_effect(first: str, second: str):
 
 @pytest.mark.unit
 def test_structure_of_pickup():
-    """Parameter types, then literal rows sorted by (section, predicate, arguments), zero padding."""
+    """Parameter types, then literal rows sorted by (kind, predicate, arguments), EMPTY (0) padding."""
     parts = unpack(structure(PICKUP), LAYOUT)
     assert parts.types.tolist() == [[1, 0, 0]]
-    # clear=1, gripper-empty=2, holding=3, on-table=5; sections: precondition 1, add 3, delete 4
-    assert parts.sections.tolist() == [[1, 1, 1, 3, 4, 4, 0, 0]]
+    # clear=1, gripper-empty=2, holding=3, on-table=5; kinds: PRECONDITION 3, ADD 5, DELETE 6, EMPTY 0
+    assert parts.kinds.tolist() == [[3, 3, 3, 5, 6, 6, 0, 0]]
     assert parts.predicates.tolist() == [[1, 2, 5, 3, 2, 5, 0, 0]]
     assert parts.arguments[0, :, 0].tolist() == [1, 0, 1, 1, 0, 1, 0, 0]  # ?o is parameter 1; 0 = no argument
     assert parts.name.shape == (1, 0)
@@ -131,6 +132,13 @@ def test_tree_and_slots_ignore_literal_order_and_padding(architecture):
     larger_model = architecture(larger, 16, 32)
     larger_model.load_state_dict(model.state_dict())
     torch.testing.assert_close(model(unpack(x, LAYOUT)), larger_model(unpack(structure(STACK, layout=larger), larger)))
+
+
+@pytest.mark.unit
+def test_layout_rejects_predicates_above_the_maximum_arity():
+    """max_predicate_arity is a fixed maximum: an environment predicate with more arguments is an error."""
+    with pytest.raises(ValueError):
+        OperatorLayout.from_predicate_arities(ARITIES, ["block"], max_predicate_arity=1, max_parameters=3, max_literals=8)
 
 
 @pytest.mark.unit

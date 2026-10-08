@@ -51,7 +51,8 @@ PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skil
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
     "trainable_operator_embedding", "text_backend", "operator_text", "compositional_architecture",
-    "component_embedding_dim", "max_operator_literals", "compositional_name", "slots", "slot_iterations",
+    "component_embedding_dim", "max_operator_literals", "max_predicate_arity", "compositional_name", "slots",
+    "slot_iterations",
     "symbolic_action_model_format",
 ]
 
@@ -154,7 +155,7 @@ def build_parser() -> argparse.ArgumentParser:
         "compositional embedding (--operator-encoder compositional)",
         "The operator's components (types, variables, predicates, literals, name) have learnable embeddings, "
         "composed inside the policy into the operator embedding (--operator-embedding-dim) and trained with "
-        "it. See src/cam/representations/compositional_embedding.py.",
+        "it. See src/cam/representations/compositional/.",
     )
     compositional.add_argument(
         "--compositional-architecture", choices=sorted(COMPOSITIONAL_ARCHITECTURES), default="tree",
@@ -166,6 +167,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     compositional.add_argument(
         "--max-operator-literals", type=int, default=16, help="most preconditions + effects any operator may have",
+    )
+    compositional.add_argument(
+        "--max-predicate-arity", type=int, default=4,
+        help="most arguments any predicate may have (fixed, so modified operators fit the same layout)",
     )
     compositional.add_argument(
         "--compositional-name", choices=["text", "none"], default="text",
@@ -258,7 +263,7 @@ def policy_kwargs(config: dict) -> dict | None:
     """Policy options for a new model: the features extractor of a compositional or trainable operator
     embedding, shared by actor and critic (for SAC, then trained through the critic loss)."""
     if config["operator_encoder"] == "compositional":
-        from cam.representations.compositional_embedding import CompositionalOperatorExtractor
+        from cam.representations.compositional.extractor import CompositionalOperatorExtractor
 
         architecture = config["compositional_architecture"]
         return {

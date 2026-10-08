@@ -1,11 +1,11 @@
-"""Geometric compositional embedding (experimental): an operator's components laid out on a grid, read by
-a CNN and slot attention. One of the --compositional-architecture options; see compositional_embedding.py
-for the components, the structure array and the extractor.
+"""Geometric architecture (experimental): an operator's components laid out on a grid, read by a CNN and
+slot attention (see __init__.py).
 
 The grid is an image with component_dim channels, height H = [1 +] P + L and width W = NUM_KINDS:
     row r      the r-th component in canonical order: [name], parameters by position, literals as
-               serialized (sorted by section, predicate, arguments)
-    column     the component's kind: name, parameter, precondition, negated precondition, add, delete
+               serialized (sorted)
+    column     the component's kind (structure.py: NAME, PARAMETER, PRECONDITION, ...); the EMPTY column
+               is always zero
     channels   the component's embedding (ComponentEmbeddings.tokens); the row's other cells are zero
 so the operator's hierarchy runs down the rows, kind information across the columns, and the
 components' content along the channels.
@@ -20,13 +20,9 @@ order (canonical here) and on the layout's maxima, which set the grid size.
 import torch
 from torch import nn
 
-from cam.representations.compositional_embedding import (
-    NUM_KINDS,
-    ComponentEmbeddings,
-    OperatorLayout,
-    OperatorParts,
-    SlotAttention,
-)
+from cam.representations.compositional.components import ComponentEmbeddings
+from cam.representations.compositional.slots import SlotAttention
+from cam.representations.compositional.structure import NUM_KINDS, OperatorLayout, OperatorParts
 
 
 class GeometricComposition(nn.Module):

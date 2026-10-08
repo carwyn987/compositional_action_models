@@ -19,14 +19,11 @@ from cam.environments.skill_environment import SkillEnvironment
 from cam.representations.grounding_encoder import GroundingEncoder
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
 from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
-from cam.representations.compositional_embedding import (
-    OperatorLayout,
-    SlotComposition,
-    StructuredOperatorEncoder,
-    TreeComposition,
-)
+from cam.representations.compositional.geometric import GeometricComposition
+from cam.representations.compositional.slots import SlotComposition
+from cam.representations.compositional.structure import OperatorLayout, StructuredOperatorEncoder
+from cam.representations.compositional.tree import TreeComposition
 from cam.representations.embedding_cache import DiskEmbeddingCache
-from cam.representations.geometric_embedding import GeometricComposition
 from cam.representations.padded_operator_encoder import PaddedOperatorEncoder
 from cam.representations.random_operator_encoder import RandomOperatorEncoder
 from cam.representations.text_backends import TEXT_BACKENDS, CachedTextBackend
@@ -47,7 +44,7 @@ OPERATOR_ENCODERS = {
     ),
     "random": lambda config, skills: RandomOperatorEncoder(config["operator_embedding_dim"], seed=config["seed"]),
     "text": lambda config, skills: TextOperatorEncoder(text_backend(config), config["operator_text"]),
-    # the operator's structure, composed into an embedding inside the policy (compositional_embedding.py)
+    # the operator's structure, composed into an embedding inside the policy (representations/compositional/)
     "compositional": lambda config, skills: StructuredOperatorEncoder(
         compositional_layout(config),
         text_backend(config, config["component_embedding_dim"]) if config["compositional_name"] == "text" else None,
@@ -64,6 +61,7 @@ def compositional_layout(config: dict) -> OperatorLayout:
     return OperatorLayout.from_predicate_arities(
         FETCH_PREDICATE_ARITIES,
         FetchEnvStateAnnotationWrapper.OBJECT_TYPES,
+        max_predicate_arity=config["max_predicate_arity"],
         max_parameters=config["max_operator_arity"],
         max_literals=config["max_operator_literals"],
         name_dim=config["component_embedding_dim"] if config["compositional_name"] == "text" else 0,
