@@ -125,3 +125,32 @@ def test_padding_keeps_the_encoding_and_fills_with_zeros():
 def test_padding_rejects_an_encoder_larger_than_the_size():
     with pytest.raises(ValueError):
         PaddedOperatorEncoder(encoder(3), 64)  # multi-hot vocabulary of 84
+
+
+@pytest.mark.unit
+def test_identity_aliases_encode_a_repaired_operator_like_the_original():
+    """one-hot and random identify operators by name; an alias makes the repaired operator identical to
+    the original for them (the repair is invisible), while without one it gets its own code."""
+    repaired = dataclasses.replace(PUTDOWN, name="putdown-repaired")
+    aliases = {"putdown-repaired": "putdown"}
+    one_hot = OneHotOperatorEncoder([PICKUP, PUTDOWN, repaired], aliases)
+    assert one_hot.dim == 2 and (one_hot.encode(repaired) == one_hot.encode(PUTDOWN)).all()
+    assert OneHotOperatorEncoder([PICKUP, PUTDOWN, repaired]).dim == 3
+    np.testing.assert_array_equal(
+        RandomOperatorEncoder(16, aliases=aliases).encode(repaired), RandomOperatorEncoder(16).encode(PUTDOWN)
+    )
+    assert not np.allclose(RandomOperatorEncoder(16).encode(repaired), RandomOperatorEncoder(16).encode(PUTDOWN))
+
+
+@pytest.mark.unit
+def test_one_hot_index_does_not_depend_on_the_training_skills():
+    """The configured one-hot encoder indexes every registered skill, so replacing or adding a training
+    skill never moves another skill's index."""
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.skills.registry import build_skill
+
+    config = {"symbolic_action_model_format": "pddl", "operator_embedding_dim": 128}
+    pickup, stack = build_skill("pickup", config), build_skill("stack", config)
+    before = OPERATOR_ENCODERS["one-hot"](config | {"skills": ["pickup", "stack"]}, [pickup, stack])
+    after = OPERATOR_ENCODERS["one-hot"](config | {"skills": ["stack"]}, [stack])
+    np.testing.assert_array_equal(before.encode(stack.symbolic_action_model), after.encode(stack.symbolic_action_model))

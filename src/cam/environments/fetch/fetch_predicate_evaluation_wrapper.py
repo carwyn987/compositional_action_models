@@ -25,6 +25,8 @@ TABLE_REST_Z = 0.425  # block centre height when resting on the table
 Z_TOLERANCE = 0.01  # height tolerance for resting on the table / on another block
 GRASP_DISTANCE = 0.03  # max gripper-to-block-centre distance for gripping
 OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper grips nothing
+RAISED_HEIGHT = 0.10  # height above table rest at which a held block counts as raised
+BESIDE_DISTANCE = (0.055, 0.10)  # centre-to-centre distance range for two blocks side by side on the table
 
 # A block is *supported* when it rests on the table or on another block (on-table, on), and *gripped*
 # when the closed fingers are around it. Holding needs both gripped and lifted off its support, so
@@ -69,6 +71,22 @@ def clear(state: FetchState, block: str) -> bool:
     )
 
 
+def raised(state: FetchState, block: str) -> bool:
+    """Held at least RAISED_HEIGHT above where it rests on the table (pickup only needs a lift off it)."""
+    return holding(state, block) and state.block_positions[block][2] - TABLE_REST_Z >= RAISED_HEIGHT
+
+
+def beside(state: FetchState, block: str, other: str) -> bool:
+    """Both blocks rest on the table, side by side: centres BESIDE_DISTANCE apart (blocks are 0.05 wide,
+    and reset places blocks at least 0.10 apart, so no two blocks start beside each other)."""
+    distance = np.linalg.norm(state.block_positions[block][:2] - state.block_positions[other][:2])
+    return (
+        on_table(state, block)
+        and on_table(state, other)
+        and BESIDE_DISTANCE[0] <= distance < BESIDE_DISTANCE[1]
+    )
+
+
 def gripper_empty(state: FetchState) -> bool:
     """The fingers are around no block (open, or closed on nothing)."""
     return not any(gripping(state, block) for block in state.block_positions)
@@ -80,6 +98,8 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
     "on": on,
     "clear": clear,
     "gripper-empty": gripper_empty,
+    "raised": raised,
+    "beside": beside,
 }
 
 FETCH_PREDICATE_ARITIES: dict[str, int] = {

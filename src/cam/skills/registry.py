@@ -1,6 +1,14 @@
 """Maps skill names to Skill classes."""
 
-from cam.skills.blocksworld_skills import PickupSkill, PutdownSkill, StackSkill, UnstackSkill
+from cam.skills.blocksworld_skills import (
+    PickupRaisedSkill,
+    PickupSkill,
+    PlaceBesideSkill,
+    PutdownSkill,
+    StackSkill,
+    UnstackRaisedSkill,
+    UnstackSkill,
+)
 from cam.skills.skill import Skill
 
 SKILL_REGISTRY: dict[str, type[Skill]] = {
@@ -8,6 +16,9 @@ SKILL_REGISTRY: dict[str, type[Skill]] = {
     PutdownSkill.name: PutdownSkill,
     StackSkill.name: StackSkill,
     UnstackSkill.name: UnstackSkill,
+    PickupRaisedSkill.name: PickupRaisedSkill,
+    UnstackRaisedSkill.name: UnstackRaisedSkill,
+    PlaceBesideSkill.name: PlaceBesideSkill,
 }
 
 

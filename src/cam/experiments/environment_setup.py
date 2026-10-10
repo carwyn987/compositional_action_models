@@ -16,6 +16,7 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
 from cam.environments.fetch.fetch_rewards import FETCH_SHAPED_REWARDS
 from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
+    FetchScriptedPlaceBesidePolicy,
     FetchScriptedPutdownPolicy,
     FetchScriptedStackPolicy,
 )
@@ -32,6 +33,7 @@ from cam.representations.padded_operator_encoder import PaddedOperatorEncoder
 from cam.representations.random_operator_encoder import RandomOperatorEncoder
 from cam.representations.text_backends import TEXT_BACKENDS, CachedTextBackend
 from cam.representations.text_operator_encoder import TextOperatorEncoder
+from cam.skills.registry import SKILL_REGISTRY, build_skill
 from cam.skills.skill import Skill
 from cam.training.policy_observation_wrapper import PolicyObservationWrapper
 
@@ -43,10 +45,17 @@ OPERATOR_ENCODERS = {
         PDDLMultiHotOperatorEncoder(FETCH_PREDICATE_ARITIES, config["max_operator_arity"]),
         config["operator_embedding_dim"],
     ),
+    # one-hot indexes every registered skill's operator in registry order, so an operator keeps its index
+    # whatever the training skills, and a skill added later has an index no training has used
     "one-hot": lambda config, skills: PaddedOperatorEncoder(
-        OneHotOperatorEncoder([skill.symbolic_action_model for skill in skills]), config["operator_embedding_dim"]
+        OneHotOperatorEncoder(
+            [build_skill(name, config).symbolic_action_model for name in SKILL_REGISTRY], identity_aliases(config)
+        ),
+        config["operator_embedding_dim"],
     ),
-    "random": lambda config, skills: RandomOperatorEncoder(config["operator_embedding_dim"], seed=config["seed"]),
+    "random": lambda config, skills: RandomOperatorEncoder(
+        config["operator_embedding_dim"], seed=config["seed"], aliases=identity_aliases(config)
+    ),
     "text": lambda config, skills: TextOperatorEncoder(text_backend(config), config["operator_text"]),
     # the operator's structure, composed into an embedding inside the policy (representations/compositional/)
     "compositional": lambda config, skills: StructuredOperatorEncoder(
@@ -54,6 +63,12 @@ OPERATOR_ENCODERS = {
         text_backend(config, config["component_embedding_dim"]) if config["compositional_name"] == "text" else None,
     ),
 }
+
+
+def identity_aliases(config: dict) -> dict[str, str]:
+    """--operator-identity-aliases NEW=OLD ... as {NEW: OLD} (configs saved before the option: none)."""
+    return dict(alias.split("=", 1) for alias in config.get("operator_identity_aliases") or [])
+
 
 # How CompositionalPolicyFeaturesExtractor composes the operator's components (--compositional-architecture).
 COMPOSITIONAL_ARCHITECTURES = {"tree": TreeComposition, "slots": SlotComposition, "geometric": GeometricComposition}
@@ -95,6 +110,9 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
         "putdown": FetchScriptedPutdownPolicy(),
         "stack": FetchScriptedStackPolicy(),
         "unstack": FetchScriptedPickupPolicy(),  # grasp and lift, from on top of the other block
+        "pickup-raised": FetchScriptedPickupPolicy(),  # the pickup motion lifts the block 15 cm
+        "unstack-raised": FetchScriptedPickupPolicy(),
+        "place-beside": FetchScriptedPlaceBesidePolicy(),
     }
     reward_functions = (
         {name: reward_class() for name, reward_class in FETCH_SHAPED_REWARDS.items()}

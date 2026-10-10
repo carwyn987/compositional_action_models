@@ -147,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="most parameters any operator may have; fixes the multi-hot vocabulary and grounding slots",
     )
     training.add_argument(
+        "--operator-identity-aliases", nargs="+", default=[], metavar="NEW=OLD",
+        help="one-hot and random only: encode operator NEW exactly as OLD (same index / vector), e.g. "
+        "unstack-raised=unstack, so a repaired operator is indistinguishable from the original to them "
+        "(a baseline for repair experiments); content-based encoders are unaffected",
+    )
+    training.add_argument(
         "--reward", choices=["sparse", "shaped"], default="sparse",
         help="shaped: Fetch shaped reward where one exists (pickup), sparse otherwise",
     )
@@ -296,10 +302,14 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
     during training in train-evaluate mode."""
     from cam.evaluation.metrics_callback import MetricsCallback
     from cam.training.checkpointing import atomic_write_text
-    from cam.training.stable_baselines3_trainer import train_stable_baselines3
+    from cam.training.stable_baselines3_trainer import OperatorEmbeddingMagnitudeCallback, train_stable_baselines3
 
     atomic_write_text(run_directory / "config.json", json.dumps(config, indent=2))
     callbacks, on_save, eval_env = [], [], None
+    if config["trainable_operator_embedding"] or config["operator_encoder"] == "compositional":
+        # learned operator embeddings: log their magnitude (L2 norm) per skill to TensorBoard
+        operator_inputs = {skill.name: env.operator_encoder.encode(skill.symbolic_action_model) for skill in skills}
+        callbacks.append(OperatorEmbeddingMagnitudeCallback(operator_inputs))
     if config["mode"] == "train-evaluate":
         metrics_path = run_directory / "metrics.json"
         eval_env = setup_environment(config | {"render": False}, skills)

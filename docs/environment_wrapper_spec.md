@@ -91,6 +91,8 @@ A block is *gripped* when the gripper is within `GRASP_DISTANCE` of it with the 
 | `on(b, c)` | `b` is within half a block of `c` horizontally and one block height (± `z_tolerance`) above it |
 | `clear(b)` | no other block on top of `b` and not `holding(b)` |
 | `gripper-empty` | no block is gripped (the fingers are open, or closed on nothing) |
+| `raised(b)` | `holding(b)` and `b` at least `RAISED_HEIGHT` (0.10) above table rest |
+| `beside(b, c)` | `on-table(b)`, `on-table(c)`, centres `BESIDE_DISTANCE` (0.055 to 0.10) apart |
 
 So grasping skills (pickup, unstack) succeed only once the block is lifted, and placing skills
 (putdown, stack) only once it is released.

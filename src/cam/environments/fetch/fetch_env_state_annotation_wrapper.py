@@ -1,6 +1,6 @@
 """Gymnasium-Robotics Fetch environments annotated with a named state."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import gymnasium as gym
 import numpy as np
@@ -11,6 +11,7 @@ class FetchState:
     gripper_position: np.ndarray  # (3,) x, y, z
     finger_width: float  # sum of the two finger joint positions
     block_positions: dict[str, np.ndarray]  # block name -> (3,) x, y, z
+    block_rotations: dict[str, np.ndarray] = field(default_factory=dict)  # block name -> (3,) Euler angles
 
 
 class FetchEnvStateAnnotationWrapper(gym.Wrapper):
@@ -26,6 +27,7 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
         0:3    gripper position
         3:6    block0 position
         9:11   finger joint positions
+        11:14  block0 rotation (Euler angles)
         25+9k  block k+1 position (3), relative position (3), rotation (3)
     Blocks are named block0..block{N-1}; N is determined by the observation length.
     """
@@ -74,11 +76,14 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
     def extract_state(cls, obs: dict) -> FetchState:
         raw = obs["observation"]
         block_positions = {"block0": raw[3:6].copy()}
+        block_rotations = {"block0": raw[11:14].copy()}
         for i in range(1, cls.count_blocks(raw.shape[0])):
             start = cls.BASE_OBSERVATION_SIZE + cls.EXTRA_BLOCK_SIZE * (i - 1)
             block_positions[f"block{i}"] = raw[start : start + 3].copy()
+            block_rotations[f"block{i}"] = raw[start + 6 : start + 9].copy()
         return FetchState(
             gripper_position=raw[0:3].copy(),
             finger_width=float(raw[9] + raw[10]),
             block_positions=block_positions,
+            block_rotations=block_rotations,
         )
