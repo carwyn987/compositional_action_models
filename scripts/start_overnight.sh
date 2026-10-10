@@ -22,6 +22,11 @@ set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
 
 export OUT="${OUT:-outputs/overnight_$(date +%Y%m%d)}"
+# Use only the virtual environment's packages: a PYTHONPATH from the shell (e.g. a sourced ROS setup) adds
+# outside packages, including pytest plugins that fail to import in .venv (yaml, lark). The project does
+# not need PYTHONPATH (pip install -e . puts src/ on the path).
+unset PYTHONPATH
+export PYTEST_DISABLE_PLUGIN_AUTOLOAD=1  # the tests use no pytest plugins
 PYTHON=".venv/bin/python"
 [[ -x "${PYTHON}" ]] || { echo "no virtual environment at .venv (see README: python -m venv .venv && pip install -e .)"; exit 1; }
 
