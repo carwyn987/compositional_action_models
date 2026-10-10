@@ -56,3 +56,24 @@ def test_held_block_is_not_clear_and_not_on_anything():
     assert fact("holding", "block0") in result
     assert not {fact("clear", "block0"), fact("on", "block0", "block1"), fact("on-table", "block0")} & result
     assert fact("clear", "block1") in result
+
+
+@pytest.mark.unit
+def test_raised_needs_holding_high_above_the_table():
+    """pickup succeeds 1 cm up; raised needs the held block 10 cm up."""
+    low = [1.2, 0.6, TABLE_REST_Z + 0.02]
+    high = [1.2, 0.6, TABLE_REST_Z + 0.11]
+    assert fact("raised", "block0") not in facts(low, GRIPPING, low)
+    assert {fact("holding", "block0"), fact("raised", "block0")} <= facts(high, GRIPPING, high)
+    assert fact("raised", "block0") not in facts(FAR, OPEN, high)  # not held (falling)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("distance, expected", [(0.075, True), (0.05, False), (0.12, False)])
+def test_beside_means_side_by_side_on_the_table(distance, expected):
+    block0 = BLOCK1 + [distance, 0.0, 0.0]
+    result = facts(FAR, OPEN, block0)
+    assert (fact("beside", "block0", "block1") in result) is expected
+    assert (fact("beside", "block1", "block0") in result) is expected
+    lifted = block0 + [0.0, 0.0, 0.05]
+    assert fact("beside", "block0", "block1") not in facts(lifted, GRIPPING, lifted)

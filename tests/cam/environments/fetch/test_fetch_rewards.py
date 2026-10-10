@@ -3,8 +3,15 @@ import pytest
 
 from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchState
-from cam.environments.fetch.fetch_rewards import FetchPickupReward, FetchStackReward, FetchUnstackReward
-from cam.skills.blocksworld_skills import PickupSkill, StackSkill, UnstackSkill
+from cam.environments.fetch.fetch_rewards import (
+    FetchPickupRaisedReward,
+    FetchPickupReward,
+    FetchPlaceBesideReward,
+    FetchPutdownReward,
+    FetchStackReward,
+    FetchUnstackReward,
+)
+from cam.skills.blocksworld_skills import PickupSkill, PutdownSkill, StackSkill, UnstackSkill
 
 PICKUP_BLOCK0 = PickupSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
 BLOCK0 = np.array([1.3, 0.7, 0.425])
@@ -93,3 +100,66 @@ def test_unstack_measures_the_lift_from_the_block_below():
     lifted = on_base + [0.0, 0.0, 0.02]
     lifted_info = {"environment_state": FetchState(lifted, 0.048, {"block0": lifted, "block1": BASE}), "facts": frozenset()}
     assert reward(unstack, np.zeros(4), lifted_info, success=False)[1]["lift_off"] > 0
+
+
+PUTDOWN = PutdownSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+
+
+def putdown_info(height, finger_width=0.048, facts=frozenset(), rotation=(0.0, 0.0, 0.0)):
+    block = np.array([1.3, 0.7, 0.425 + height])
+    state = FetchState(block, finger_width, {"block0": block}, {"block0": np.array(rotation)})
+    return {"environment_state": state, "facts": facts}
+
+
+@pytest.mark.unit
+def test_putdown_penalizes_abrupt_action_changes():
+    """The smoothness term penalizes the change between consecutive actions (a jerk proxy)."""
+    reward = FetchPutdownReward()
+    reward.reset(PUTDOWN, {})
+    reward(PUTDOWN, np.array([0.0, 0.0, -0.5, 0.0]), putdown_info(0.05), success=False)
+    steady = reward(PUTDOWN, np.array([0.0, 0.0, -0.5, 0.0]), putdown_info(0.045), success=False)[1]
+    jerky = reward(PUTDOWN, np.array([0.0, 0.0, 0.5, 0.0]), putdown_info(0.045), success=False)[1]
+    assert steady["smoothness"] == 0 > jerky["smoothness"]
+
+
+@pytest.mark.unit
+def test_putdown_penalizes_opening_high_and_dropping_fast():
+    reward = FetchPutdownReward()
+    reward.reset(PUTDOWN, {})
+    reward(PUTDOWN, np.zeros(4), putdown_info(0.10), success=False)
+    components = reward(PUTDOWN, np.zeros(4), putdown_info(0.06, finger_width=0.10), success=False)[1]
+    assert components["early_open"] < 0 and components["gentle"] < 0  # opened at 6 cm; fell 4 cm in a step
+
+
+@pytest.mark.unit
+def test_putdown_success_bonus_is_larger_for_a_square_placement():
+    placed = frozenset({Predicate("on-table", ("block0",)), Predicate("gripper-empty", ())})
+    bonuses = []
+    for rotation in [(0.0, 0.0, 0.0), (0.0, 0.0, 0.5)]:
+        reward = FetchPutdownReward()
+        reward.reset(PUTDOWN, {})
+        bonuses.append(reward(PUTDOWN, np.zeros(4), putdown_info(0.0, 0.10, placed, rotation), success=True)[1]["success"])
+    assert bonuses[0] == pytest.approx(15.0) and bonuses[0] > bonuses[1]
+
+
+@pytest.mark.unit
+def test_pickup_raised_keeps_rewarding_the_lift_past_pickups_target():
+    """pickup's lift target is 6 cm; pickup-raised's is above the raised height (10 cm)."""
+    def lift_reward(reward_class):
+        reward = reward_class()
+        reward.reset(PICKUP_BLOCK0, {})
+        reward.grip_earned = True
+        at = lambda z: {"environment_state": FetchState(np.array([1.3, 0.7, z]), 0.048, {"block0": np.array([1.3, 0.7, z])}), "facts": frozenset()}
+        reward(PICKUP_BLOCK0, np.zeros(4), at(0.425 + 0.07), success=False)
+        return reward(PICKUP_BLOCK0, np.zeros(4), at(0.425 + 0.09), success=False)[1]["lift"]
+    assert lift_reward(FetchPickupReward) == 0 < lift_reward(FetchPickupRaisedReward)
+
+
+@pytest.mark.unit
+def test_place_beside_aligns_to_the_ring_around_the_other_block():
+    """Its align target is any point at the beside spacing from the other block, not over it."""
+    reward = FetchPlaceBesideReward()
+    on_ring = BASE + [reward.SPACING, 0.0, 0.0]
+    assert reward.align_distance(on_ring, BASE) == pytest.approx(0.0)
+    assert reward.align_distance(BASE, BASE) == pytest.approx(reward.SPACING)
+    assert reward.resting_z(on_ring, BASE) == pytest.approx(0.425)

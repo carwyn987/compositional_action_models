@@ -147,6 +147,12 @@ def build_parser() -> argparse.ArgumentParser:
         help="most parameters any operator may have; fixes the multi-hot vocabulary and grounding slots",
     )
     training.add_argument(
+        "--operator-identity-aliases", nargs="+", default=[], metavar="NEW=OLD",
+        help="one-hot and random only: encode operator NEW exactly as OLD (same index / vector), e.g. "
+        "unstack-raised=unstack, so a repaired operator is indistinguishable from the original to them "
+        "(a baseline for repair experiments); content-based encoders are unaffected",
+    )
+    training.add_argument(
         "--reward", choices=["sparse", "shaped"], default="sparse",
         help="shaped: Fetch shaped reward where one exists (pickup), sparse otherwise",
     )
