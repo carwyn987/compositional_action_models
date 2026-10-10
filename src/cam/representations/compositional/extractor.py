@@ -9,8 +9,17 @@ from cam.policies.feature_extractors import OPERATOR_EMBEDDING_KEY
 from cam.representations.compositional.structure import OperatorLayout, unpack
 
 
-class CompositionalOperatorExtractor(BaseFeaturesExtractor):
-    """features = [grounding, observation, composition(operator structure)].
+class CompositionalPolicyFeaturesExtractor(BaseFeaturesExtractor):
+    """Policy side of the compositional condition: the first module of the policy network, where the
+    operator embedding is composed and trained.
+
+    Where it fits:
+        environment side   StructuredOperatorEncoder (structure.py) writes the operator's structure array
+                           into obs["operator_embedding"]; nothing there is learned
+        policy side        this extractor (Stable-Baselines3's features_extractor_class, set in main.py)
+                           unpacks that array, composes the component embeddings with the chosen
+                           architecture and builds the input of the policy and value MLPs:
+                           features = [grounding, observation, composed operator embedding]
 
     The other observation parts pass through unchanged and the composed operator embedding (size
     output_dim) is appended last: the same layout as the other embedding conditions, so they differ
@@ -46,3 +55,7 @@ class CompositionalOperatorExtractor(BaseFeaturesExtractor):
         parts = [observations[key].float().flatten(start_dim=1) for key in self.other_keys]
         parts.append(self.operator_embedding(observations[OPERATOR_EMBEDDING_KEY]))
         return torch.cat(parts, dim=1)
+
+
+# Former name, kept so that models saved under it (model.zip stores the class by name) still load.
+CompositionalOperatorExtractor = CompositionalPolicyFeaturesExtractor

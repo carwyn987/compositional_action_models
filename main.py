@@ -263,11 +263,11 @@ def policy_kwargs(config: dict) -> dict | None:
     """Policy options for a new model: the features extractor of a compositional or trainable operator
     embedding, shared by actor and critic (for SAC, then trained through the critic loss)."""
     if config["operator_encoder"] == "compositional":
-        from cam.representations.compositional.extractor import CompositionalOperatorExtractor
+        from cam.representations.compositional.extractor import CompositionalPolicyFeaturesExtractor
 
         architecture = config["compositional_architecture"]
         return {
-            "features_extractor_class": CompositionalOperatorExtractor,
+            "features_extractor_class": CompositionalPolicyFeaturesExtractor,
             "features_extractor_kwargs": {
                 "architecture": COMPOSITIONAL_ARCHITECTURES[architecture],
                 "layout": compositional_layout(config),

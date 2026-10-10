@@ -13,8 +13,10 @@ def mlp(in_dim: int, out_dim: int, hidden_dim: int | None = None) -> nn.Sequenti
 
 
 class ComponentEmbeddings(nn.Module):
-    """Type, variable (by position) and predicate embeddings; TYPED; LITERAL; and the name's learned map.
-    Components in EMPTY (padding) positions are exactly zero and masked."""
+    """Embedding store for the operator's components - contains the learned embeddings: type, variable
+    (by position) and predicate embeddings, the learned functions TYPED and LITERAL that combine them,
+    and the name's learned map. Every architecture builds on these. Components in EMPTY (padding)
+    positions are exactly zero and masked."""
 
     def __init__(self, layout: OperatorLayout, dim: int):
         super().__init__()
@@ -22,6 +24,8 @@ class ComponentEmbeddings(nn.Module):
         self.type_embedding = nn.Embedding(len(layout.types) + 1, dim, padding_idx=0)
         self.variable_embedding = nn.Embedding(max(layout.max_parameters, 1), dim)
         self.predicate_embedding = nn.Embedding(len(layout.predicates) + 1, dim, padding_idx=0)
+        # TODO: maybe make each type a functional embedding instead: a learned function per type applied to
+        # the variable (type_function[type](variable)), replacing both type_embedding and TYPED.
         self.typed = mlp(2 * dim, dim)  # TYPED(variable, type)
         self.literal = mlp((1 + layout.max_predicate_arity) * dim, dim)  # LITERAL(predicate, arguments...)
         self.name = nn.Linear(layout.name_dim, dim) if layout.name_dim else None

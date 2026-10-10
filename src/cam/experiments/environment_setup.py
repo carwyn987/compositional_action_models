@@ -51,7 +51,7 @@ OPERATOR_ENCODERS = {
     ),
 }
 
-# How CompositionalOperatorExtractor composes the operator's components (--compositional-architecture).
+# How CompositionalPolicyFeaturesExtractor composes the operator's components (--compositional-architecture).
 COMPOSITIONAL_ARCHITECTURES = {"tree": TreeComposition, "slots": SlotComposition, "geometric": GeometricComposition}
 
 

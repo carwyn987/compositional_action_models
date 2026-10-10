@@ -12,7 +12,7 @@ pytest.importorskip("stable_baselines3")
 from stable_baselines3 import PPO  # noqa: E402
 
 from cam.domain.pddl.pddl_parser import parse_operator  # noqa: E402
-from cam.representations.compositional.extractor import CompositionalOperatorExtractor  # noqa: E402
+from cam.representations.compositional.extractor import CompositionalPolicyFeaturesExtractor  # noqa: E402
 from cam.representations.compositional.geometric import GeometricComposition  # noqa: E402
 from cam.representations.compositional.slots import SlotComposition  # noqa: E402
 from cam.representations.compositional.structure import (  # noqa: E402
@@ -146,7 +146,7 @@ def test_extractor_embedding_has_unit_norm_even_when_the_composition_grows(archi
         "observation": gym.spaces.Box(-np.inf, np.inf, (5,)),
         "operator_embedding": gym.spaces.Box(-np.inf, np.inf, (LAYOUT.size,)),
     })
-    extractor = CompositionalOperatorExtractor(space, architecture, LAYOUT, 16, 32)
+    extractor = CompositionalPolicyFeaturesExtractor(space, architecture, LAYOUT, 16, 32)
     x = structure(PICKUP, STACK)
     embedding = extractor.operator_embedding(x)
     # Norm 1 up to LayerNorm's eps (1e-5), which slightly shrinks outputs whose variance is small.
@@ -184,6 +184,6 @@ def test_short_training_run_with_each_architecture(tmp_path, architecture):
     run = tmp_path / run_name(parse_args(argv))
     assert run.name.split("_")[2] == f"compositional-{architecture}"
     extractor = PPO.load(run / "model.zip").policy.features_extractor
-    assert isinstance(extractor, CompositionalOperatorExtractor)
+    assert isinstance(extractor, CompositionalPolicyFeaturesExtractor)
     expected = {"tree": TreeComposition, "slots": SlotComposition, "geometric": GeometricComposition}[architecture]
     assert isinstance(extractor.composition, expected)

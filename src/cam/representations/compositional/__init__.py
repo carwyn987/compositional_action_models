@@ -6,7 +6,7 @@ Two steps, in two places:
    the operator as a fixed-size *structure array*, because Stable-Baselines3 observations must be
    fixed-size numeric arrays. PolicyObservationWrapper computes it once per operator and puts it in
    obs["operator_embedding"], where the other conditions put their fixed embeddings.
-2. Composing the embedding in the policy network (extractor.py). CompositionalOperatorExtractor, the
+2. Composing the embedding in the policy network (extractor.py). CompositionalPolicyFeaturesExtractor, the
    first module of the policy, unpacks the structure array and composes learnable component embeddings
    (components.py) into one operator embedding of size --operator-embedding-dim, appended to the other
    observation parts exactly like every other condition. Being part of the policy, every embedding and

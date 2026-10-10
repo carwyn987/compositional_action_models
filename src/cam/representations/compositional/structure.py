@@ -60,27 +60,47 @@ class OperatorLayout:
 
 
 class StructuredOperatorEncoder(OperatorEncoder):
-    """An operator -> its structure array, decoded by CompositionalOperatorExtractor in the policy.
+    """An operator -> its structure array: the operator written as a flat array of small integers (stored
+    as floats), which CompositionalPolicyFeaturesExtractor reads back on the policy side. It is a lossless
+    serialization of the operator, not an embedding: nothing in it is learned.
 
-    Structure array (ids stored as floats; 0 = EMPTY / none):
-        [type id per parameter (P)] [per literal: kind, predicate id, argument refs (L x (2 + A))]
-        [name text embedding (D)]
-    with P = max_parameters, L = max_literals, A = max_predicate_arity, D = name_dim.
+    Example, pickup with the default layout (3 parameters, 16 literals, 4 arguments per literal):
 
-    How it is built:
-        1. Variables are replaced by their parameter position + 1 (?o -> 1), so variable names never
-           matter and argument refs line up with grounding slots.
-        2. Each literal becomes (kind, predicate id, argument refs...), e.g. (on-table ?o) as a
-           precondition -> (PRECONDITION, id of on-table, 1); a literal with fewer than A arguments
-           leaves the remaining refs 0.
-        3. Parameter type ids fill the first P entries, the literals fill the rows *sorted*, so the same
-           operator written in any literal order gives the same array, and the name's text embedding
-           (if name_dim > 0) fills the end. Unused parameter entries and literal rows stay 0 (EMPTY).
-    Example (pickup, legacy PDDL, max_literals = 8): types [1, 0, 0]; rows
-        [3 1 1 0] pre (clear ?o)        [3 2 0 0] pre (gripper-empty)     [3 5 1 0] pre (on-table ?o)
-        [5 3 1 0] add (holding ?o)      [6 2 0 0] del (gripper-empty)     [6 5 1 0] del (on-table ?o)
-        [0 0 0 0] [0 0 0 0] empty
-    (predicate ids: clear 1, gripper-empty 2, holding 3, on 4, on-table 5).
+        (:action pickup :parameters (?o - block)
+         :precondition (and (on-table ?o) (clear ?o) (gripper-empty))
+         :effect (and (holding ?o) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))
+
+        part 1: one entry per parameter, the parameter's object type (?o - block -> block = 1)
+            [1, 0, 0]                   ?o is a block; no 2nd or 3rd parameter
+        part 2: one row per literal: [what it is, which predicate, its arguments (A of them)]
+             kind  predicate     arguments
+            [3,    1,            1, 0, 0, 0]   precondition  (clear ?o)
+            [3,    2,            0, 0, 0, 0]   precondition  (gripper-empty)
+            [3,    5,            1, 0, 0, 0]   precondition  (on-table ?o)
+            [5,    3,            1, 0, 0, 0]   add           (holding ?o)
+            [6,    1,            1, 0, 0, 0]   delete        (clear ?o)
+            [6,    2,            0, 0, 0, 0]   delete        (gripper-empty)
+            [6,    5,            1, 0, 0, 0]   delete        (on-table ?o)
+            [0,    0,            0, 0, 0, 0]   x 9 unused rows (EMPTY)
+        part 3: the operator name's text embedding (name_dim numbers; absent when name_dim = 0)
+
+    Reading a literal row:
+        kind        what the literal is in the operator: PRECONDITION 3, NEGATED_PRECONDITION 4, ADD 5,
+                    DELETE 6 (EMPTY 0 for an unused row; NAME 1 and PARAMETER 2 are never in a row, they
+                    are used by the architectures for the name and parameter components)
+        predicate   which predicate: its index in layout.predicates + 1
+                    (clear 1, gripper-empty 2, holding 3, on 4, on-table 5)
+        arguments   each argument's parameter position + 1 (?o, the 1st parameter -> 1), then 0s up to A.
+                    (on ?a ?b) would be [1, 2, 0, 0] and (on ?b ?a) [2, 1, 0, 0]
+    "Type" in part 1 is the PDDL object type of each parameter (the `- block` in `?o - block`): its index
+    in layout.types + 1. Fetch has the single type block, so every parameter is 1.
+
+    Ids start at 1 so that 0 always means "nothing here". Variables are stored by position, never by
+    name, so renaming ?o changes nothing and argument i lines up with grounding slot i. Rows are sorted,
+    so the same operator written with its literals in any order gives the same array.
+
+    Size: P + L x (2 + A) + D, with P = max_parameters, L = max_literals, A = max_predicate_arity,
+    D = name_dim (OperatorLayout); 3 + 16 x 6 + 32 = 131 by default.
 
     name_backend embeds the operator name (needed exactly when layout.name_dim > 0). Raises ValueError
     for an operator the layout cannot hold: an unknown predicate or type, a constant argument, or more
