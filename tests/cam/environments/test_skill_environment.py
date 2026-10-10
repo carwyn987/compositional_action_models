@@ -6,8 +6,7 @@ from cam.domain.symbols import Predicate
 from cam.environments.skill_environment import SkillEnvironment
 from cam.policies.policy import Policy
 from cam.rewards.reward_function import RewardFunction
-from cam.skills.pickup_skill import PickupSkill
-from cam.skills.putdown_skill import PutdownSkill
+from cam.skills.blocksworld_skills import PickupSkill, PutdownSkill
 
 PDDL_CONFIG = {"symbolic_action_model_format": "pddl"}
 BLOCKS = ("block0", "block1")

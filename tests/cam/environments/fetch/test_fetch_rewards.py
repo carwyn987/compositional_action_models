@@ -4,9 +4,7 @@ import pytest
 from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchState
 from cam.environments.fetch.fetch_rewards import FetchPickupReward, FetchStackReward, FetchUnstackReward
-from cam.skills.pickup_skill import PickupSkill
-from cam.skills.stack_skill import StackSkill
-from cam.skills.unstack_skill import UnstackSkill
+from cam.skills.blocksworld_skills import PickupSkill, StackSkill, UnstackSkill
 
 PICKUP_BLOCK0 = PickupSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
 BLOCK0 = np.array([1.3, 0.7, 0.425])
