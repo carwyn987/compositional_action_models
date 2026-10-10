@@ -19,6 +19,10 @@ from cam.environments.skill_environment import SkillEnvironment
 from cam.representations.grounding_encoder import GroundingEncoder
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
 from cam.representations.pddl_multi_hot_operator_encoder import PDDLMultiHotOperatorEncoder
+from cam.representations.compositional.geometric import GeometricComposition
+from cam.representations.compositional.slots import SlotComposition
+from cam.representations.compositional.structure import OperatorLayout, StructuredOperatorEncoder
+from cam.representations.compositional.tree import TreeComposition
 from cam.representations.embedding_cache import DiskEmbeddingCache
 from cam.representations.padded_operator_encoder import PaddedOperatorEncoder
 from cam.representations.random_operator_encoder import RandomOperatorEncoder
@@ -40,13 +44,34 @@ OPERATOR_ENCODERS = {
     ),
     "random": lambda config, skills: RandomOperatorEncoder(config["operator_embedding_dim"], seed=config["seed"]),
     "text": lambda config, skills: TextOperatorEncoder(text_backend(config), config["operator_text"]),
+    # the operator's structure, composed into an embedding inside the policy (representations/compositional/)
+    "compositional": lambda config, skills: StructuredOperatorEncoder(
+        compositional_layout(config),
+        text_backend(config, config["component_embedding_dim"]) if config["compositional_name"] == "text" else None,
+    ),
 }
 
+# How CompositionalPolicyFeaturesExtractor composes the operator's components (--compositional-architecture).
+COMPOSITIONAL_ARCHITECTURES = {"tree": TreeComposition, "slots": SlotComposition, "geometric": GeometricComposition}
 
-def text_backend(config: dict):
-    """The configured text embedding backend at the shared embedding size; backends other than the
-    (deterministic, offline) mock are cached on disk so each operator text is embedded once."""
-    backend = TEXT_BACKENDS[config["text_backend"]](config["operator_embedding_dim"])
+
+def compositional_layout(config: dict) -> OperatorLayout:
+    """The structure array layout: the predicates the environment evaluates and its object types, so it
+    is the same for any skill set (and for new or repaired operators)."""
+    return OperatorLayout.from_predicate_arities(
+        FETCH_PREDICATE_ARITIES,
+        FetchEnvStateAnnotationWrapper.OBJECT_TYPES,
+        max_predicate_arity=config["max_predicate_arity"],
+        max_parameters=config["max_operator_arity"],
+        max_literals=config["max_operator_literals"],
+        name_dim=config["component_embedding_dim"] if config["compositional_name"] == "text" else 0,
+    )
+
+
+def text_backend(config: dict, dim: int | None = None):
+    """The configured text embedding backend, of size dim (default: the shared embedding size); backends
+    other than the (deterministic, offline) mock are cached on disk so each text is embedded once."""
+    backend = TEXT_BACKENDS[config["text_backend"]](dim or config["operator_embedding_dim"])
     if config["text_backend"] == "mock":
         return backend
     return CachedTextBackend(backend, DiskEmbeddingCache(config["text_embedding_cache"]))

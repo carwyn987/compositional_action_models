@@ -4,6 +4,8 @@ Each implementation is one embedding method:
     OneHotOperatorEncoder         one entry per training operator; no structure (baseline)
     RandomOperatorEncoder         fixed random unit vector per operator name; no structure (baseline)
     TextOperatorEncoder           the whole operator as text (PDDL or a paragraph), embedded by a text backend
+    StructuredOperatorEncoder     the operator's structure, composed into a learnable embedding inside the
+                                  policy (representations/compositional/)
     PDDLMultiHotOperatorEncoder   one entry per literal feature; structure, nothing learned
 Learned methods (embed each literal, then aggregate by mean, attention, slots,
 ...) implement the same interface. An encoder is built from the training
