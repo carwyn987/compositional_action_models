@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Overnight runs for the research questions, followed by a summary table and a review report.
 #
+#   ./scripts/start_overnight.sh                                  # usual way: checks, then runs this detached
 #   ./scripts/overnight_runs.sh                                   # every group, defaults below
 #   RUN_GROUPS="learnability" ./scripts/overnight_runs.sh          # one group
 #   CONDITIONS="one-hot compositional-tree" SEEDS="0 1" ./scripts/overnight_runs.sh
