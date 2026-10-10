@@ -42,8 +42,12 @@ fi
 
 if [[ "${1:-}" != "--no-tests" ]]; then
   echo "running unit tests ..."
-  "${PYTHON}" -m pytest -q -m unit -p no:cacheprovider > /dev/null 2>&1 || {
-    echo "unit tests failed; not starting. See: ${PYTHON} -m pytest -m unit"; exit 1; }
+  test_output="$("${PYTHON}" -m pytest -q -m unit -p no:cacheprovider -rfE 2>&1)" || {
+    echo "${test_output}" | grep -E "^(FAILED|ERROR)|Error|error:" | head -20
+    echo "${test_output}" | tail -1
+    echo "unit tests failed; not starting. Full output: ${PYTHON} -m pytest -m unit"
+    exit 1
+  }
   echo "unit tests passed"
 fi
 
