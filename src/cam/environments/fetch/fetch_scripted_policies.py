@@ -1,12 +1,14 @@
-"""Scripted (hardcoded) Fetch policies for pickup and putdown.
+"""Scripted (hardcoded) Fetch policies for pickup, putdown, stack and unstack.
 
-Both read the target block from the grounded action's first argument and the
-scene from info["environment_state"] (FetchState). Actions are
+Each reads the moved block from the grounded action's first argument (stack and
+unstack: the other block from the second) and the scene from
+info["environment_state"] (FetchState). Actions are
 [dx, dy, dz, gripper] in [-1, 1]; gripper > 0 opens, < 0 closes.
 """
 
 import numpy as np
 
+from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import TABLE_REST_Z
 from cam.policies.policy import Policy
 
@@ -21,7 +23,8 @@ def servo(gripper: np.ndarray, target: np.ndarray, gripper_command: float) -> np
 
 
 class FetchScriptedPickupPolicy(Policy):
-    """Approach above the target block, descend, close, lift."""
+    """Approach above the target block, descend, close, lift. Every target is relative to the block's
+    position, so the same motion unstacks a block resting on another."""
 
     APPROACH_HEIGHT = 0.10
     LIFT_HEIGHT = 0.15
@@ -74,3 +77,43 @@ class FetchScriptedPutdownPolicy(Policy):
         if self.releasing:
             return np.array([0.0, 0.0, 0.0, OPEN], dtype=np.float32)
         return servo(gripper, gripper - [0.0, 0.0, height_above_table], CLOSE)
+
+
+class FetchScriptedStackPolicy(Policy):
+    """Carry the held block (first argument) up to clear the base block (second argument), move it over
+    the base, lower it until it rests on the base, then open the gripper.
+
+    The gripper is steered so that the *block* reaches each target: the gripper target is the gripper
+    position plus the block's offset from its target, so a block held off-centre still lands centred.
+    """
+
+    CARRY_CLEARANCE = 0.05  # gap between the held block's bottom and the base's top while moving over it
+    ALIGNED_TOLERANCE = 0.003  # horizontal block-to-base distance at which to start lowering
+    RELEASE_GAP = 0.003  # block height above its resting height on the base at which to open
+
+    def reset(self) -> None:
+        self.phase = "carry"
+
+    def __call__(self, obs, info, grounded_action_model) -> np.ndarray:
+        state = info["environment_state"]
+        gripper = state.gripper_position
+        block, base = (state.block_positions[name] for name in grounded_action_model.arguments[:2])
+        resting = base + [0.0, 0.0, 2 * BLOCK_HALF_SIZE]  # block centre when resting on the base
+        carry_height = resting[2] + self.CARRY_CLEARANCE
+
+        if self.phase == "carry":  # straight up first, so the move over the base does not hit it
+            target = np.array([block[0], block[1], carry_height])
+            if block[2] >= carry_height - 0.005:
+                self.phase = "align"
+        if self.phase == "align":
+            target = np.array([base[0], base[1], carry_height])
+            if np.linalg.norm(block[:2] - base[:2]) < self.ALIGNED_TOLERANCE:
+                self.phase = "lower"
+        if self.phase == "lower":
+            target = resting
+            if block[2] - resting[2] <= self.RELEASE_GAP:
+                self.phase = "release"
+        if self.phase == "release":
+            return np.array([0.0, 0.0, 0.0, OPEN], dtype=np.float32)
+        return servo(gripper, gripper + (target - block), CLOSE)
+

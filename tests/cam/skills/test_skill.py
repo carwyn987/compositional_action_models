@@ -2,8 +2,7 @@ import pytest
 
 from cam.domain.pddl.pddl import PDDLOperator
 from cam.domain.symbols import Predicate
-from cam.skills.pickup_skill import PickupSkill
-from cam.skills.putdown_skill import PutdownSkill
+from cam.skills.blocksworld_skills import PickupSkill, PutdownSkill
 
 PDDL_CONFIG = {"symbolic_action_model_format": "pddl"}
 

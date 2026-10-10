@@ -34,7 +34,7 @@ import logging
 
 import gymnasium as gym
 
-from cam.domain.symbolic_action_model import GroundedSymbolicActionModel
+from cam.domain.symbolic_action_model import GroundedSymbolicActionModel, groundings
 from cam.policies.policy import Policy
 from cam.rewards.reward_function import RewardFunction, SparseReward
 from cam.skills.registry import build_skill
@@ -89,6 +89,8 @@ class SkillEnvironment(gym.Wrapper):
         self.episodes_started += 1
         for attempt in range(self.max_setup_attempts):
             obs, info = self.env.reset(seed=seed if attempt == 0 else None, options=options or None)
+            if attempt == 0:
+                self._check_scene_has_objects_for(self.skill, info["objects"])
             obs, info, setup = self._run_setup_chain(obs, info)
             if setup is None:
                 continue
@@ -119,6 +121,16 @@ class SkillEnvironment(gym.Wrapper):
         if skill_name not in self.skills:
             raise ValueError(f"unknown skill {skill_name!r}; this environment runs {sorted(self.skills)}")
         return self.skills[skill_name]
+
+    def _check_scene_has_objects_for(self, skill: Skill, objects: dict[str, str]) -> None:
+        """Raise ValueError if the skill or a setup skill has no grounding at all over the scene's objects
+        (e.g. stack needs two distinct blocks), since then setup could never succeed."""
+        for needed in [*self.setup_chains[skill.name], skill]:
+            if not groundings(needed.symbolic_action_model, objects):
+                parameters = ", ".join(f"{p.name} - {p.type}" for p in needed.symbolic_action_model.parameters)
+                raise ValueError(
+                    f"{needed.name}({parameters}) needs distinct objects of these types; the scene has {objects}"
+                )
 
     def _run_setup_chain(self, obs, info):
         """Execute each setup skill of the episode's skill in order; setup=None if any fails."""

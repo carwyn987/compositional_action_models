@@ -28,7 +28,7 @@ flowchart LR
         parser[&quot;pddl/pddl_parser.py&lt;br/&gt;parse_operator&quot;]
         writer[&quot;pddl/pddl_writer.py&lt;br/&gt;to_pddl&quot;]
         loader[&quot;action_model_library/loader.py&lt;br/&gt;load_symbolic_action_model&quot;]
-        files[(&quot;action_model_library/pddl/&lt;br/&gt;pickup.pddl · putdown.pddl&quot;)]
+        files[(&quot;action_model_library/pddl/&lt;br/&gt;pickup · putdown · stack · unstack .pddl&quot;)]
     end
 
     %% ---------------- skills ----------------
@@ -47,8 +47,8 @@ flowchart LR
         annot[&quot;fetch/fetch_env_state_annotation_wrapper.py&lt;br/&gt;drops goal keys; info: environment_state,&lt;br/&gt;objects, object_features&quot;]
         preds[&quot;fetch/fetch_predicate_evaluation_wrapper.py&lt;br/&gt;FETCH_PREDICATES → info: facts&quot;]
         skillenv[&quot;skill_environment.py: SkillEnvironment&lt;br/&gt;skill per reset · setup chain · grounding&lt;br/&gt;success · reward&quot;]
-        scripted[&quot;fetch/fetch_scripted_policies.py&lt;br/&gt;scripted pickup / putdown&quot;]
-        fetchrewards[&quot;fetch/fetch_rewards.py&lt;br/&gt;FetchPickupReward (shaped)&quot;]
+        scripted[&quot;fetch/fetch_scripted_policies.py&lt;br/&gt;scripted pickup / putdown / stack&quot;]
+        fetchrewards[&quot;fetch/fetch_rewards.py&lt;br/&gt;FetchPickupReward · FetchStackReward · FetchUnstackReward (shaped)&quot;]
     end
 
     %% ---------------- policies, rewards ----------------
