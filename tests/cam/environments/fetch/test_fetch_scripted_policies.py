@@ -1,9 +1,19 @@
 import pytest
 
-from cam.environments.fetch.fetch_scripted_policies import FETCH_SCRIPTED_POLICIES
+from cam.environments.fetch.fetch_scripted_policies import (
+    FetchScriptedPickupPolicy,
+    FetchScriptedPutdownPolicy,
+    FetchScriptedStackPolicy,
+)
 from cam.experiments.environment_setup import setup_environment
 from cam.skills.registry import SKILL_REGISTRY, build_skill
 
+SCRIPTED_POLICIES = {
+    "pickup": FetchScriptedPickupPolicy,
+    "putdown": FetchScriptedPutdownPolicy,
+    "stack": FetchScriptedStackPolicy,
+    "unstack": FetchScriptedPickupPolicy,
+}
 CONFIG = {
     "symbolic_action_model_format": "pddl", "environment_id": "FetchMultiBlock-v0", "render": False,
     "reward": "shaped", "operator_encoder": "multi-hot", "operator_embedding_dim": 128, "max_operator_arity": 3,
@@ -15,7 +25,7 @@ def run_scripted_episodes(skill_name: str, num_blocks: int, episodes: int) -> li
     """(grounded action, success) of each episode, with the skill's scripted policy acting."""
     config = CONFIG | {"num_blocks": num_blocks, "skills": [skill_name]}
     env = setup_environment(config, [build_skill(skill_name, config)])
-    policy = FETCH_SCRIPTED_POLICIES[skill_name]()
+    policy = SCRIPTED_POLICIES[skill_name]()
     results = []
     for episode in range(episodes):
         obs, info = env.reset(seed=episode)
@@ -27,11 +37,6 @@ def run_scripted_episodes(skill_name: str, num_blocks: int, episodes: int) -> li
         results.append((info["grounded_action_model"], bool(info["is_success"])))
     env.close()
     return results
-
-
-@pytest.mark.integration
-def test_every_skill_has_a_scripted_policy():
-    assert set(FETCH_SCRIPTED_POLICIES) == set(SKILL_REGISTRY)
 
 
 @pytest.mark.integration

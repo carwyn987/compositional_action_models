@@ -48,7 +48,7 @@ flowchart LR
         annot["fetch/fetch_env_state_annotation_wrapper.py<br/>drops goal keys; info: environment_state,<br/>objects, object_features"]
         preds["fetch/fetch_predicate_evaluation_wrapper.py<br/>FETCH_PREDICATES → info: facts"]
         skillenv["skill_environment.py: SkillEnvironment<br/>skill per reset · setup chain · grounding<br/>success · reward"]
-        scripted["fetch/fetch_scripted_policies.py<br/>FETCH_SCRIPTED_POLICIES: pickup / putdown / stack / unstack"]
+        scripted["fetch/fetch_scripted_policies.py<br/>scripted pickup / putdown / stack"]
         fetchrewards["fetch/fetch_rewards.py<br/>FetchPickupReward · FetchStackReward · FetchUnstackReward (shaped)"]
     end
 

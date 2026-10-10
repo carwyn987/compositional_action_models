@@ -24,7 +24,7 @@ def servo(gripper: np.ndarray, target: np.ndarray, gripper_command: float) -> np
 
 class FetchScriptedPickupPolicy(Policy):
     """Approach above the target block, descend, close, lift. Every target is relative to the block's
-    position, so the same motion unstacks a block resting on another (FETCH_SCRIPTED_POLICIES)."""
+    position, so the same motion unstacks a block resting on another."""
 
     APPROACH_HEIGHT = 0.10
     LIFT_HEIGHT = 0.15
@@ -117,11 +117,3 @@ class FetchScriptedStackPolicy(Policy):
             return np.array([0.0, 0.0, 0.0, OPEN], dtype=np.float32)
         return servo(gripper, gripper + (target - block), CLOSE)
 
-
-# Scripted policy class per skill (setup chains, scripts/run_skill.py).
-FETCH_SCRIPTED_POLICIES: dict[str, type[Policy]] = {
-    "pickup": FetchScriptedPickupPolicy,
-    "putdown": FetchScriptedPutdownPolicy,
-    "stack": FetchScriptedStackPolicy,
-    "unstack": FetchScriptedPickupPolicy,  # grasp and lift, from on top of the other block
-}

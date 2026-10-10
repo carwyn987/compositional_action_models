@@ -21,7 +21,11 @@ from pathlib import Path
 
 from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
-from cam.environments.fetch.fetch_scripted_policies import FETCH_SCRIPTED_POLICIES
+from cam.environments.fetch.fetch_scripted_policies import (
+    FetchScriptedPickupPolicy,
+    FetchScriptedPutdownPolicy,
+    FetchScriptedStackPolicy,
+)
 from cam.experiments.environment_setup import setup_environment
 from cam.logging_config import configure_logging
 from cam.policies.policy import RandomPolicy
@@ -29,6 +33,12 @@ from cam.skills.registry import SKILL_REGISTRY, build_skill
 
 logger = logging.getLogger("cam.scripts.run_skill")
 
+SCRIPTED_POLICIES = {
+    "pickup": FetchScriptedPickupPolicy,
+    "putdown": FetchScriptedPutdownPolicy,
+    "stack": FetchScriptedStackPolicy,
+    "unstack": FetchScriptedPickupPolicy,  # grasp and lift, from on top of the other block
+}
 DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model
     "symbolic_action_model_format": "pddl",
     "environment_id": fetch_multiblock_environment.ENVIRONMENT_ID,
@@ -123,7 +133,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, str]:
 
 def build_policy(args: argparse.Namespace, config: dict, skill_name: str, env):
     if args.policy == "scripted":
-        return FETCH_SCRIPTED_POLICIES[skill_name]()
+        return SCRIPTED_POLICIES[skill_name]()
     if args.policy == "random":
         return RandomPolicy(env.action_space)
     from cam.policies.stable_baselines3_policy import StableBaselines3Policy  # needs Stable-Baselines3
