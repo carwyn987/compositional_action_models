@@ -23,31 +23,42 @@ logger = logging.getLogger(__name__)
 
 TABLE_REST_Z = 0.425  # block centre height when resting on the table
 Z_TOLERANCE = 0.01  # height tolerance for resting on the table / on another block
-LIFT_THRESHOLD = 0.01  # height above rest at which a block near the gripper counts as held
-GRASP_DISTANCE = 0.03  # max gripper-to-block-centre distance for holding
-OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper holds nothing
+GRASP_DISTANCE = 0.03  # max gripper-to-block-centre distance for gripping
+OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper grips nothing
+
+# A block is *supported* when it rests on the table or on another block (on-table, on), and *gripped*
+# when the closed fingers are around it. Holding needs both gripped and lifted off its support, so
+# grasping skills (pickup, unstack) succeed only once the block is lifted, and gripper-empty needs the
+# fingers off every block, so placing skills (putdown, stack) succeed only once the block is released.
 
 
-def holding(state: FetchState, block: str) -> bool:
-    position = state.block_positions[block]
+def gripping(state: FetchState, block: str) -> bool:
+    """The closed fingers are around the block, whether or not it is lifted (not a predicate)."""
     return (
-        np.linalg.norm(state.gripper_position - position) <= GRASP_DISTANCE
-        and position[2] - TABLE_REST_Z >= LIFT_THRESHOLD
+        np.linalg.norm(state.gripper_position - state.block_positions[block]) <= GRASP_DISTANCE
         and state.finger_width < OPEN_FINGER_WIDTH
     )
 
 
+def holding(state: FetchState, block: str) -> bool:
+    """Gripped and lifted off the table and every other block."""
+    return (
+        gripping(state, block)
+        and not on_table(state, block)
+        and not any(on(state, block, other) for other in state.block_positions if other != block)
+    )
+
+
 def on_table(state: FetchState, block: str) -> bool:
-    height = state.block_positions[block][2]
-    return abs(height - TABLE_REST_Z) <= Z_TOLERANCE and not holding(state, block)
+    return abs(state.block_positions[block][2] - TABLE_REST_Z) <= Z_TOLERANCE
 
 
 def on(state: FetchState, top: str, bottom: str) -> bool:
+    """top rests on bottom: centred over it within a half block, one block height above it."""
     top_position, bottom_position = state.block_positions[top], state.block_positions[bottom]
     return (
         np.linalg.norm(top_position[:2] - bottom_position[:2]) <= BLOCK_HALF_SIZE
         and abs(top_position[2] - bottom_position[2] - 2 * BLOCK_HALF_SIZE) <= Z_TOLERANCE
-        and not holding(state, top)
     )
 
 
@@ -59,7 +70,8 @@ def clear(state: FetchState, block: str) -> bool:
 
 
 def gripper_empty(state: FetchState) -> bool:
-    return not any(holding(state, block) for block in state.block_positions)
+    """The fingers are around no block (open, or closed on nothing)."""
+    return not any(gripping(state, block) for block in state.block_positions)
 
 
 FETCH_PREDICATES: dict[str, Callable[..., bool]] = {

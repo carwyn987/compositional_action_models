@@ -79,14 +79,21 @@ class PredicateEvaluator(ABC):
 - **Thresholds** live in one frozen dataclass per evaluator
   (`FetchPredicateThresholds`), not scattered constants.
 
-### 3.3 Fetch predicates (single block, object name `block0`)
+### 3.3 Fetch predicates
+
+A block is *gripped* when the gripper is within `GRASP_DISTANCE` of it with the finger width below
+`OPEN_FINGER_WIDTH`, and *supported* when `on-table(b)` or `on(b, c)` for some block `c`.
 
 | Predicate | True when |
 |---|---|
-| `holding(b)` | gripper within `near_tolerance` of `b`, finger width below `open_width`, and `b` above table rest height + `lift_tolerance` |
-| `on-table(b)` | `|b.z − table_rest_z| ≤ z_tolerance` and not `holding(b)` |
+| `holding(b)` | `b` is gripped and not supported (lifted off the table or the block below) |
+| `on-table(b)` | `|b.z − table_rest_z| ≤ z_tolerance` |
+| `on(b, c)` | `b` is within half a block of `c` horizontally and one block height (± `z_tolerance`) above it |
 | `clear(b)` | no other block on top of `b` and not `holding(b)` |
-| `gripper-empty` | no block `b` with `holding(b)` |
+| `gripper-empty` | no block is gripped (the fingers are open, or closed on nothing) |
+
+So grasping skills (pickup, unstack) succeed only once the block is lifted, and placing skills
+(putdown, stack) only once it is released.
 
 `table_rest_z` is a property of the Fetch table (block centre at rest ≈ 0.425),
 not a value recorded at reset.

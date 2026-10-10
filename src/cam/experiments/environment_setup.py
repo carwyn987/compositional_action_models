@@ -14,7 +14,7 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     FetchPredicateEvaluationWrapper,
 )
 from cam.environments.fetch.fetch_rewards import FETCH_SHAPED_REWARDS
-from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy, FetchScriptedPutdownPolicy
+from cam.environments.fetch.fetch_scripted_policies import FETCH_SCRIPTED_POLICIES
 from cam.environments.skill_environment import SkillEnvironment
 from cam.representations.grounding_encoder import GroundingEncoder
 from cam.representations.one_hot_operator_encoder import OneHotOperatorEncoder
@@ -86,7 +86,7 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
         environment_kwargs["num_blocks"] = config["num_blocks"]
     if config["render"]:
         environment_kwargs.update(width=config["window_width"], height=config["window_height"])
-    setup_policies = {"pickup": FetchScriptedPickupPolicy(), "putdown": FetchScriptedPutdownPolicy()}
+    setup_policies = {name: policy_class() for name, policy_class in FETCH_SCRIPTED_POLICIES.items()}
     reward_functions = (
         {name: reward_class() for name, reward_class in FETCH_SHAPED_REWARDS.items()}
         if config["reward"] == "shaped"

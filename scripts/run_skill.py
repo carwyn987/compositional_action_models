@@ -3,6 +3,7 @@
 
     ./scripts/run_skill.py                                 # putdown, set up by pickup, scripted policy
     ./scripts/run_skill.py --skill pickup --num-blocks 5 --render
+    ./scripts/run_skill.py --skill unstack --render        # set up by pickup, then stack
     ./scripts/run_skill.py --policy random --episodes 10
     ./scripts/run_skill.py --policy model --run-directory outputs/pickup_ppo_multi-hot_shaped_seed0 --render
 
@@ -20,7 +21,7 @@ from pathlib import Path
 
 from cam.domain.action_model_library.loader import SYMBOLIC_ACTION_MODEL_FORMATS
 from cam.environments.fetch import fetch_multiblock_environment
-from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy, FetchScriptedPutdownPolicy
+from cam.environments.fetch.fetch_scripted_policies import FETCH_SCRIPTED_POLICIES
 from cam.experiments.environment_setup import setup_environment
 from cam.logging_config import configure_logging
 from cam.policies.policy import RandomPolicy
@@ -28,7 +29,6 @@ from cam.skills.registry import SKILL_REGISTRY, build_skill
 
 logger = logging.getLogger("cam.scripts.run_skill")
 
-SCRIPTED_POLICIES = {"pickup": FetchScriptedPickupPolicy, "putdown": FetchScriptedPutdownPolicy}
 DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model
     "symbolic_action_model_format": "pddl",
     "environment_id": fetch_multiblock_environment.ENVIRONMENT_ID,
@@ -57,7 +57,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--num-blocks", type=int, help="default 3 (model: the trained number; must match)")
     parser.add_argument(
         "--reward", choices=["sparse", "shaped"],
-        help="shaped: Fetch shaped reward where one exists (pickup), sparse otherwise; default sparse (model: trained)",
+        help="shaped: Fetch shaped reward where one exists (pickup, stack, unstack), sparse otherwise; default sparse (model: trained)",
     )
     parser.add_argument("--episodes", type=int, default=5)
     parser.add_argument("--max-steps", type=int, help="episode step limit, setup steps excluded (default 100 / trained)")
@@ -123,7 +123,7 @@ def build_config(args: argparse.Namespace) -> tuple[dict, str]:
 
 def build_policy(args: argparse.Namespace, config: dict, skill_name: str, env):
     if args.policy == "scripted":
-        return SCRIPTED_POLICIES[skill_name]()
+        return FETCH_SCRIPTED_POLICIES[skill_name]()
     if args.policy == "random":
         return RandomPolicy(env.action_space)
     from cam.policies.stable_baselines3_policy import StableBaselines3Policy  # needs Stable-Baselines3
