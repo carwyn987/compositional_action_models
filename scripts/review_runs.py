@@ -12,7 +12,10 @@ Sections:
     4. training     per run: start -> end of key Stable-Baselines3 statistics from TensorBoard (rewards,
                     entropy / action std, KL, explained variance, losses) and the operator embedding
                     magnitudes logged during training, flagging NaN or exploding values
-    5. embeddings   per run with a learned operator embedding (trainable or compositional): the final
+    5. added skills per run where a skill was added or replaced after training started (repair / new
+                    skill runs): the step it was added, its zero-shot success rate there, and the steps to
+                    threshold from there, per condition (mean ± std over seeds)
+    6. embeddings   per run with a learned operator embedding (trainable or compositional): the final
                     embedding of each skill, from the saved model: its magnitude (L2 norm, i.e. length)
                     and the distance and cosine similarity between skills (low separation means the
                     policy sees skills as alike)
@@ -128,8 +131,45 @@ def section_training(runs: list[Path]) -> list[str]:
     return lines
 
 
+def section_added_skills(runs: list[Path]) -> list[str]:
+    """Skills first evaluated after step 0 (added on resume, e.g. a repaired operator replacing its
+    original): zero-shot success at the step they were added and steps to threshold from there."""
+    lines = ["5. ADDED SKILLS (added or replaced after training started: step added, zero-shot success there "
+             "(deterministic / stochastic), steps to threshold from there; mean ± std over seeds)"]
+    conditions: dict[str, list[tuple]] = {}
+    for run in runs:
+        metrics = load_metrics(run)
+        if not metrics:
+            continue
+        points = metrics["curves"]["deterministic"]["points"]
+        first_seen = {}
+        for point in points:
+            for skill in point["result"]:
+                first_seen.setdefault(skill, point["step"])
+        latest = set(points[-1]["result"]) if points else set()
+        removed = sorted(skill for skill in first_seen if skill not in latest)
+        for skill, step in first_seen.items():
+            if step == 0:
+                continue
+            summary = {mode: metrics["summary"][mode].get(skill, {}) for mode in ("deterministic", "stochastic")}
+            condition = f"{run.parent.name}/{re.sub(r'_seed\d+$', '', run.name)}"
+            conditions.setdefault(f"{condition} {skill}", []).append((step, summary, removed))
+    for key, entries in sorted(conditions.items()):
+        removed = entries[0][2]
+        lines.append(f"   {key}  ({len(entries)} seeds; added at step {mean_std([e[0] for e in entries])}"
+                     f"{'; replaced ' + ', '.join(removed) if removed else ''})")
+        for mode in ("deterministic", "stochastic"):
+            values = [e[1][mode] for e in entries]
+            lines.append(f"     {mode[:5]}  zero-shot {mean_std([v.get('zero_shot_success_rate') for v in values]):>12s}"
+                         f"  steps to threshold {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
+                         f"  final {mean_std([v.get('final_success_rate') for v in values]):>10s}")
+    if len(lines) == 1:
+        lines.append("   none")
+    return lines
+
+
 def section_embeddings(runs: list[Path]) -> list[str]:
-    lines = ["5. EMBEDDINGS (final learned operator embedding per skill: magnitude (L2 norm); pairwise distance and cosine)"]
+    lines = ["6. EMBEDDINGS (final learned operator embedding per skill: magnitude (L2 norm); pairwise distance and cosine)"]
     for run in runs:
         config_path, model_path = run / "config.json", run / "model.zip"
         if not (config_path.exists() and model_path.exists()):
@@ -200,12 +240,15 @@ def composition_magnitudes(config: dict, model_path: Path) -> dict:
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     parser.add_argument("folder", type=Path, help="folder of runs, e.g. outputs/overnight_<date>")
-    parser.add_argument("--no-embeddings", action="store_true", help="skip section 5 (loads every model)")
+    parser.add_argument("--no-embeddings", action="store_true", help="skip section 6 (loads every model)")
     args = parser.parse_args()
     runs = sorted(path.parent for path in args.folder.glob("**/config.json") if (path.parent / "metrics.json").exists())
     if not runs:
         sys.exit(f"no runs with config.json and metrics.json under {args.folder}")
-    sections = [section_runs(runs, args.folder), section_conditions(runs), section_curves(runs), section_training(runs)]
+    sections = [
+        section_runs(runs, args.folder), section_conditions(runs), section_curves(runs), section_training(runs),
+        section_added_skills(runs),
+    ]
     if not args.no_embeddings:
         sections.append(section_embeddings(runs))
     report = "\n\n".join("\n".join(section) for section in sections)
