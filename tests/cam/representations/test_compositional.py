@@ -187,3 +187,28 @@ def test_short_training_run_with_each_architecture(tmp_path, architecture):
     assert isinstance(extractor, CompositionalPolicyFeaturesExtractor)
     expected = {"tree": TreeComposition, "slots": SlotComposition, "geometric": GeometricComposition}[architecture]
     assert isinstance(extractor.composition, expected)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("architecture", ARCHITECTURES)
+def test_extractor_composes_each_distinct_operator_once_with_the_same_result(architecture):
+    """forward composes the distinct operators of a batch once and indexes them back to every row: the
+    features and the gradients equal composing every row."""
+    import gymnasium as gym
+
+    space = gym.spaces.Dict({
+        "observation": gym.spaces.Box(-np.inf, np.inf, (5,)),
+        "operator_embedding": gym.spaces.Box(-np.inf, np.inf, (LAYOUT.size,)),
+    })
+    extractor = CompositionalPolicyFeaturesExtractor(space, architecture, LAYOUT, 16, 32)
+    structures = structure(PICKUP, STACK)[[0, 1, 1, 0, 1]]  # 5 rows, 2 distinct operators
+    observations = {"observation": torch.randn(5, 5), "operator_embedding": structures}
+    features = extractor(observations)
+    every_row = torch.cat([observations["observation"], extractor.operator_embedding(structures)], dim=1)
+    torch.testing.assert_close(features, every_row)
+    weights = torch.randn_like(features)
+    gradients = torch.autograd.grad((features * weights).sum(), list(extractor.parameters()), allow_unused=True)
+    expected = torch.autograd.grad((every_row * weights).sum(), list(extractor.parameters()), allow_unused=True)
+    for gradient, reference in zip(gradients, expected):
+        if reference is not None:
+            torch.testing.assert_close(gradient, reference)

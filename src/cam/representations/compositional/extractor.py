@@ -60,7 +60,11 @@ class CompositionalPolicyFeaturesExtractor(BaseFeaturesExtractor):
 
     def forward(self, observations: dict[str, torch.Tensor]) -> torch.Tensor:
         parts = [observations[key].float().flatten(start_dim=1) for key in self.other_keys]
-        parts.append(self.operator_embedding(observations[OPERATOR_EMBEDDING_KEY]))
+        # A batch holds many observations but only a few distinct operators (one per skill), so each distinct
+        # structure is composed once and its embedding indexed back to every row: the same result and
+        # gradients (they accumulate through the index) at a fraction of the cost.
+        distinct, rows = torch.unique(observations[OPERATOR_EMBEDDING_KEY], dim=0, return_inverse=True)
+        parts.append(self.operator_embedding(distinct)[rows])
         return torch.cat(parts, dim=1)
 
 
