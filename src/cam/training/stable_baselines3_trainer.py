@@ -22,6 +22,7 @@ from typing import Callable
 
 import gymnasium as gym
 import numpy as np
+import torch
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
@@ -64,6 +65,58 @@ class SuccessRateCallback(BaseCallback):
                 outcomes = self.outcomes.setdefault(info["skill"], deque(maxlen=self.window))
                 outcomes.append(float(info["is_success"]))
                 self.logger.record(f"success_rate/{info['skill']}", float(np.mean(outcomes)))
+        return True
+
+
+def operator_embedding_magnitudes(extractor, operator_inputs: np.ndarray) -> dict[str, np.ndarray]:
+    """Magnitudes (L2 norms, i.e. lengths) of the operator embeddings a features extractor computes from
+    operator_inputs (one obs["operator_embedding"] per row), keyed by TensorBoard tag prefix:
+        operator_embedding_magnitude                        what the policy sees
+        operator_embedding_magnitude_before_normalization   compositional only: the composition's raw output
+    Empty for an extractor without a learned operator embedding (the fixed embeddings never change)."""
+    operator_embedding = getattr(extractor, "operator_embedding", None)
+    if operator_embedding is None:
+        return {}
+    device = next(extractor.parameters()).device
+    inputs = torch.as_tensor(operator_inputs, dtype=torch.float32, device=device)
+    with torch.no_grad():
+        magnitudes = {"operator_embedding_magnitude": operator_embedding(inputs).norm(dim=1)}
+        if hasattr(extractor, "composed_embedding"):
+            magnitudes["operator_embedding_magnitude_before_normalization"] = extractor.composed_embedding(inputs).norm(dim=1)
+    return {tag: values.cpu().numpy() for tag, values in magnitudes.items()}
+
+
+class OperatorEmbeddingMagnitudeCallback(BaseCallback):
+    """Every log_interval steps, logs each skill's operator embedding magnitude (L2 norm, i.e. length) as
+    the policy currently computes it, as operator_embedding_magnitude/<skill> (compositional runs also
+    ..._before_normalization/<skill>; see operator_embedding_magnitudes). SAC's actor and critic each have
+    their own features extractor, logged as .../actor/<skill> and .../critic/<skill>.
+
+    A large or growing magnitude swamps the other inputs of the policy's MLP (around 1): the unnormalized
+    compositional tree embedding started at about 100 and reached hundreds. This shows such problems
+    during training instead of only after it.
+    """
+
+    def __init__(self, operator_inputs: dict[str, np.ndarray], log_interval: int = 1000):
+        super().__init__()
+        self.skills = list(operator_inputs)
+        self.inputs = np.stack([operator_inputs[skill] for skill in self.skills])
+        self.log_interval = log_interval
+        self.last_logged: int | None = None
+
+    def _extractors(self) -> dict[str, object]:
+        policy = self.model.policy
+        if hasattr(policy, "actor") and hasattr(policy, "critic"):
+            return {"actor/": policy.actor.features_extractor, "critic/": policy.critic.features_extractor}
+        return {"": policy.features_extractor}
+
+    def _on_step(self) -> bool:
+        if self.last_logged is None or self.num_timesteps - self.last_logged >= self.log_interval:
+            self.last_logged = self.num_timesteps
+            for part, extractor in self._extractors().items():
+                for tag, magnitudes in operator_embedding_magnitudes(extractor, self.inputs).items():
+                    for skill, magnitude in zip(self.skills, magnitudes):
+                        self.logger.record(f"{tag}/{part}{skill}", float(magnitude))
         return True
 
 

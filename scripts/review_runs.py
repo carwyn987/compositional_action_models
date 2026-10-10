@@ -10,10 +10,12 @@ Sections:
                     to threshold, AUC and final success rate, per skill, deterministic and stochastic
     3. curves       per run and skill: deterministic success rate at evenly spaced evaluations
     4. training     per run: start -> end of key Stable-Baselines3 statistics from TensorBoard (rewards,
-                    entropy / action std, KL, explained variance, losses), flagging NaN or exploding values
+                    entropy / action std, KL, explained variance, losses) and the operator embedding
+                    magnitudes logged during training, flagging NaN or exploding values
     5. embeddings   per run with a learned operator embedding (trainable or compositional): the final
-                    embedding of each skill, from the saved model: its norm and the distance and cosine
-                    similarity between skills (low separation means the policy sees skills as alike)
+                    embedding of each skill, from the saved model: its magnitude (L2 norm, i.e. length)
+                    and the distance and cosine similarity between skills (low separation means the
+                    policy sees skills as alike)
 """
 
 import argparse
@@ -114,18 +116,20 @@ def section_training(runs: list[Path]) -> list[str]:
         accumulator.Reload()
         available = set(accumulator.Tags()["scalars"])
         lines.append(f"   {run.name}")
-        for tag in TRAINING_TAGS:
+        magnitude_tags = sorted(tag for tag in available if tag.startswith("operator_embedding_magnitude"))
+        width = max([28, *(len(tag) for tag in magnitude_tags)])
+        for tag in TRAINING_TAGS + magnitude_tags:
             if tag not in available:
                 continue
             values = [event.value for event in accumulator.Scalars(tag)]
             flag = "  <-- NaN" if any(math.isnan(v) for v in values) else (
                 "  <-- exploding" if max(abs(v) for v in values) > 1e6 else "")
-            lines.append(f"     {tag:28s} {values[0]:10.4g} -> {values[-1]:10.4g}  [{min(values):.4g}, {max(values):.4g}]{flag}")
+            lines.append(f"     {tag:{width}s} {values[0]:10.4g} -> {values[-1]:10.4g}  [{min(values):.4g}, {max(values):.4g}]{flag}")
     return lines
 
 
 def section_embeddings(runs: list[Path]) -> list[str]:
-    lines = ["5. EMBEDDINGS (final learned operator embedding per skill: norm; pairwise distance and cosine)"]
+    lines = ["5. EMBEDDINGS (final learned operator embedding per skill: magnitude (L2 norm); pairwise distance and cosine)"]
     for run in runs:
         config_path, model_path = run / "config.json", run / "model.zip"
         if not (config_path.exists() and model_path.exists()):
@@ -139,17 +143,17 @@ def section_embeddings(runs: list[Path]) -> list[str]:
             lines.append(f"   {run.name}: could not compute ({type(error).__name__}: {error})")
             continue
         names = list(embeddings)
-        norms = ", ".join(f"{name} {embeddings[name].norm():.3g}" for name in names)
+        magnitudes = ", ".join(f"{name} {embeddings[name].norm():.3g}" for name in names)
         pairs = []
         for i, first in enumerate(names):
             for second in names[i + 1 :]:
                 a, b = embeddings[first], embeddings[second]
                 cosine = float(a @ b / (a.norm() * b.norm() + 1e-12))
                 pairs.append(f"{first}-{second} distance {(a - b).norm():.3g} cosine {cosine:.3f}")
-        lines.append(f"   {run.name}: norms {norms}; {'; '.join(pairs)}")
+        lines.append(f"   {run.name}: magnitudes {magnitudes}; {'; '.join(pairs)}")
         if config.get("operator_encoder") == "compositional":
-            raw = composition_norms(config, model_path)
-            lines.append(f"     before normalization: norms {', '.join(f'{name} {norm:.3g}' for name, norm in raw.items())}")
+            raw = composition_magnitudes(config, model_path)
+            lines.append(f"     before normalization: magnitudes {', '.join(f'{name} {value:.3g}' for name, value in raw.items())}")
     return lines
 
 
@@ -172,16 +176,15 @@ def learned_embeddings(config: dict, model_path: Path) -> dict:
     return {skill.name: output for skill, output in zip(skills, outputs)}
 
 
-def composition_norms(config: dict, model_path: Path) -> dict:
-    """Compositional runs only: each skill's composed embedding norm before the extractor normalizes it. The
-    normalized embedding always has norm 1, so this is where a growing composition still shows (and it is
-    what policies trained before the normalization was added actually saw)."""
+def composition_magnitudes(config: dict, model_path: Path) -> dict:
+    """Compositional runs only: each skill's composed embedding magnitude (L2 norm) before the extractor
+    normalizes it. The normalized embedding always has magnitude 1, so this is where a growing composition
+    still shows (and it is what policies trained before the normalization was added actually saw)."""
     import numpy as np
     import torch
 
     from cam.experiments.environment_setup import OPERATOR_ENCODERS
     from cam.policies.stable_baselines3_policy import ALGORITHMS
-    from cam.representations.compositional.structure import unpack
     from cam.skills.registry import build_skill
 
     skills = [build_skill(name, config) for name in config["skills"]]
@@ -190,8 +193,8 @@ def composition_norms(config: dict, model_path: Path) -> dict:
     policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
     extractor = policy.features_extractor if hasattr(policy, "features_extractor") else policy.actor.features_extractor
     with torch.no_grad():
-        composed = extractor.composition(unpack(inputs.float(), extractor.layout))
-    return {skill.name: float(norm) for skill, norm in zip(skills, composed.norm(dim=1))}
+        composed = extractor.composed_embedding(inputs)
+    return {skill.name: float(magnitude) for skill, magnitude in zip(skills, composed.norm(dim=1))}
 
 
 def main() -> None:

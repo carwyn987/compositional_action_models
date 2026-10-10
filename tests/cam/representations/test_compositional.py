@@ -137,9 +137,9 @@ def test_tree_and_slots_ignore_literal_order_and_padding(architecture):
 @pytest.mark.unit
 @pytest.mark.parametrize("architecture", ARCHITECTURES)
 def test_extractor_embedding_has_unit_norm_even_when_the_composition_grows(architecture):
-    """The extractor normalizes the composed embedding to zero mean and unit norm, so its scale cannot
-    explode during training (the tree's grew ~170x in 2048 PPO steps before this): here the
-    composition's output is scaled up 1000x and the embedding the policy sees is unchanged."""
+    """The extractor normalizes the composed embedding to zero mean and unit norm, so the composition's
+    scale (about 100 at initialization for the tree, and changing during training) never reaches the
+    policy: here the composition's output is scaled up 1000x and the embedding the policy sees is unchanged."""
     import gymnasium as gym
 
     space = gym.spaces.Dict({

@@ -296,10 +296,14 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
     during training in train-evaluate mode."""
     from cam.evaluation.metrics_callback import MetricsCallback
     from cam.training.checkpointing import atomic_write_text
-    from cam.training.stable_baselines3_trainer import train_stable_baselines3
+    from cam.training.stable_baselines3_trainer import OperatorEmbeddingMagnitudeCallback, train_stable_baselines3
 
     atomic_write_text(run_directory / "config.json", json.dumps(config, indent=2))
     callbacks, on_save, eval_env = [], [], None
+    if config["trainable_operator_embedding"] or config["operator_encoder"] == "compositional":
+        # learned operator embeddings: log their magnitude (L2 norm) per skill to TensorBoard
+        operator_inputs = {skill.name: env.operator_encoder.encode(skill.symbolic_action_model) for skill in skills}
+        callbacks.append(OperatorEmbeddingMagnitudeCallback(operator_inputs))
     if config["mode"] == "train-evaluate":
         metrics_path = run_directory / "metrics.json"
         eval_env = setup_environment(config | {"render": False}, skills)
