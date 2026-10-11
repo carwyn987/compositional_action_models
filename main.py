@@ -46,7 +46,7 @@ logger = logging.getLogger("cam.main")
 
 MODES = ["train-evaluate", "train", "evaluate"]
 # Options for one invocation only: not taken from a resumed run's config.json.
-PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render"]
+PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device"]
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
@@ -114,6 +114,10 @@ def build_parser() -> argparse.ArgumentParser:
         help="sac: also save the replay buffer with each checkpoint (can be large), so a resumed run keeps it",
     )
     training.add_argument("--seed", type=int, default=0)
+    training.add_argument(
+        "--device", default="auto",
+        help="torch device for the policy: auto (a CUDA GPU if available, else cpu), cpu, cuda, cuda:1, ...",
+    )
     training.add_argument(
         "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
         help="how the lifted action model is embedded for the policy (docs/policy_inputs.md)",
@@ -340,6 +344,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             save_replay_buffer=config["save_replay_buffer"],
             on_save=on_save,
             policy_kwargs=policy_kwargs(config),
+            device=config["device"],
         )
     finally:
         if eval_env is not None:
@@ -356,7 +361,7 @@ def evaluate_run(config: dict, run_directory: Path) -> None:
     eval_skills = config["eval_skills"] or config["skills"]
     environment_skills = list(config["skills"]) + [skill for skill in eval_skills if skill not in config["skills"]]
     env = setup_environment(config, [build_skill(name, config) for name in environment_skills])
-    model = ALGORITHMS[config["algorithm"]].load(run_directory / "model.zip")
+    model = ALGORITHMS[config["algorithm"]].load(run_directory / "model.zip", device=config["device"])
     try:
         results = {
             mode: evaluate(

@@ -133,6 +133,7 @@ def train_stable_baselines3(
     save_replay_buffer: bool = False,
     on_save: list[Callable[[], None]] | None = None,
     policy_kwargs: dict | None = None,
+    device: str = "auto",
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
@@ -146,6 +147,7 @@ def train_stable_baselines3(
     and calls each on_save function (e.g. writing metrics).
 
     policy_kwargs go to a new model's policy (e.g. a features extractor); a resumed model keeps its own.
+    device is the torch device for the policy ("auto": a CUDA GPU if available, else cpu).
     """
     run_directory.mkdir(parents=True, exist_ok=True)
     model_path = run_directory / "model.zip"
@@ -155,7 +157,7 @@ def train_stable_baselines3(
     )
     if resume:
         model = ALGORITHMS[algorithm].load(
-            model_path, env=monitored_env, tensorboard_log=str(run_directory / "tensorboard")
+            model_path, env=monitored_env, tensorboard_log=str(run_directory / "tensorboard"), device=device
         )
         if replay_buffer_path.exists() and hasattr(model, "load_replay_buffer"):
             model.load_replay_buffer(replay_buffer_path)
@@ -169,6 +171,7 @@ def train_stable_baselines3(
             verbose=1,
             tensorboard_log=str(run_directory / "tensorboard"),
             policy_kwargs=policy_kwargs,
+            device=device,
             **(HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})),
         )
 
@@ -182,7 +185,7 @@ def train_stable_baselines3(
     all_callbacks = [SuccessRateCallback(), *(callbacks or [])]
     if save_interval > 0:
         all_callbacks.append(PeriodicSaveCallback(save_interval, save))
-    logger.info("training %s for %d steps; outputs in %s", algorithm, total_timesteps, run_directory)
+    logger.info("training %s for %d steps on %s; outputs in %s", algorithm, total_timesteps, model.device, run_directory)
     try:
         model.learn(
             total_timesteps=total_timesteps,
