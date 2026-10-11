@@ -10,7 +10,7 @@ info["environment_state"] (FetchState). Actions are
 import numpy as np
 
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
-from cam.environments.fetch.fetch_predicate_evaluation_wrapper import TABLE_REST_Z
+from cam.environments.fetch.fetch_predicate_evaluation_wrapper import RAISED_HEIGHT, TABLE_REST_Z
 from cam.policies.policy import Policy
 
 OPEN, CLOSE = 1.0, -1.0
@@ -58,8 +58,20 @@ class FetchScriptedPickupPolicy(Policy):
             if self.close_steps_taken >= self.CLOSE_STEPS:
                 self.phase = "lift"
             return np.array([0.0, 0.0, 0.0, CLOSE], dtype=np.float32)
-        return servo(gripper, self.block_start + [0.0, 0.0, self.LIFT_HEIGHT], CLOSE)
+        return servo(gripper, self.lift_target(), CLOSE)
 
+    def lift_target(self) -> np.ndarray:
+        """Where to lift the gripper (and block) to: LIFT_HEIGHT above where the block started."""
+        return self.block_start + [0.0, 0.0, self.LIFT_HEIGHT]
+
+
+
+class FetchScriptedPickupRaisedPolicy(FetchScriptedPickupPolicy):
+    """The pickup motion, lifting the block to 3 cm above the raised height wherever it started (for
+    pickup-raised and unstack-raised)."""
+
+    def lift_target(self) -> np.ndarray:
+        return np.array([self.block_start[0], self.block_start[1], TABLE_REST_Z + RAISED_HEIGHT + 0.03])
 
 class FetchScriptedPutdownPolicy(Policy):
     """Lower the held target block to the table, then open the gripper."""

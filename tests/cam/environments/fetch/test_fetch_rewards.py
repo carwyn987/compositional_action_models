@@ -144,7 +144,7 @@ def test_putdown_success_bonus_is_larger_for_a_square_placement():
 
 @pytest.mark.unit
 def test_pickup_raised_keeps_rewarding_the_lift_past_pickups_target():
-    """pickup's lift target is 6 cm; pickup-raised's is above the raised height (10 cm)."""
+    """pickup's lift target is 6 cm; pickup-raised's is above the raised height (20 cm)."""
     def lift_reward(reward_class):
         reward = reward_class()
         reward.reset(PICKUP_BLOCK0, {})

@@ -2,6 +2,7 @@ import pytest
 
 from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
+    FetchScriptedPickupRaisedPolicy,
     FetchScriptedPlaceBesidePolicy,
     FetchScriptedPutdownPolicy,
     FetchScriptedStackPolicy,
@@ -14,8 +15,8 @@ SCRIPTED_POLICIES = {
     "putdown": FetchScriptedPutdownPolicy,
     "stack": FetchScriptedStackPolicy,
     "unstack": FetchScriptedPickupPolicy,
-    "pickup-raised": FetchScriptedPickupPolicy,  # the pickup motion lifts the block 15 cm
-    "unstack-raised": FetchScriptedPickupPolicy,
+    "pickup-raised": FetchScriptedPickupRaisedPolicy,
+    "unstack-raised": FetchScriptedPickupRaisedPolicy,
     "place-beside": FetchScriptedPlaceBesidePolicy,
 }
 CONFIG = {

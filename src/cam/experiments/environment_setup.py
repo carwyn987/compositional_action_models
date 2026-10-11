@@ -16,6 +16,7 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
 from cam.environments.fetch.fetch_rewards import FETCH_SHAPED_REWARDS
 from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
+    FetchScriptedPickupRaisedPolicy,
     FetchScriptedPlaceBesidePolicy,
     FetchScriptedPutdownPolicy,
     FetchScriptedStackPolicy,
@@ -110,8 +111,8 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
         "putdown": FetchScriptedPutdownPolicy(),
         "stack": FetchScriptedStackPolicy(),
         "unstack": FetchScriptedPickupPolicy(),  # grasp and lift, from on top of the other block
-        "pickup-raised": FetchScriptedPickupPolicy(),  # the pickup motion lifts the block 15 cm
-        "unstack-raised": FetchScriptedPickupPolicy(),
+        "pickup-raised": FetchScriptedPickupRaisedPolicy(),
+        "unstack-raised": FetchScriptedPickupRaisedPolicy(),
         "place-beside": FetchScriptedPlaceBesidePolicy(),
     }
     reward_functions = (

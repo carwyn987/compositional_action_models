@@ -370,6 +370,16 @@ class FetchPickupRaisedReward(FetchPickupReward):
 
 
 @dataclass
+class FetchUnstackRaisedReward(FetchUnstackReward):
+    """unstack's stages with the lift target 1 cm past the raised height; the lift is measured from where
+    the block rests on the block below, one block height above the table."""
+
+    config: FetchPickupRewardConfig = field(
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=RAISED_HEIGHT - 2 * BLOCK_HALF_SIZE + 0.01)
+    )
+
+
+@dataclass
 class FetchPlaceBesideReward(FetchStackReward):
     """stack's stages (carry, align, gentle descend, placed, release, success) with the block placed on the
     table at SPACING from the other block instead of on top of it; placed once (on-table ?o) and
@@ -551,7 +561,6 @@ FETCH_SHAPED_REWARDS = {
     "stack": FetchStackReward,
     "unstack": FetchUnstackReward,
     "pickup-raised": FetchPickupRaisedReward,
-    # unstack's default lift target, 0.06 above the block below (0.11 above the table), already reaches raised
-    "unstack-raised": FetchUnstackReward,
+    "unstack-raised": FetchUnstackRaisedReward,
     "place-beside": FetchPlaceBesideReward,
 }
