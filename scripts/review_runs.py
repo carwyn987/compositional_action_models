@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Condense a folder of training runs (e.g. scripts/overnight_runs.sh output) into a text report to review.
+"""Condense a folder of training runs (e.g. scripts/overnight_runs.py output) into a text report to review.
 
     ./scripts/review_runs.py outputs/overnight_20261008            # print the report and save <folder>/review.txt
     ./scripts/review_runs.py outputs/overnight_20261008 --no-embeddings
@@ -158,6 +158,10 @@ def section_added_skills(runs: list[Path]) -> list[str]:
         removed = entries[0][2]
         lines.append(f"   {key}  ({len(entries)} seeds; added at step {mean_std([e[0] for e in entries])}"
                      f"{'; replaced ' + ', '.join(removed) if removed else ''})")
+        zero_shot = [e[1]["deterministic"].get("zero_shot_success_rate") for e in entries]
+        if "repair-hidden" in key and zero_shot and statistics.mean(v or 0 for v in zero_shot) >= 0.5:
+            lines.append("     <-- REPAIR INVALID: the policy succeeds without seeing the repair (repair-hidden), so the "
+                         "original behaviour already satisfies the repaired operator")
         for mode in ("deterministic", "stochastic"):
             values = [e[1][mode] for e in entries]
             lines.append(f"     {mode[:5]}  zero-shot {mean_std([v.get('zero_shot_success_rate') for v in values]):>12s}"

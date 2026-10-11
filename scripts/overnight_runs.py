@@ -1,0 +1,552 @@
+#!/usr/bin/env python3
+"""Overnight experiments for the research questions, run one at a time, explained as they go.
+
+    ./scripts/start_overnight.sh                     # usual way: environment checks + unit tests, then this
+    .venv/bin/python scripts/overnight_runs.py       # this runner alone
+    DRY_RUN=1 .venv/bin/python scripts/overnight_runs.py              # print the plan, run nothing
+    RUN_GROUPS="learnability" SEEDS="0 1" .venv/bin/python scripts/overnight_runs.py
+
+Runs execute sequentially, so each has the whole machine (and the GPU, if there is one) to itself. For
+each run the terminal shows what is trained, why (which research question or check), live progress
+(steps, steps/s, time left), and the outcome; the training itself runs as a child process whose full
+output goes to <OUT>/logs/<label>.log. Ctrl+C stops the current run after it saves; starting again skips
+finished runs and continues an interrupted one from its last save.
+
+Before anything long starts (fail fast): the text backend is checked and every operator text the runs
+need is embedded and cached (with TEXT_BACKEND=openai this needs the API key and network), the device is
+reported, and every skill's scripted policy must succeed, which checks the skill's setup and predicates.
+
+Groups:
+  learnability  each skill alone (BASE_SKILLS and REPAIR_TO), multi-hot: can it be trained at all, and
+                how fast? These single-skill policies are also the "individual policy" baseline of RQ4.
+  rq1           RQ1: one shared policy on BASE_SKILLS for each operator embedding condition (CONDITIONS)
+                and seed: steps to threshold, AUC and final success per condition.
+  repair        RQ2 / RQ3: each rq1 run continued with REPAIR_FROM replaced by its repaired version
+                REPAIR_TO: the repaired skill's zero-shot success at the resume step, then the steps it
+                needs to reach the success threshold. Two variants:
+                  repair-visible  the repaired operator is encoded on its own: content-based embeddings
+                                  (multi-hot, text, compositional) show the changed literals; one-hot and
+                                  random give it a code no training has used
+                  repair-hidden   (ALIAS_CONDITIONS only) the repaired operator gets exactly REPAIR_FROM's
+                                  embedding (--operator-identity-aliases), so the policy cannot see the
+                                  repair. A control: if it succeeds zero-shot, the repair needs no new
+                                  behaviour and the test is invalid.
+
+Outputs, under OUT (default outputs/overnight_<date>):
+  learnability/<skill>/<run name>/, rq1/<condition>_seed<n>/<run name>/   run directories (metrics.json,
+                                                                            model.zip, tensorboard/, ...)
+  repair/<condition>_<repair-visible|repair-hidden>_seed<n>/               copy of the rq1 run, continued
+  logs/<label>.log   each run's full output        failed.txt   labels of runs that failed
+  summary.csv        per run and skill metrics     review.txt   scripts/review_runs.py's report
+View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
+
+Settings (environment variables, defaults in brackets):
+  OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  ALGORITHM [sac]  SEEDS ["0"]
+  CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
+              compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
+  TEXT_BACKEND [openai] (the text condition and compositional name embeddings; mock: offline, no meaning)
+  BASE_SKILLS [pickup putdown stack unstack pickup-raised place-beside]
+  REPAIR_FROM [unstack]  REPAIR_TO [unstack-raised]
+  LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000]
+  EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]  DEVICE [auto]
+  THREADS [torch's default] torch threads per run   DRY_RUN [0]
+"""
+
+import csv
+import json
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import time
+from dataclasses import dataclass, field
+from datetime import date, datetime
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parent.parent
+PYTHON = str(ROOT / ".venv" / "bin" / "python") if (ROOT / ".venv" / "bin" / "python").exists() else sys.executable
+
+
+def setting(name: str, default: str) -> str:
+    return os.environ.get(name, default)
+
+
+OUT = Path(setting("OUT", f"outputs/overnight_{date.today():%Y%m%d}"))
+RUN_GROUPS = setting("RUN_GROUPS", "learnability rq1 repair").split()
+ALGORITHM = setting("ALGORITHM", "sac")
+SEEDS = [int(seed) for seed in setting("SEEDS", "0").split()]
+CONDITIONS = setting(
+    "CONDITIONS",
+    "one-hot random multi-hot-trainable text compositional-tree compositional-slots compositional-geometric",
+).split()
+ALIAS_CONDITIONS = setting("ALIAS_CONDITIONS", "one-hot random").split()
+TEXT_BACKEND = setting("TEXT_BACKEND", "openai")
+BASE_SKILLS = setting("BASE_SKILLS", "pickup putdown stack unstack pickup-raised place-beside").split()
+REPAIR_FROM = setting("REPAIR_FROM", "unstack")
+REPAIR_TO = setting("REPAIR_TO", "unstack-raised")
+LEARN_STEPS = int(setting("LEARN_STEPS", "150000"))
+RQ1_STEPS = int(setting("RQ1_STEPS", "500000"))
+REPAIR_STEPS = int(setting("REPAIR_STEPS", "150000"))
+EVAL_INTERVAL = int(setting("EVAL_INTERVAL", "50000"))
+EVAL_EPISODES = int(setting("EVAL_EPISODES", "20"))
+SAVE_INTERVAL = int(setting("SAVE_INTERVAL", "50000"))
+DEVICE = setting("DEVICE", "auto")
+THREADS = setting("THREADS", "")
+DRY_RUN = setting("DRY_RUN", "0") == "1"
+
+# Operator embedding conditions: name -> (main.py options, what the policy is told about the skill).
+CONDITION_OPTIONS = {
+    "one-hot": (["--operator-encoder", "one-hot"], "a one-hot skill ID (no structure)"),
+    "random": (["--operator-encoder", "random"], "a fixed random vector per skill name (no structure)"),
+    "random-trainable": (["--operator-encoder", "random", "--trainable-operator-embedding"],
+                         "a learnable vector per skill, starting random (no structure)"),
+    "multi-hot": (["--operator-encoder", "multi-hot"], "the operator's literals as a multi-hot vector"),
+    "multi-hot-trainable": (["--operator-encoder", "multi-hot", "--trainable-operator-embedding"],
+                            "the operator's literals as a multi-hot vector, through a learnable layer"),
+    "text": (["--operator-encoder", "text", "--operator-text", "paragraph"],
+             f"the operator described in a paragraph, embedded by the {TEXT_BACKEND} text model"),
+    "compositional-tree": (["--operator-encoder", "compositional", "--compositional-architecture", "tree"],
+                           "the operator's structure, composed by learned functions following the PDDL syntax"),
+    "compositional-slots": (["--operator-encoder", "compositional", "--compositional-architecture", "slots"],
+                            "the operator's components as tokens, grouped by slot attention"),
+    "compositional-geometric": (
+        ["--operator-encoder", "compositional", "--compositional-architecture", "geometric"],
+        "the operator's components on a grid, read by a CNN and slot attention",
+    ),
+}
+# Rough single-process SAC steps/s per condition, for the first time estimate; replaced by measurements.
+EXPECTED_RATE = {"compositional-tree": 24, "compositional-slots": 23, "compositional-geometric": 18}
+DEFAULT_RATE = 40
+COMMON = [
+    "--algorithm", ALGORITHM, "--reward", "shaped", "--num-blocks", "2", "--device", DEVICE,
+    "--eval-interval", str(EVAL_INTERVAL), "--eval-episodes", str(EVAL_EPISODES),
+    "--save-interval", str(SAVE_INTERVAL), "--text-backend", TEXT_BACKEND,
+]
+PROGRESS = re.compile(r"(\d[\d,]*)/(\d[\d,]*)\s")
+INTERACTIVE = sys.stdout.isatty()
+
+
+@dataclass
+class Run:
+    label: str
+    group: str
+    title: str
+    what: str
+    why: str
+    steps: int  # training steps this run adds
+    condition: str  # for the time estimate
+    output: Path  # new runs: --output-dir; repair runs: the run directory itself
+    command: list[str]
+    copy_from: Path | None = None  # repair runs: the rq1 output directory holding the run to continue
+    depends_on: str | None = None
+    result: dict = field(default_factory=dict)
+
+    @property
+    def log(self) -> Path:
+        return OUT / "logs" / f"{self.label}.log"
+
+    def finished(self) -> bool:
+        return self.log.exists() and "training finished" in self.log.read_text(errors="replace")
+
+    def run_directory(self) -> Path | None:
+        if self.copy_from is not None:
+            return self.output if (self.output / "config.json").exists() else None
+        found = sorted(path.parent for path in self.output.glob("*/config.json"))
+        return found[0] if found else None
+
+
+def condition_options(condition: str) -> list[str]:
+    if condition not in CONDITION_OPTIONS:
+        sys.exit(f"unknown condition {condition!r}; known: {', '.join(CONDITION_OPTIONS)}")
+    return CONDITION_OPTIONS[condition][0]
+
+
+def repair_difference() -> str:
+    """What REPAIR_TO changes relative to REPAIR_FROM, e.g. 'adds effect (raised ?o)'."""
+    from cam.skills.registry import build_skill
+
+    config = {"symbolic_action_model_format": "pddl"}
+    def literals(name: str) -> set[str]:
+        model = build_skill(name, config).symbolic_action_model
+        return {f"precondition {'(not ' if p.negated else ''}{p.predicate}{')' if p.negated else ''}"
+                for p in model.preconditions} | {
+                f"effect {'(not ' if e.delete else ''}{e.predicate}{')' if e.delete else ''}" for e in model.effects}
+    before, after = literals(REPAIR_FROM), literals(REPAIR_TO)
+    changes = [f"adds {literal}" for literal in sorted(after - before)]
+    changes += [f"removes {literal}" for literal in sorted(before - after)]
+    return ", ".join(changes) or "no literal changes"
+
+
+def build_plan() -> list[Run]:
+    runs: list[Run] = []
+    skill_list = ", ".join(BASE_SKILLS)
+    if "learnability" in RUN_GROUPS:
+        for skill in dict.fromkeys(BASE_SKILLS + [REPAIR_TO]):
+            output = OUT / "learnability" / skill
+            runs.append(Run(
+                label=f"learnability_{skill}", group="learnability", title=f"Learnability · {skill}",
+                what=f"one {ALGORITHM.upper()} policy trained on {skill} alone (multi-hot embedding), {LEARN_STEPS:,} steps",
+                why=(f"can {skill} be learned at all, and how fast? If not, no result that uses it means anything. "
+                     "Also the single-skill baseline for RQ4 (hypernetworks vs individual policies)."),
+                steps=LEARN_STEPS, condition="multi-hot", output=output,
+                command=["main.py", "--skills", skill, "--operator-encoder", "multi-hot",
+                         "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output)],
+            ))
+    difference = repair_difference() if "repair" in RUN_GROUPS else ""
+    repaired_skills = [REPAIR_TO if skill == REPAIR_FROM else skill for skill in BASE_SKILLS]
+    for seed in SEEDS:
+        for condition in CONDITIONS:
+            options = condition_options(condition)
+            description = CONDITION_OPTIONS[condition][1]
+            rq1_label, rq1_output = f"rq1_{condition}_seed{seed}", OUT / "rq1" / f"{condition}_seed{seed}"
+            if "rq1" in RUN_GROUPS:
+                runs.append(Run(
+                    label=rq1_label, group="rq1", title=f"RQ1 · {condition} · seed {seed}",
+                    what=(f"one shared {ALGORITHM.upper()} policy on {len(BASE_SKILLS)} skills ({skill_list}), "
+                          f"{RQ1_STEPS:,} steps; the policy is told which skill to do through {description}"),
+                    why=("RQ1: does conditioning on this representation of the operator make multi-skill learning "
+                         "faster or better than an arbitrary skill ID? Compared across conditions on steps to "
+                         "threshold, AUC and final success."),
+                    steps=RQ1_STEPS, condition=condition, output=rq1_output,
+                    command=["main.py", "--skills", *BASE_SKILLS, *options, "--total-timesteps", str(RQ1_STEPS),
+                             "--seed", str(seed), *COMMON, "--output-dir", str(rq1_output)],
+                ))
+            if "repair" in RUN_GROUPS:
+                variants = ["repair-visible"] + (["repair-hidden"] if condition in ALIAS_CONDITIONS else [])
+                for variant in variants:
+                    run_directory = OUT / "repair" / f"{condition}_{variant}_seed{seed}"
+                    hidden = variant == "repair-hidden"
+                    runs.append(Run(
+                        label=f"repair_{condition}_{variant}_seed{seed}", group="repair",
+                        title=f"Repair (RQ3) · {condition} · {variant} · seed {seed}",
+                        what=(f"continues the RQ1 {condition} policy with {REPAIR_FROM} replaced by {REPAIR_TO} "
+                              f"({difference}): evaluates {REPAIR_TO} zero-shot, then trains until it reaches the "
+                              f"success threshold (at most {REPAIR_STEPS:,} steps)"),
+                        why=(f"control: {REPAIR_TO} gets exactly {REPAIR_FROM}'s embedding, so the policy cannot see "
+                             "the repair. If this succeeds zero-shot, the repair needs no new behaviour and the "
+                             "repair test is invalid." if hidden else
+                             f"RQ3: does {description} let the policy carry out the repaired operator zero-shot, "
+                             "or learn it faster than the other conditions?"),
+                        steps=REPAIR_STEPS, condition=condition, output=run_directory, copy_from=rq1_output,
+                        depends_on=rq1_label if "rq1" in RUN_GROUPS else None,
+                        command=["main.py", "--run-directory", str(run_directory), "--skills", *repaired_skills,
+                                 "--stop-skills", REPAIR_TO, "--total-timesteps", str(REPAIR_STEPS),
+                                 "--device", DEVICE,
+                                 *(["--operator-identity-aliases", f"{REPAIR_TO}={REPAIR_FROM}"] if hidden else [])],
+                    ))
+    return runs
+
+
+def duration(seconds: float) -> str:
+    seconds = int(max(seconds, 0))
+    hours, minutes = divmod(seconds // 60, 60)
+    return f"{hours}h{minutes:02d}m" if hours else f"{minutes}m{seconds % 60:02d}s"
+
+
+def say(text: str = "") -> None:
+    print(text, flush=True)
+
+
+def fail(message: str) -> None:
+    say(f"\n✗ {message}")
+    sys.exit(1)
+
+
+# ---------------------------------------------------------------- checks before anything long starts
+
+
+def preflight(runs: list[Run]) -> None:
+    say("Checks before starting")
+    import torch
+
+    if DEVICE.startswith("cuda") and not torch.cuda.is_available():
+        fail(f"DEVICE={DEVICE} but torch has no CUDA (torch {torch.__version__}); use DEVICE=auto or cpu")
+    gpu = torch.cuda.get_device_name(0) if torch.cuda.is_available() else None
+    device = DEVICE if DEVICE != "auto" else ("cuda" if gpu else "cpu")
+    say(f"  ✓ device: {device}" + (f" ({gpu})" if gpu else f" (torch {torch.__version__}; no CUDA GPU)"))
+
+    uses_repair_skill = any(run.group in ("learnability", "repair") for run in runs)
+    skills = sorted(set(BASE_SKILLS) | ({REPAIR_TO} if uses_repair_skill else set()))
+    if any(run.condition == "text" or run.condition.startswith("compositional") for run in runs):
+        check_text_backend(skills)
+    check_scripted_policies(skills)
+    free = shutil.disk_usage(OUT if OUT.exists() else ROOT).free / 1e9
+    say(f"  ✓ free disk space: {free:.0f} GB" + ("  (low: runs save models and logs)" if free < 10 else ""))
+
+
+def check_text_backend(skills: list[str]) -> None:
+    """Embed every operator text the runs need now, through the same cache the runs use, so a missing key
+    or network fails here and training never waits on the API."""
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS, text_backend
+    from cam.skills.registry import build_skill
+    from main import parse_args
+
+    config = dict(parse_args(["--skills", *skills, "--text-backend", TEXT_BACKEND, "--operator-text", "paragraph"]))
+    try:
+        operators = [build_skill(skill, config) for skill in skills]
+        encoder = OPERATOR_ENCODERS["text"](config, operators)
+        names = text_backend(config, config["component_embedding_dim"])
+        for skill in operators:
+            encoder.encode(skill.symbolic_action_model)  # paragraph embedding (text condition)
+            names.embed_text(skill.name)  # name embedding (compositional conditions)
+    except Exception as error:  # report any failure (no key, no network, no openai package) and stop
+        fail(f"text backend {TEXT_BACKEND!r} is not usable: {type(error).__name__}: {error}\n"
+             "  set OPENAI_API_KEY or put the key in ~/.secrets/openai_api_key, or run with TEXT_BACKEND=mock")
+    say(f"  ✓ text backend {TEXT_BACKEND}: {len(operators)} operator paragraphs and names embedded and cached "
+        f"({config['text_embedding_cache']})")
+
+
+def check_scripted_policies(skills: list[str]) -> None:
+    """Every skill's scripted policy must succeed after its setup chain (2 episodes, 2 blocks)."""
+    failed = []
+    for skill in skills:
+        result = subprocess.run(
+            [PYTHON, "scripts/run_skill.py", "--skill", skill, "--num-blocks", "2", "--episodes", "2"],
+            cwd=ROOT, capture_output=True, text=True,
+        )
+        if "success rate: 2/2" not in result.stdout:
+            failed.append(f"{skill}: {(result.stdout + result.stderr).strip().splitlines()[-1:]}")
+    if failed:
+        fail("scripted policies failed (the skill's setup or predicates are broken):\n  " + "\n  ".join(failed))
+    say(f"  ✓ scripted policies succeed for all {len(skills)} skills: {', '.join(skills)}")
+
+
+# ---------------------------------------------------------------- running
+
+
+class Runner:
+    def __init__(self, runs: list[Run]):
+        self.runs = runs
+        self.rates: dict[str, float] = {}  # measured steps/s per condition
+        self.failed: set[str] = set()
+        self.started = time.monotonic()
+        self.child: subprocess.Popen | None = None
+
+    def rate(self, condition: str) -> float:
+        if condition in self.rates:
+            return self.rates[condition]
+        if self.rates:  # scale the default by what this machine measured so far
+            measured = [self.rates[c] / EXPECTED_RATE.get(c, DEFAULT_RATE) for c in self.rates]
+            return EXPECTED_RATE.get(condition, DEFAULT_RATE) * sum(measured) / len(measured)
+        return EXPECTED_RATE.get(condition, DEFAULT_RATE)
+
+    def estimate(self, runs: list[Run]) -> float:
+        return sum(run.steps / self.rate(run.condition) for run in runs if not run.finished())
+
+    def print_plan(self) -> None:
+        say(f"\nPlan: {len(self.runs)} runs, one at a time ({ALGORITHM}, device {DEVICE}), output in {OUT}")
+        for index, run in enumerate(self.runs, 1):
+            state = "done" if run.finished() else f"{run.steps // 1000}k steps"
+            say(f"  {index:2d}. {run.title:58s} {state}")
+        remaining = self.estimate(self.runs)
+        say(f"Estimated time: ~{duration(remaining)} (a first guess; refined from measured speed as runs finish)")
+
+    def execute(self) -> None:
+        for index, run in enumerate(self.runs, 1):
+            say(f"\n━━ [{index}/{len(self.runs)}] {run.title}")
+            say(f"   what: {run.what}")
+            say(f"   why:  {run.why}")
+            say(f"   log:  {run.log}")
+            if run.finished():
+                say("   ✓ already finished (skipped)")
+                self.report(run)
+                continue
+            if run.depends_on in self.failed:
+                say(f"   ⤼ skipped: {run.depends_on} failed")
+                self.failed.add(run.label)
+                continue
+            command = self.prepare(run)
+            if command is None:
+                continue
+            self.train(run, command)
+            remaining = [r for r in self.runs[index:] if r.label not in self.failed]
+            say(f"   overall: {index}/{len(self.runs)} runs · elapsed {duration(time.monotonic() - self.started)} · "
+                f"estimated remaining ~{duration(self.estimate(remaining))}")
+
+    def prepare(self, run: Run) -> list[str] | None:
+        """The command to run: a new run, a repair copied from its rq1 run, or a resume of an interrupted run."""
+        run_directory = run.run_directory()
+        if run.copy_from is not None and run_directory is None:
+            sources = sorted(path.parent for path in run.copy_from.glob("*/model.zip"))
+            if not sources:
+                say(f"   ✗ no finished rq1 run in {run.copy_from} to continue; skipped")
+                self.failed.add(run.label)
+                return None
+            shutil.copytree(sources[0], run.output)
+            base = json.loads((run.output / "metrics.json").read_text())["progress"]["steps"]
+            (run.output / "repair_base_steps.txt").write_text(str(base))
+            return run.command
+        if run_directory is not None and (run_directory / "model.zip").exists():  # interrupted earlier
+            done = json.loads((run_directory / "metrics.json").read_text())["progress"]["steps"]
+            base = int((run_directory / "repair_base_steps.txt").read_text()) if run.copy_from else 0
+            left = run.steps - (done - base)
+            if left <= 0:
+                say("   ✓ already at its step budget")
+                return None
+            say(f"   resuming an interrupted run at step {done:,}: {left:,} steps left")
+            command = list(run.command)
+            if run.copy_from is None:  # new run -> resume it in place
+                command = ["main.py", "--run-directory", str(run_directory),
+                           *run.command[run.command.index("--skills"):]]
+                command = [part for part in command if part != "--output-dir" and part != str(run.output)]
+            command[command.index("--total-timesteps") + 1] = str(left)
+            return command
+        if run_directory is not None:  # started but never saved: start over
+            shutil.rmtree(run_directory)
+        return run.command
+
+    def train(self, run: Run, command: list[str]) -> None:
+        run.log.parent.mkdir(parents=True, exist_ok=True)
+        environment = os.environ | ({"OMP_NUM_THREADS": THREADS, "MKL_NUM_THREADS": THREADS} if THREADS else {})
+        start = time.monotonic()
+        with open(run.log, "a") as log:
+            log.write(f"\n# {datetime.now():%Y-%m-%d %H:%M:%S} {' '.join(command)}\n")
+            log.flush()
+            self.child = subprocess.Popen([PYTHON, *command], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                          env=environment, start_new_session=True)
+            last_print, samples = 0.0, []
+            while self.child.poll() is None:
+                time.sleep(5)
+                done, total = self.progress(run)
+                now = time.monotonic()
+                if done is not None:
+                    samples = (samples + [(now, done)])[-24:]  # the last ~2 minutes
+                if done is not None and len(samples) > 1 and (INTERACTIVE or now - last_print > 600):
+                    rate = ((samples[-1][1] - samples[0][1]) / (samples[-1][0] - samples[0][0])
+                            if len(samples) > 1 and samples[-1][0] > samples[0][0] else 0.0)
+                    left = (total - done) / rate if rate > 0 else None
+                    line = (f"   {done:>9,}/{total:,} steps · {rate:5.1f} steps/s · elapsed {duration(now - start)}"
+                            + (f" · ~{duration(left)} left" if left is not None else ""))
+                    print(f"\r{line}\033[K" if INTERACTIVE else line, end="" if INTERACTIVE else "\n", flush=True)
+                    last_print = now
+            code = self.child.wait()
+            self.child = None
+        if INTERACTIVE:
+            print(flush=True)
+        elapsed = time.monotonic() - start
+        done, _ = self.progress(run)
+        if done and elapsed > 60:
+            self.rates[run.condition] = done / elapsed
+        if code != 0 or not run.finished():
+            self.failed.add(run.label)
+            with open(OUT / "failed.txt", "a") as failed:
+                failed.write(run.label + "\n")
+            say(f"   ✗ failed (exit code {code}) after {duration(elapsed)}; last lines of the log:")
+            tail = run.log.read_text(errors="replace").replace("\r", "\n").strip().splitlines()[-12:]
+            say("\n".join(f"     {line}" for line in tail))
+            return
+        say(f"   ✓ finished in {duration(elapsed)}")
+        self.report(run)
+
+    @staticmethod
+    def progress(run: Run) -> tuple[int | None, int]:
+        """(steps done in this invocation, its total) from the progress bar at the end of the log."""
+        try:
+            with open(run.log, "rb") as log:
+                log.seek(max(log.seek(0, 2) - 4000, 0))
+                tail = log.read().decode(errors="replace").replace("\r", "\n")
+        except OSError:
+            return None, run.steps
+        matches = PROGRESS.findall(tail)
+        if not matches:
+            return None, run.steps
+        done, total = (int(value.replace(",", "")) for value in matches[-1])
+        return done, total
+
+    @staticmethod
+    def report(run: Run) -> None:
+        """The run's outcome from its metrics.json: per skill, final success and steps to threshold."""
+        run_directory = run.run_directory()
+        if run_directory is None or not (run_directory / "metrics.json").exists():
+            return
+        metrics = json.loads((run_directory / "metrics.json").read_text())
+        summary = metrics["summary"]["deterministic"]
+        if run.group == "repair":
+            values = summary.get(REPAIR_TO, {})
+            say(f"   result: {REPAIR_TO} zero-shot {values.get('zero_shot_success_rate')}, "
+                f"steps to threshold {values.get('steps_to_threshold')}"
+                + (f"; stopped: {metrics['stop_reason']}" if metrics.get("stop_reason") else ""))
+            return
+        cells = [f"{skill} {values.get('final_success_rate')}"
+                 + (f" (95% at {values['steps_to_threshold'] // 1000}k)" if values.get("steps_to_threshold") is not None else "")
+                 for skill, values in summary.items()]
+        say(f"   result (final success, deterministic): {'; '.join(cells)}")
+
+    def interrupt(self, *_) -> None:
+        if self.child is not None and self.child.poll() is None:
+            say("\n   stopping the current run (it saves first) ...")
+            os.killpg(self.child.pid, signal.SIGINT)
+            try:
+                self.child.wait(timeout=120)
+            except subprocess.TimeoutExpired:
+                os.killpg(self.child.pid, signal.SIGKILL)
+        say("\nStopped. Start the same command again to continue: finished runs are skipped and the interrupted "
+            "run resumes from its last save.")
+        sys.exit(130)
+
+
+def write_summary() -> None:
+    rows = []
+    for path in sorted(OUT.glob("**/metrics.json")):
+        metrics = json.loads(path.read_text())
+        points = metrics["curves"]["deterministic"]["points"]
+        for mode, skills in metrics["summary"].items():
+            for skill, values in skills.items():
+                rows.append({"group": path.relative_to(OUT).parts[0], "run": path.parent.name, "mode": mode,
+                             "skill": skill, "last_step": points[-1]["step"] if points else None, **values})
+    if rows:
+        with open(OUT / "summary.csv", "w", newline="") as handle:
+            writer = csv.DictWriter(handle, fieldnames=list(dict.fromkeys(key for row in rows for key in row)))
+            writer.writeheader()
+            writer.writerows(rows)
+
+
+def main() -> None:
+    os.chdir(ROOT)
+    sys.path.insert(0, str(ROOT))
+    for condition in CONDITIONS:
+        condition_options(condition)
+    runs = build_plan()
+    if not runs:
+        sys.exit(f"nothing to run for RUN_GROUPS={' '.join(RUN_GROUPS)}")
+    runner = Runner(runs)
+    say(f"Overnight experiments · {datetime.now():%Y-%m-%d %H:%M} · groups: {', '.join(RUN_GROUPS)}")
+    say(f"  base skills: {', '.join(BASE_SKILLS)}")
+    if "repair" in RUN_GROUPS:
+        say(f"  repair: {REPAIR_FROM} -> {REPAIR_TO} ({repair_difference()})")
+    runner.print_plan()
+    if DRY_RUN:
+        for run in runs:
+            say(f"\n{run.label}:\n  {PYTHON} {' '.join(run.command)}")
+        say("\nDRY_RUN=1: nothing started")
+        return
+
+    OUT.mkdir(parents=True, exist_ok=True)
+    lock = OUT / "overnight.lock"
+    if lock.exists():
+        pid = int(lock.read_text() or 0)
+        try:
+            os.kill(pid, 0)
+            sys.exit(f"another overnight run (pid {pid}) is using {OUT}")
+        except (OSError, ValueError):
+            pass  # stale lock from a run that is gone
+    lock.write_text(str(os.getpid()))
+    signal.signal(signal.SIGINT, runner.interrupt)
+    signal.signal(signal.SIGTERM, runner.interrupt)
+    try:
+        say()
+        preflight(runs)
+        runner.execute()
+        write_summary()
+        subprocess.run([PYTHON, "scripts/review_runs.py", str(OUT)], cwd=ROOT, capture_output=True)
+        say(f"\nAll done in {duration(time.monotonic() - runner.started)}. "
+            f"Failed: {', '.join(sorted(runner.failed)) or 'none'}")
+        say(f"  report:  {OUT / 'review.txt'}\n  table:   {OUT / 'summary.csv'}")
+    finally:
+        lock.unlink(missing_ok=True)
+
+
+if __name__ == "__main__":
+    main()
