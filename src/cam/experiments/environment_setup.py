@@ -144,6 +144,7 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 skills,
                 setup_policies,
                 reward_functions,
+                success_hold_steps=config.get("success_hold_steps", 1),  # configs saved before the option: 1
             ),
             config["max_steps_per_episode"],
         ),

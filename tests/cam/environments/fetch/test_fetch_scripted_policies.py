@@ -22,7 +22,7 @@ SCRIPTED_POLICIES = {
 CONFIG = {
     "symbolic_action_model_format": "pddl", "environment_id": "FetchMultiBlock-v0", "render": False,
     "reward": "shaped", "operator_encoder": "multi-hot", "operator_embedding_dim": 128, "max_operator_arity": 3,
-    "max_steps_per_episode": 100, "seed": 0,
+    "max_steps_per_episode": 100, "seed": 0, "success_hold_steps": 5,
 }
 
 

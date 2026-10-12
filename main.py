@@ -198,6 +198,10 @@ def build_parser() -> argparse.ArgumentParser:
         "<run>/metrics.json. Each costs about 2 x eval-episodes x skills episodes, so start with an infrequent "
         "interval and tune.",
     )
+    training.add_argument(
+        "--success-hold-steps", type=int, default=5,
+        help="an episode succeeds once the skill's effects have held this many consecutive steps (settled success)",
+    )
     evaluation.add_argument("--eval-interval", type=int, default=50_000, help="training steps between evaluations")
     evaluation.add_argument("--eval-episodes", type=int, default=20, help="episodes per skill per evaluation")
     evaluation.add_argument(

@@ -138,7 +138,8 @@ class FetchScriptedStackPolicy(Policy):
 
 class FetchScriptedPlaceBesidePolicy(FetchScriptedStackPolicy):
     """Place the held block (first argument) on the table next to the other block (second argument): the
-    stack motion, landing at SPACING from the other block on the side the held block comes from."""
+    stack motion, landing at SPACING from the other block along x, on the side the held block comes from.
+    Along x because the fingers open along y: landing along y, opening them would knock the other block away."""
 
     SPACING = 0.075  # centre-to-centre, inside beside's range
 
@@ -148,7 +149,6 @@ class FetchScriptedPlaceBesidePolicy(FetchScriptedStackPolicy):
 
     def resting_position(self, state, block: np.ndarray, base: np.ndarray) -> np.ndarray:
         if self.spot is None:  # fixed for the episode, from where the block starts
-            direction = block[:2] - base[:2]
-            direction = direction / max(np.linalg.norm(direction), 1e-6)
-            self.spot = np.array([*(base[:2] + self.SPACING * direction), TABLE_REST_Z])
+            side = 1.0 if block[0] >= base[0] else -1.0
+            self.spot = np.array([base[0] + side * self.SPACING, base[1], TABLE_REST_Z])
         return self.spot

@@ -80,6 +80,16 @@ def test_step_rewards_and_terminates_when_effects_hold():
 
 
 @pytest.mark.unit
+def test_success_needs_the_effects_to_hold_for_success_hold_steps_in_a_row():
+    """Settled success: the effects must hold 3 consecutive steps; breaking them restarts the count."""
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], success_hold_steps=3)
+    _, info = env.reset(seed=0)
+    target = info["grounded_action_model"].arguments[0]
+    outcomes = [env.step(action)[2] for action in [grasp(target), WAIT, RELEASE, grasp(target), WAIT, WAIT]]
+    assert outcomes == [False, False, False, False, False, True]
+
+
+@pytest.mark.unit
 def test_setup_chain_runs_declared_skills():
     """putdown declares setup_skills=("pickup",): reset runs pickup, so putdown targets the held block."""
     env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()})

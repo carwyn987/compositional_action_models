@@ -9,7 +9,9 @@ task over one or more skills. Each episode is one grounded action of one skill
            (skill.setup_skills, e.g. pickup before putdown) to reach a state
            where it applies, then choose a random grounding whose
            preconditions hold
-    step   the episode ends (terminated) once the grounding's effects hold;
+    step   the episode ends (terminated) once the grounding's effects have held for
+           success_hold_steps consecutive steps (settled success: the skill must stop in
+           its goal state, not pass through it);
            the reward comes from the skill's reward function (SparseReward,
            1.0 on success and 0.0 otherwise, unless another is given)
 
@@ -62,8 +64,11 @@ class SkillEnvironment(gym.Wrapper):
         reward_functions: dict[str, RewardFunction] | None = None,
         max_steps_per_setup_skill: int = 100,
         max_setup_attempts: int = 10,
+        success_hold_steps: int = 1,
     ):
         super().__init__(env)
+        self.success_hold_steps = success_hold_steps
+        self.steps_effects_held = 0
         if not skills:
             raise ValueError("SkillEnvironment needs at least one skill")
         self.skills = {skill.name: skill for skill in skills}
@@ -102,13 +107,16 @@ class SkillEnvironment(gym.Wrapper):
             if grounded.effects_hold(info["facts"]):
                 logger.warning("episode start: %s effects already hold", grounded)
             self.grounded_action_model = grounded
+            self.steps_effects_held = 0
             self.reward_functions[self.skill.name].reset(grounded, info)
             return obs, {**self._annotate(info, success=False), "setup": setup}
         raise RuntimeError(f"could not set up {self.skill.name} in {self.max_setup_attempts} attempts")
 
     def step(self, action):
         obs, _, terminated, truncated, info = self.env.step(action)
-        success = self.grounded_action_model.effects_hold(info["facts"])
+        held = self.grounded_action_model.effects_hold(info["facts"])
+        self.steps_effects_held = self.steps_effects_held + 1 if held else 0
+        success = self.steps_effects_held >= self.success_hold_steps
         reward_function = self.reward_functions[self.skill.name]
         reward, components = reward_function(self.grounded_action_model, action, info, success)
         info = {**self._annotate(info, success), "reward_components": components}
