@@ -55,7 +55,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     echo "branch    ${branch}"
     echo "commit    $(git rev-parse HEAD)"
     echo "changes   ${changes:-none}"
-    echo "settings  $(env | grep -E '^(OUT|RUN_GROUPS|ALGORITHM|SEEDS|CONDITIONS|ALIAS_CONDITIONS|TEXT_BACKEND|BASE_SKILLS|REPAIR_FROM|REPAIR_TO|LEARN_STEPS|RQ1_STEPS|REPAIR_STEPS|EVAL_INTERVAL|EVAL_EPISODES|SAVE_INTERVAL|DEVICE|THREADS)=' | tr '\n' ' ')"
+    echo "settings  $(env | grep -E '^(OUT|RUN_GROUPS|ALGORITHM|SEEDS|CONDITIONS|ALIAS_CONDITIONS|TEXT_BACKEND|BASE_SKILLS|REPAIRS|LEARN_STEPS|RQ1_STEPS|REPAIR_STEPS|EVAL_INTERVAL|EVAL_EPISODES|SAVE_INTERVAL|DEVICE|THREADS)=' | tr '\n' ' ')"
   } > "${OUT}/run_info.txt"
 fi
 

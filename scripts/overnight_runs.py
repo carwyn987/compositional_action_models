@@ -17,17 +17,17 @@ need is embedded and cached (with TEXT_BACKEND=openai this needs the API key and
 reported, and every skill's scripted policy must succeed, which checks the skill's setup and predicates.
 
 Groups:
-  learnability  each skill alone (BASE_SKILLS and REPAIR_TO), multi-hot: can it be trained at all, and
+  learnability  each skill alone (BASE_SKILLS and every repaired skill), multi-hot: can it be trained at all, and
                 how fast? These single-skill policies are also the "individual policy" baseline of RQ4.
   rq1           RQ1: one shared policy on BASE_SKILLS for each operator embedding condition (CONDITIONS)
                 and seed: steps to threshold, AUC and final success per condition.
-  repair        RQ2 / RQ3: each rq1 run continued with REPAIR_FROM replaced by its repaired version
-                REPAIR_TO: the repaired skill's zero-shot success at the resume step, then the steps it
-                needs to reach the success threshold. Two variants:
+  repair        RQ2 / RQ3: for each pair FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by
+                its repaired version TO: TO's zero-shot success at the resume step, then the steps it
+                needs to reach the success threshold (TO evaluated every 5k steps). Two variants:
                   repair-visible  the repaired operator is encoded on its own: content-based embeddings
                                   (multi-hot, text, compositional) show the changed literals; one-hot and
                                   random give it a code no training has used
-                  repair-hidden   (ALIAS_CONDITIONS only) the repaired operator gets exactly REPAIR_FROM's
+                  repair-hidden   (ALIAS_CONDITIONS only) the repaired operator gets exactly FROM's
                                   embedding (--operator-identity-aliases), so the policy cannot see the
                                   repair. A control: if it succeeds zero-shot, the repair needs no new
                                   behaviour and the test is invalid.
@@ -35,7 +35,7 @@ Groups:
 Outputs, under OUT (default outputs/overnight_<date>):
   learnability/<skill>/<run name>/, rq1/<condition>_seed<n>/<run name>/   run directories (metrics.json,
                                                                             model.zip, tensorboard/, ...)
-  repair/<condition>_<repair-visible|repair-hidden>_seed<n>/               copy of the rq1 run, continued
+  repair/<TO>/<condition>_<repair-visible|repair-hidden>_seed<n>/          copy of the rq1 run, continued
   logs/<label>.log   each run's full output        failed.txt   labels of runs that failed
   summary.csv        per run and skill metrics     review.txt   scripts/review_runs.py's report
 View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
@@ -45,8 +45,9 @@ Settings (environment variables, defaults in brackets):
   CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
               compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
   TEXT_BACKEND [openai] (the text condition and compositional name embeddings; mock: offline, no meaning)
-  BASE_SKILLS [pickup putdown stack unstack pickup-raised place-beside]
-  REPAIR_FROM [unstack]  REPAIR_TO [unstack-raised]
+  BASE_SKILLS [pickup putdown stack unstack pickup-raised push-left push-right push-front push-back push-beside]
+  REPAIRS ["unstack:unstack-raised stack:place-beside push-left:push-left-front"] (FROM:TO pairs; every
+          literal of each TO appears in some base skill, so a policy reading the operator can use it)
   LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000]
   EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]  DEVICE [auto]
   THREADS [torch's default] torch threads per run   DRY_RUN [0]
@@ -61,7 +62,7 @@ import signal
 import subprocess
 import sys
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
@@ -83,9 +84,12 @@ CONDITIONS = setting(
 ).split()
 ALIAS_CONDITIONS = setting("ALIAS_CONDITIONS", "one-hot random").split()
 TEXT_BACKEND = setting("TEXT_BACKEND", "openai")
-BASE_SKILLS = setting("BASE_SKILLS", "pickup putdown stack unstack pickup-raised place-beside").split()
-REPAIR_FROM = setting("REPAIR_FROM", "unstack")
-REPAIR_TO = setting("REPAIR_TO", "unstack-raised")
+BASE_SKILLS = setting(
+    "BASE_SKILLS", "pickup putdown stack unstack pickup-raised push-left push-right push-front push-back push-beside"
+).split()
+REPAIRS = [tuple(pair.split(":")) for pair in
+           setting("REPAIRS", "unstack:unstack-raised stack:place-beside push-left:push-left-front").split()]
+REPAIRED = [to for _, to in REPAIRS]
 LEARN_STEPS = int(setting("LEARN_STEPS", "150000"))
 RQ1_STEPS = int(setting("RQ1_STEPS", "500000"))
 REPAIR_STEPS = int(setting("REPAIR_STEPS", "150000"))
@@ -141,7 +145,7 @@ class Run:
     command: list[str]
     copy_from: Path | None = None  # repair runs: the rq1 output directory holding the run to continue
     depends_on: str | None = None
-    result: dict = field(default_factory=dict)
+    repaired: str | None = None  # repair runs: the repaired skill
 
     @property
     def log(self) -> Path:
@@ -163,8 +167,8 @@ def condition_options(condition: str) -> list[str]:
     return CONDITION_OPTIONS[condition][0]
 
 
-def repair_difference() -> str:
-    """What REPAIR_TO changes relative to REPAIR_FROM, e.g. 'adds effect (raised ?o)'."""
+def repair_difference(repair_from: str, repair_to: str) -> str:
+    """What repair_to changes relative to repair_from, e.g. 'adds effect (raised ?o)'."""
     from cam.skills.registry import build_skill
 
     config = {"symbolic_action_model_format": "pddl"}
@@ -173,7 +177,7 @@ def repair_difference() -> str:
         return {f"precondition {'(not ' if p.negated else ''}{p.predicate}{')' if p.negated else ''}"
                 for p in model.preconditions} | {
                 f"effect {'(not ' if e.delete else ''}{e.predicate}{')' if e.delete else ''}" for e in model.effects}
-    before, after = literals(REPAIR_FROM), literals(REPAIR_TO)
+    before, after = literals(repair_from), literals(repair_to)
     changes = [f"adds {literal}" for literal in sorted(after - before)]
     changes += [f"removes {literal}" for literal in sorted(before - after)]
     return ", ".join(changes) or "no literal changes"
@@ -183,7 +187,7 @@ def build_plan() -> list[Run]:
     runs: list[Run] = []
     skill_list = ", ".join(BASE_SKILLS)
     if "learnability" in RUN_GROUPS:
-        for skill in dict.fromkeys(BASE_SKILLS + [REPAIR_TO]):
+        for skill in dict.fromkeys(BASE_SKILLS + REPAIRED):
             output = OUT / "learnability" / skill
             runs.append(Run(
                 label=f"learnability_{skill}", group="learnability", title=f"Learnability · {skill}",
@@ -194,8 +198,6 @@ def build_plan() -> list[Run]:
                 command=["main.py", "--skills", skill, "--operator-encoder", "multi-hot",
                          "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output)],
             ))
-    difference = repair_difference() if "repair" in RUN_GROUPS else ""
-    repaired_skills = [REPAIR_TO if skill == REPAIR_FROM else skill for skill in BASE_SKILLS]
     for seed in SEEDS:
         for condition in CONDITIONS:
             options = condition_options(condition)
@@ -213,28 +215,32 @@ def build_plan() -> list[Run]:
                     command=["main.py", "--skills", *BASE_SKILLS, *options, "--total-timesteps", str(RQ1_STEPS),
                              "--seed", str(seed), *COMMON, "--output-dir", str(rq1_output)],
                 ))
-            if "repair" in RUN_GROUPS:
+            if "repair" not in RUN_GROUPS:
+                continue
+            for repair_from, repair_to in REPAIRS:
+                difference = repair_difference(repair_from, repair_to)
+                skills = [repair_to if skill == repair_from else skill for skill in BASE_SKILLS]
                 variants = ["repair-visible"] + (["repair-hidden"] if condition in ALIAS_CONDITIONS else [])
                 for variant in variants:
-                    run_directory = OUT / "repair" / f"{condition}_{variant}_seed{seed}"
+                    run_directory = OUT / "repair" / repair_to / f"{condition}_{variant}_seed{seed}"
                     hidden = variant == "repair-hidden"
                     runs.append(Run(
-                        label=f"repair_{condition}_{variant}_seed{seed}", group="repair",
-                        title=f"Repair (RQ3) · {condition} · {variant} · seed {seed}",
-                        what=(f"continues the RQ1 {condition} policy with {REPAIR_FROM} replaced by {REPAIR_TO} "
-                              f"({difference}): evaluates {REPAIR_TO} zero-shot, then trains until it reaches the "
+                        label=f"repair_{repair_to}_{condition}_{variant}_seed{seed}", group="repair",
+                        title=f"Repair (RQ3) · {repair_from} -> {repair_to} · {condition} · {variant} · seed {seed}",
+                        what=(f"continues the RQ1 {condition} policy with {repair_from} replaced by {repair_to} "
+                              f"({difference}): evaluates {repair_to} zero-shot, then trains until it reaches the "
                               f"success threshold (at most {REPAIR_STEPS:,} steps)"),
-                        why=(f"control: {REPAIR_TO} gets exactly {REPAIR_FROM}'s embedding, so the policy cannot see "
+                        why=(f"control: {repair_to} gets exactly {repair_from}'s embedding, so the policy cannot see "
                              "the repair. If this succeeds zero-shot, the repair needs no new behaviour and the "
                              "repair test is invalid." if hidden else
                              f"RQ3: does {description} let the policy carry out the repaired operator zero-shot, "
                              "or learn it faster than the other conditions?"),
                         steps=REPAIR_STEPS, condition=condition, output=run_directory, copy_from=rq1_output,
-                        depends_on=rq1_label if "rq1" in RUN_GROUPS else None,
-                        command=["main.py", "--run-directory", str(run_directory), "--skills", *repaired_skills,
-                                 "--stop-skills", REPAIR_TO, "--total-timesteps", str(REPAIR_STEPS),
+                        depends_on=rq1_label if "rq1" in RUN_GROUPS else None, repaired=repair_to,
+                        command=["main.py", "--run-directory", str(run_directory), "--skills", *skills,
+                                 "--stop-skills", repair_to, "--total-timesteps", str(REPAIR_STEPS),
                                  "--device", DEVICE,
-                                 *(["--operator-identity-aliases", f"{REPAIR_TO}={REPAIR_FROM}"] if hidden else [])],
+                                 *(["--operator-identity-aliases", f"{repair_to}={repair_from}"] if hidden else [])],
                     ))
     return runs
 
@@ -268,7 +274,7 @@ def preflight(runs: list[Run]) -> None:
     say(f"  ✓ device: {device}" + (f" ({gpu})" if gpu else f" (torch {torch.__version__}; no CUDA GPU)"))
 
     uses_repair_skill = any(run.group in ("learnability", "repair") for run in runs)
-    skills = sorted(set(BASE_SKILLS) | ({REPAIR_TO} if uses_repair_skill else set()))
+    skills = sorted(set(BASE_SKILLS) | (set(REPAIRED) if uses_repair_skill else set()))
     if any(run.condition == "text" or run.condition.startswith("compositional") for run in runs):
         check_text_backend(skills)
     check_scripted_policies(skills)
@@ -464,8 +470,8 @@ class Runner:
         metrics = json.loads((run_directory / "metrics.json").read_text())
         summary = metrics["summary"]["deterministic"]
         if run.group == "repair":
-            values = summary.get(REPAIR_TO, {})
-            say(f"   result: {REPAIR_TO} zero-shot {values.get('zero_shot_success_rate')}, "
+            values = summary.get(run.repaired, {})
+            say(f"   result: {run.repaired} zero-shot {values.get('zero_shot_success_rate')}, "
                 f"steps to threshold {values.get('steps_to_threshold')}"
                 + (f"; stopped: {metrics['stop_reason']}" if metrics.get("stop_reason") else ""))
             return
@@ -515,7 +521,8 @@ def main() -> None:
     say(f"Overnight experiments · {datetime.now():%Y-%m-%d %H:%M} · groups: {', '.join(RUN_GROUPS)}")
     say(f"  base skills: {', '.join(BASE_SKILLS)}")
     if "repair" in RUN_GROUPS:
-        say(f"  repair: {REPAIR_FROM} -> {REPAIR_TO} ({repair_difference()})")
+        for repair_from, repair_to in REPAIRS:
+            say(f"  repair: {repair_from} -> {repair_to} ({repair_difference(repair_from, repair_to)})")
     runner.print_plan()
     if DRY_RUN:
         for run in runs:
