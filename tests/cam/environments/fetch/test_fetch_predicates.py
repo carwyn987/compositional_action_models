@@ -95,3 +95,22 @@ def test_dropped_means_let_go_in_the_air():
     assert not dropped(putdown, info(high, GRIPPING, high))  # still held
     assert not dropped(putdown, info(FAR, OPEN, [1.2, 0.6, TABLE_REST_Z + 0.01]))  # released just above the table
     assert not dropped(putdown, info(FAR, OPEN, ON_BLOCK1))  # resting on a block
+
+
+@pytest.mark.unit
+def test_regions_are_global_areas_of_the_table_and_push_goals_lie_inside_them():
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import REGION_CENTRE, push_goal
+    from cam.skills.registry import build_skill
+
+    centre = np.array([*REGION_CENTRE, TABLE_REST_Z])
+    left_front = centre + [-0.12, 0.12, 0.0]
+    result = facts(FAR, OPEN, left_front)
+    assert {fact("at-left", "block0"), fact("at-front", "block0")} <= result
+    assert not {fact("at-right", "block0"), fact("at-back", "block0")} & result
+    assert fact("at-left", "block0") not in facts(left_front + [0, 0, 0.05], GRIPPING, left_front + [0, 0, 0.05])  # held
+
+    state = FetchState(np.array(FAR), OPEN, {"block0": centre.copy(), "block1": BLOCK1})
+    diagonal = build_skill("push-left-front", {"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+    goal = push_goal(state, diagonal)
+    goal_state = FetchState(np.array(FAR), OPEN, {"block0": np.array([*goal, TABLE_REST_Z]), "block1": BLOCK1})
+    assert diagonal.effects_hold(FetchPredicateEvaluationWrapper.evaluate(goal_state))

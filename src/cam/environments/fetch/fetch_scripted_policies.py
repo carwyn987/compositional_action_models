@@ -10,7 +10,7 @@ info["environment_state"] (FetchState). Actions are
 import numpy as np
 
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
-from cam.environments.fetch.fetch_predicate_evaluation_wrapper import RAISED_HEIGHT, TABLE_REST_Z
+from cam.environments.fetch.fetch_predicate_evaluation_wrapper import RAISED_HEIGHT, TABLE_REST_Z, push_goal
 from cam.policies.policy import Policy
 
 OPEN, CLOSE = 1.0, -1.0
@@ -152,3 +152,56 @@ class FetchScriptedPlaceBesidePolicy(FetchScriptedStackPolicy):
             side = 1.0 if block[0] >= base[0] else -1.0
             self.spot = np.array([base[0] + side * self.SPACING, base[1], TABLE_REST_Z])
         return self.spot
+
+
+class FetchScriptedPushPolicy(Policy):
+    """Push the block (first argument) along the table to its goal (push_goal: a region, or beside the second
+    argument): move above a point behind the block (opposite the goal), lower to the block's height with the
+    gripper closed, then push toward the goal and stop there. A goal that differs along both axes (the
+    diagonal) is reached in two straight pushes, x then y: pushing a cube diagonally hits a corner and spins it."""
+
+    BEHIND = BLOCK_HALF_SIZE + 0.03  # gripper centre this far behind the block centre while pushing
+    HOVER = 0.08
+    REACHED_TOLERANCE = 0.01
+    LEG_DONE = 0.025  # block within this of a leg's goal along the leg (goals are 3 cm inside their region)
+
+    def reset(self) -> None:
+        self.legs: list[np.ndarray] | None = None
+
+    def __call__(self, obs, info, grounded_action_model) -> np.ndarray:
+        state = info["environment_state"]
+        gripper = state.gripper_position
+        block = state.block_positions[grounded_action_model.arguments[0]]
+        if self.legs is None:  # fixed for the episode
+            goal = push_goal(state, grounded_action_model)
+            corner = np.array([goal[0], block[1]])
+            two_axes = abs(goal[0] - block[0]) > 0.02 and abs(goal[1] - block[1]) > 0.02
+            self.legs = [corner, goal] if two_axes else [goal]
+            self.start_leg()
+        goal = self.legs[0]
+        if self.direction is None:
+            offset = goal - block[:2]
+            self.direction = offset / max(np.linalg.norm(offset), 1e-6)
+        if len(self.legs) > 1 and np.dot(goal - block[:2], self.direction) < self.LEG_DONE:  # leg done
+            self.legs.pop(0)
+            self.start_leg()
+            goal = self.legs[0]
+            offset = goal - block[:2]
+            self.direction = offset / max(np.linalg.norm(offset), 1e-6)
+        behind = np.array([*(block[:2] - self.BEHIND * self.direction), block[2]])
+        if self.phase == "approach":
+            target = behind + [0.0, 0.0, self.HOVER]
+            if np.linalg.norm(gripper - target) < self.REACHED_TOLERANCE:
+                self.phase = "descend"
+        if self.phase == "descend":
+            target = behind
+            if np.linalg.norm(gripper - target) < self.REACHED_TOLERANCE:
+                self.phase = "push"
+        if self.phase == "push":  # along the push: stop behind the goal; across it: follow the block's centre
+            across = np.array([-self.direction[1], self.direction[0]])
+            target_xy = goal - self.BEHIND * self.direction + across * np.dot(block[:2] - goal, across)
+            target = np.array([*target_xy, block[2]])
+        return servo(gripper, target, CLOSE)
+
+    def start_leg(self) -> None:
+        self.phase, self.direction = "approach", None

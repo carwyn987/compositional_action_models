@@ -58,3 +58,36 @@ class PlaceBesideSkill(Skill):
 
     name = "place-beside"
     setup_skills = ("pickup",)
+
+
+
+# Pushes along the table into global regions (at-left / at-right / at-front / at-back: 10 cm from the centre of
+# the reset area) or next to another block, starting with the gripper empty and the block on the table.
+
+
+class PushLeftSkill(Skill):
+    name = "push-left"
+
+
+class PushRightSkill(Skill):
+    name = "push-right"
+
+
+class PushFrontSkill(Skill):
+    name = "push-front"
+
+
+class PushBackSkill(Skill):
+    name = "push-back"
+
+
+class PushLeftFrontSkill(Skill):
+    """push-left + effect (at-front ?o): the diagonal, combining two pushes' goals (held out for testing)."""
+
+    name = "push-left-front"
+
+
+class PushBesideSkill(Skill):
+    """Push block ?o along the table until it is beside block ?u (teaches beside without carrying)."""
+
+    name = "push-beside"

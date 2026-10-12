@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
         "vector; with multi-hot, a learnable compositional (sum) embedding",
     )
     training.add_argument(
-        "--operator-embedding-dim", type=int, default=128,
+        "--operator-embedding-dim", type=int, default=256,
         help="size of the operator embedding, shared by all embedding methods so conditions are comparable "
         "(one-hot and multi-hot are zero-padded to it)",
     )

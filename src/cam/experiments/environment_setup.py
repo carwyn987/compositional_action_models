@@ -19,6 +19,7 @@ from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
     FetchScriptedPickupRaisedPolicy,
     FetchScriptedPlaceBesidePolicy,
+    FetchScriptedPushPolicy,
     FetchScriptedPutdownPolicy,
     FetchScriptedStackPolicy,
 )
@@ -115,6 +116,12 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
         "pickup-raised": FetchScriptedPickupRaisedPolicy(),
         "unstack-raised": FetchScriptedPickupRaisedPolicy(),
         "place-beside": FetchScriptedPlaceBesidePolicy(),
+        "push-left": FetchScriptedPushPolicy(),
+        "push-right": FetchScriptedPushPolicy(),
+        "push-front": FetchScriptedPushPolicy(),
+        "push-back": FetchScriptedPushPolicy(),
+        "push-left-front": FetchScriptedPushPolicy(),
+        "push-beside": FetchScriptedPushPolicy(),
     }
     reward_functions = (
         {name: reward_class() for name, reward_class in FETCH_SHAPED_REWARDS.items()}

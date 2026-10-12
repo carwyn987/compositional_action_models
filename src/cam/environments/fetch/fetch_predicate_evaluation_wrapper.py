@@ -31,6 +31,7 @@ OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper grips not
 # --success-hold-steps, so raised is never satisfied by one upward burst.
 RAISED_HEIGHT = 0.30
 BESIDE_DISTANCE = (0.055, 0.10)  # centre-to-centre distance range for two blocks side by side on the table
+BESIDE_SPACING = float(np.mean(BESIDE_DISTANCE))  # the middle of that range, where placing / pushing aims
 
 # A block is *supported* when it rests on the table or on another block (on-table, on), and *gripped*
 # when the closed fingers are around it. Holding needs both gripped and lifted off its support, so
@@ -91,6 +92,58 @@ def beside(state: FetchState, block: str, other: str) -> bool:
     )
 
 
+# Global table regions, so pushes have fixed goals (no relative predicates): a block resting on the table
+# at least REGION_DISTANCE from the centre of the reset area (where blocks are placed, around the gripper's
+# start), in one direction. Robot frame: front is toward the robot (smaller x), left is +y.
+REGION_CENTRE = (1.34, 0.75)
+REGION_DISTANCE = 0.10
+REGIONS = {  # name -> (axis, sign)
+    "at-left": (1, +1), "at-right": (1, -1), "at-back": (0, +1), "at-front": (0, -1),
+}
+
+
+def in_region(state: FetchState, block: str, region: str) -> bool:
+    axis, sign = REGIONS[region]
+    position = state.block_positions[block]
+    return on_table(state, block) and sign * (position[axis] - REGION_CENTRE[axis]) >= REGION_DISTANCE
+
+
+def at_left(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-left")
+
+
+def at_right(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-right")
+
+
+def at_front(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-front")
+
+
+def at_back(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-back")
+
+
+def push_goal(state: FetchState, grounded_action_model) -> np.ndarray:
+    """Where a push should bring the moved block (first argument), from its effects: 3 cm inside each region
+    it must reach (other coordinates unchanged), or SPACING from ?u (second argument) for (beside ?o ?u).
+    Shared by the scripted push policy and the push reward."""
+    block = grounded_action_model.arguments[0]
+    goal = state.block_positions[block][:2].astype(np.float64).copy()
+    for effect in grounded_action_model.effects:
+        if effect.delete:
+            continue
+        name = effect.predicate.name
+        if name in REGIONS:
+            axis, sign = REGIONS[name]
+            goal[axis] = REGION_CENTRE[axis] + sign * (REGION_DISTANCE + 0.03)
+        elif name == "beside":
+            other = state.block_positions[grounded_action_model.arguments[1]][:2]
+            away = goal - other
+            goal = other + BESIDE_SPACING * away / max(np.linalg.norm(away), 1e-6)
+    return goal
+
+
 def gripper_empty(state: FetchState) -> bool:
     """The fingers are around no block (open, or closed on nothing)."""
     return not any(gripping(state, block) for block in state.block_positions)
@@ -104,6 +157,10 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
     "gripper-empty": gripper_empty,
     "raised": raised,
     "beside": beside,
+    "at-left": at_left,
+    "at-right": at_right,
+    "at-front": at_front,
+    "at-back": at_back,
 }
 
 DROP_HEIGHT = 0.02  # a block let go higher than this above its support was dropped, not placed

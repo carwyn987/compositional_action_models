@@ -4,6 +4,12 @@ from cam.skills.blocksworld_skills import (
     PickupRaisedSkill,
     PickupSkill,
     PlaceBesideSkill,
+    PushBackSkill,
+    PushBesideSkill,
+    PushFrontSkill,
+    PushLeftFrontSkill,
+    PushLeftSkill,
+    PushRightSkill,
     PutdownSkill,
     StackSkill,
     UnstackRaisedSkill,
@@ -19,6 +25,12 @@ SKILL_REGISTRY: dict[str, type[Skill]] = {
     PickupRaisedSkill.name: PickupRaisedSkill,
     UnstackRaisedSkill.name: UnstackRaisedSkill,
     PlaceBesideSkill.name: PlaceBesideSkill,
+    PushLeftSkill.name: PushLeftSkill,
+    PushRightSkill.name: PushRightSkill,
+    PushFrontSkill.name: PushFrontSkill,
+    PushBackSkill.name: PushBackSkill,
+    PushLeftFrontSkill.name: PushLeftFrontSkill,
+    PushBesideSkill.name: PushBesideSkill,
 }
 
 
