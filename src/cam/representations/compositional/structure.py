@@ -68,20 +68,21 @@ class StructuredOperatorEncoder(OperatorEncoder):
 
         (:action pickup :parameters (?o - block)
          :precondition (and (on-table ?o) (clear ?o) (gripper-empty))
-         :effect (and (holding ?o) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))
+         :effect (and (holding ?o) (not (raised ?o)) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))
 
         part 1: one entry per parameter, the parameter's object type (?o - block -> block = 1)
             [1, 0, 0]                   ?o is a block; no 2nd or 3rd parameter
         part 2: one row per literal: [what it is, which predicate, its arguments (A of them)]
              kind  predicate     arguments
-            [3,    2,            1, 0, 0, 0]   precondition  (clear ?o)
-            [3,    3,            0, 0, 0, 0]   precondition  (gripper-empty)
-            [3,    6,            1, 0, 0, 0]   precondition  (on-table ?o)
-            [5,    4,            1, 0, 0, 0]   add           (holding ?o)
-            [6,    2,            1, 0, 0, 0]   delete        (clear ?o)
-            [6,    3,            0, 0, 0, 0]   delete        (gripper-empty)
-            [6,    6,            1, 0, 0, 0]   delete        (on-table ?o)
-            [0,    0,            0, 0, 0, 0]   x 9 unused rows (EMPTY)
+            [3,    6,            1, 0, 0, 0]   precondition  (clear ?o)
+            [3,    7,            0, 0, 0, 0]   precondition  (gripper-empty)
+            [3,    10,           1, 0, 0, 0]   precondition  (on-table ?o)
+            [5,    8,            1, 0, 0, 0]   add           (holding ?o)
+            [6,    6,            1, 0, 0, 0]   delete        (clear ?o)
+            [6,    7,            0, 0, 0, 0]   delete        (gripper-empty)
+            [6,    10,           1, 0, 0, 0]   delete        (on-table ?o)
+            [6,    11,           1, 0, 0, 0]   delete        (raised ?o)
+            [0,    0,            0, 0, 0, 0]   x 8 unused rows (EMPTY)
         part 3: the operator name's text embedding (name_dim numbers; absent when name_dim = 0)
 
     Reading a literal row:
@@ -89,7 +90,8 @@ class StructuredOperatorEncoder(OperatorEncoder):
                     DELETE 6 (EMPTY 0 for an unused row; NAME 1 and PARAMETER 2 are never in a row, they
                     are used by the architectures for the name and parameter components)
         predicate   which predicate: its index in layout.predicates + 1
-                    (beside 1, clear 2, gripper-empty 3, holding 4, on 5, on-table 6, raised 7)
+                    (at-back 1, at-front 2, at-left 3, at-right 4, beside 5, clear 6, gripper-empty 7,
+                    holding 8, on 9, on-table 10, raised 11)
         arguments   each argument's parameter position + 1 (?o, the 1st parameter -> 1), then 0s up to A.
                     (on ?a ?b) would be [1, 2, 0, 0] and (on ?b ?a) [2, 1, 0, 0]
     "Type" in part 1 is the PDDL object type of each parameter (the `- block` in `?o - block`): its index

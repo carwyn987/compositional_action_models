@@ -1,7 +1,7 @@
 # Project status and fixes
 
-State of the code, what the experiments so far show, and what to change next. Written 2026-10-11 on
-branch `repair-experiments` (PR #7). Each section says what is done and what is still open.
+State of the code, what the experiments so far show, and what to change next. Written 2026-10-11,
+updated on branch `rq-fixes`. Each section says what is done and what is still open.
 
 ## 1. Compositional embedding magnitude growth
 
@@ -22,7 +22,7 @@ constant, so a step changes the normalized output less as the weights grow. The 
 slowly late in training. An earlier note said "1000× slower": that overstates it. The slowdown is set by
 each layer's weight growth, not by the full output growth, and hasn't been measured.
 
-**Fixes** (none implemented yet):
+**Fixes** (A is implemented: `--composition-weight-decay`, default 0.01):
 
 | fix | how it works | trade-off |
 | --- | --- | --- |
@@ -33,7 +33,7 @@ each layer's weight growth, not by the full output growth, and hasn't been measu
 | E. Norm-aware optimizer (LAMB/LARS) | step size proportional to ‖w‖ | treats the symptom; a different optimizer for one module |
 | F. Penalty on the raw magnitude | a backward hook adds the gradient of λ(‖raw‖ − 1)² | direct, but hacky inside Stable-Baselines3's losses |
 
-**File changes for A:**
+**File changes for A** (done):
 - `src/cam/training/stable_baselines3_trainer.py`: add `CompositionWeightDecayCallback(weight_decay)`.
   On each step it reads how many gradient updates happened since the last call (`model._n_updates`) and
   multiplies every parameter under each features extractor's `.composition` by (1 − lr·wd)^updates.
@@ -74,30 +74,37 @@ centre at z = 0.425, and a block stacked on another has its centre at 0.475.
 | `on(b, c)` | b rests on c: within half a block horizontally, one block height above it |
 | `clear(b)` | nothing on b and not held |
 | `gripper-empty` | no block gripped (fingers open, or closed on nothing) |
-| `raised(b)` | held, centre at least `RAISED_HEIGHT` = **0.20** above table rest (15 cm above a stacked start) |
+| `raised(b)` | held, centre at least `RAISED_HEIGHT` = **0.30** above table rest (25 cm above a stacked start) |
 | `beside(b, c)` | both on the table, centres 5.5–10 cm apart (reset places blocks ≥ 10 cm apart) |
+| `at-left/right/front/back(b)` | on the table, ≥ 10 cm from the centre of the reset area (1.34, 0.75) in that direction (front = toward the robot) |
 
 Grasping skills succeed only once the block is lifted, and placing skills only once it is released.
+Success is **settled**: the effects must hold for `--success-hold-steps` (default 5) consecutive steps. A
+placing skill **fails** if its block is let go in the air (`dropped`: more than 2 cm above the table, not on
+a block).
 
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 
 | skill | operator | setup chain | scripted policy | shaped reward |
 | --- | --- | --- | --- | --- |
-| pickup(?o) | classic blocksworld | – | approach, descend, close, lift | staged pickup |
-| putdown(?o) | classic | pickup | lower, open | staged putdown (gentle, square, smoothness) |
-| stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack |
-| unstack(?o ?u) | classic | pickup, stack | pickup motion | pickup's stages, lift from the block below |
-| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 23 cm | pickup's stages, lift target 21 cm |
-| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 23 cm | unstack's stages, lift target 16 cm above the base rest |
-| place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u | stack's stages, target ring around ?u |
+| pickup(?o) | classic blocksworld + `(not (raised ?o))` (hold it low) | – | approach, descend, close, lift | staged pickup |
+| putdown(?o) | classic | **pickup-raised** (starts 30 cm up) | lower, open | staged putdown (gentle, square, smoothness, jerk) |
+| stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack (+ smoothness, jerk) |
+| unstack(?o ?u) | classic + `(not (raised ?o))` | pickup, stack | pickup motion | pickup's stages, lift from the block below |
+| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift target 31 cm |
+| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift target 26 cm above the base rest |
+| place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u along x | stack's stages, target ring around ?u |
+| push-left/right/front/back(?o) | pre `(not (at-X ?o))`, eff `(at-X ?o)` | – | behind the block, lower, push | reach behind, push progress |
+| push-left-front(?o) | push-left + `(at-front ?o)` (held out) | – | two straight pushes | as push |
+| push-beside(?o ?u) | pre `(not (beside ?o ?u))`, eff `(beside ?o ?u)` | – | push toward ?u | as push |
 
-Every scripted policy succeeds 10/10 with 2 and 3 blocks, and earns every reward stage.
+Every scripted policy succeeds with 5-step settled success: the pick/place skills 10/10 and the pushes 18–20/20
+(with 3 blocks, another block sometimes lies on a straight push path), with 2 and 3 blocks.
 
 ### Operator embedding conditions (`--operator-encoder`)
 - **Identity only:** one-hot (indexed by registry order, so indices don't depend on the training
   skills); random (a fixed vector per name).
-- **Structure, nothing learned:** multi-hot (literal features, 128 = exactly `--operator-embedding-dim`,
-  so it is full); text (a paragraph or the PDDL, embedded by OpenAI `text-embedding-3-small` or the
+- **Structure, nothing learned:** multi-hot (literal features: 192 of `--operator-embedding-dim` 256); text (a paragraph or the PDDL, embedded by OpenAI `text-embedding-3-small` or the
   offline mock, which only matches shared character snippets).
 - **Learned:** `--trainable-operator-embedding` (a learnable linear layer on top); compositional
   (tree / slots / geometric, composed inside the policy and normalized to magnitude 1).
@@ -124,7 +131,9 @@ Evaluated every `--eval-interval` steps with `--eval-episodes` per skill, determ
   - pre-flight (fail fast): text backend usable, with every text embedded and cached (default
     `TEXT_BACKEND=openai`); device; scripted policies; disk space;
   - Ctrl+C saves and stops, and the same command resumes;
-  - groups learnability, rq1 and repair (repair-visible / repair-hidden);
+  - groups learnability, rq1 and repair (repair-visible / repair-hidden), with a list of repair pairs
+    (`REPAIRS`, default `unstack:unstack-raised stack:place-beside push-left:push-left-front`);
+  - repaired skills are evaluated every 5k steps (`--stop-eval-interval`);
   - conditions by default: one-hot, random, multi-hot-trainable, text, compositional tree / slots /
     geometric.
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training
@@ -166,69 +175,46 @@ normalization.
   pickup-raised teaches it to keep lifting. Repair runs also evaluated only every 50k steps, so
   steps-to-threshold could not separate conditions.
 
-## 4. Changes since that run (this branch)
-- `RAISED_HEIGHT` 0.10 → **0.20**: 15 cm of lift from a stacked start. The scripted unstack-raised now
-  takes 30 steps against unstack's 25. There's a new scripted policy for the raised variants and a new
-  unstack-raised reward target.
-- **Sequential overnight runner** with descriptive output, pre-flight checks and resume
-  (`scripts/overnight_runs.py`, replacing `overnight_runs.sh`). `start_overnight.sh` runs it in the
-  foreground.
-- **`TEXT_BACKEND=openai` by default,** checked before anything long starts. The mock is opt-in.
-- **compositional-geometric** added to the default conditions.
-- **Repair variants renamed:** new-name → **repair-visible**, same-name → **repair-hidden**.
-- **Invalid-repair flag** in the review report.
-- **`--device` option** for training.
+## 4. Changes since that run
+On `repair-experiments` (merged in PR #7):
+- `raised` raised to 20 cm; a sequential overnight runner with pre-flight checks (OpenAI text by
+  default) and resume; compositional-geometric in the default conditions; repair variants renamed
+  repair-visible / repair-hidden; an invalid-repair flag in the review report; `--device`.
+
+On `rq-fixes`:
+- **Settled success** (`--success-hold-steps 5`).
+- **Hold low unless asked:** pickup and unstack get `(not (raised ?o))`, and `raised` is now 30 cm.
+- **Non-trivial putdown:** set up by pickup-raised; a drop is a failure; smoothness and jerk penalties in
+  putdown and stack.
+- **Composition weight decay** (`--composition-weight-decay 0.01`).
+- **Repair resolution:** stop skills are evaluated every 5k steps, with no redundant evaluation after a
+  stop.
+- **Global regions and push skills,** with `push-beside`; `--operator-embedding-dim` 256.
+- **Runner:** a list of repair pairs; the pushes are in the default training skills.
 
 ## 5. Known issues and planned fixes
+Done on `rq-fixes`: putdown non-triviality, settled success, raised reached by overshoot, repair
+resolution, held-out operators with literals seen in training, several repair pairs, and the redundant
+evaluation. Still open:
 
-1. **Sequential runtime.** The default plan (23 runs: 7 learnability, 7 RQ1, 9 repair) adds up to about
-   6M SAC steps. At single-process CPU speeds (about 40 steps/s, 18–24 for compositional) that's **about
-   53 hours**. A GPU may help, unmeasured. Options:
+1. **Sequential runtime.** The default plan is 47 runs: 13 learnability; 7 RQ1 on 10 skills; 27 repair
+   (3 pairs × 7 conditions, plus 2 repair-hidden per pair). At single-process CPU speeds that's about
+   **83 hours**. A GPU may help, unmeasured. Options:
    - fewer conditions or steps per night (`CONDITIONS`, `*_STEPS`);
-   - split groups across nights (`RUN_GROUPS`);
-   - bring back parallel jobs on many-core CPUs. The parallel bash runner is in git history at
-     `d6c7c0d3:scripts/overnight_runs.sh`.
-
-   The runner prints a refined estimate after every run.
-2. **Putdown is trivial.** Setup's pickup lifts the block about 1 cm, so it lands on the table as soon as
-   the gripper loosens. Fixes:
-   - set it up with `pickup-raised`, so it starts 20 cm up: `PutdownSkill.setup_skills`;
-   - make a drop a failure: end the episode unsuccessfully if the moved block is released more than 2 cm
-     above its support (`SkillEnvironment.step`, a per-skill failure check);
-   - smoothness (change between consecutive actions) and block jerk (second difference of the block's
-     velocity) in every placing reward: stack and place-beside, not just putdown.
-3. **Success counts the first step the effects hold.** A skill never learns to *stop* in its goal state,
-   and overshooting is free. Fix: settled success, where effects must hold for k (≈5) consecutive steps:
-   `--success-hold-steps` in `SkillEnvironment`.
-4. **Raised may still be reached by overshoot.** Without a reason to hold a block low, a policy that keeps
-   lifting satisfies `raised` anyway. Fix (with 3): pickup and unstack get the delete effect
-   `(not (raised ?o))`, so they must hold the block low. Identity-based policies then learn "low" for
-   unstack and fail unstack-raised, while structure-reading policies have seen `raised` in pickup-raised.
-   Check with the repair-hidden control: it should be near 0.
-5. **Repair resolution.** Evaluate the repaired skill every 5k steps (other skills every 50k):
-   `MetricsCallback` with a `--stop-eval-interval` option.
-6. **One seed.** Use 3+ seeds before ranking conditions.
-7. **Repair tests need held-out operators whose literals were all seen in training.** Planned:
-   - **global table regions** `at-left/right/front/back` (about 10 cm from the table centre, no relative
-     predicates);
-   - push skills `push-left/right/front/back(?o)` with precondition `(not (at-X ?o))`, plus
-     `push-beside(?o ?u)` so `beside` is learned in training;
-   - **tests:** `push-left` → `push-left-front` (the diagonal), `stack` → `place-beside` (stack's motion
-     plus push-beside's relation), `unstack` → `unstack-raised`;
-   - the multi-hot vocabulary then exceeds 128, so `--operator-embedding-dim` becomes 256;
-   - pushing is harder for SAC than pick-and-place, so the learnability group checks it first; the
-     fallback is pick-and-place "place-in-region" skills.
-8. **Repairs are single changes.** `REPAIR_FROM`/`REPAIR_TO` hold one pair. Change them to a list of pairs
-   in `overnight_runs.py`.
-9. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; it's about 1 GB per
-   run). Repair runs therefore start fresh, the same for every condition. `--save-replay-buffer` exists if
-   wanted.
-10. **A redundant evaluation:** a repair run that is already at threshold evaluates again one step after
-    its zero-shot evaluation (500,000 and 500,001). Harmless, but it duplicates a curve point.
-11. **Old runs don't resume:** the predicates added since then shift multi-hot features and compositional
-    ids, and one-hot uses registry order.
-12. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
-    them, so keep them, or switch it to a lighter progress source.
+   - groups split across nights (`RUN_GROUPS`);
+   - parallel jobs on many-core CPUs (the parallel bash runner is in git history,
+     `d6c7c0d3:scripts/overnight_runs.sh`).
+2. **The RQ1 budget.** 500k steps for 10 skills is about 50k per skill. Learnability shows single skills
+   need 50–150k, so expect partial learning. Consider `RQ1_STEPS=1000000` once runtime allows.
+3. **One seed.** Use 3+ seeds before ranking conditions.
+4. **`stack` → `place-beside` is a larger edit** than the other repairs: a parameter's role, the
+   preconditions and several effects change. Treat it as a new-skill test more than a one-literal repair.
+5. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; about 1 GB per run).
+   Repair runs start fresh, the same for every condition.
+6. **Old runs don't resume:** the predicate set changed again (regions), so multi-hot features,
+   compositional ids and the embedding size (256) differ.
+7. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
+   them.
 
 ## 6. Future work
 - **RQ2 (new skills):** the protocol from `docs/research_focus.md`: add skills one at a time to a

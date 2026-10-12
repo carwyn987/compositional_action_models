@@ -2,7 +2,7 @@
 
 How a PDDL operator becomes `obs["operator_embedding"]`, and how the policy turns that into the operator
 part of its features, for every `--operator-encoder`. Each box names a class and shows its output for
-the pickup operator below, computed with the default settings (`--operator-embedding-dim 128`,
+the pickup operator below, computed with the default settings (`--operator-embedding-dim 256`,
 `--max-operator-arity 3`, `--max-operator-literals 16`, `--max-predicate-arity 4`,
 `--component-embedding-dim 32`, `--seed 0`). See `docs/policy_inputs.md` for the full observation.
 
@@ -10,7 +10,7 @@ the pickup operator below, computed with the default settings (`--operator-embed
 (:action pickup
     :parameters (?o - block)
     :precondition (and (on-table ?o) (clear ?o) (gripper-empty))
-    :effect (and (holding ?o) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))
+    :effect (and (holding ?o) (not (raised ?o)) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))
 ```
 
 Two places do the work. In the environment, `PolicyObservationWrapper` calls an `OperatorEncoder` once
@@ -22,26 +22,26 @@ trainable parameters, so only that half changes during training.
 
 ```mermaid
 flowchart TB
-    op["PDDLOperator (a SymbolicActionModel)<br/>pickup(?o - block)<br/>pre: on-table ?o, clear ?o, gripper-empty<br/>eff: holding ?o, not on-table ?o, not clear ?o, not gripper-empty"]
+    op["PDDLOperator (a SymbolicActionModel)<br/>pickup(?o - block)<br/>pre: on-table ?o, clear ?o, gripper-empty<br/>eff: holding ?o, not raised ?o, not on-table ?o,<br/>not clear ?o, not gripper-empty"]
 
     subgraph env["Environment side: OperatorEncoder.encode(operator), once per operator (PolicyObservationWrapper)"]
         direction TB
         onehot["OneHotOperatorEncoder<br/>index of the name among every registered skill<br/>[1, 0, 0, ...] (pickup 0, putdown 1, stack 2, ...)"]
-        multihot["PDDLMultiHotOperatorEncoder<br/>1 per literal feature, parameters by position<br/>14 of 128 features set: (precondition, on-table, (0,)),<br/>(precondition, on-table), ..., (delete, gripper-empty)"]
-        pad["PaddedOperatorEncoder<br/>zeros appended up to 128<br/>one-hot: [1, 0, 0, ... 0]<br/>multi-hot: 1 at 13, 14, 39, 40, ... 121; norm 3.74"]
+        multihot["PDDLMultiHotOperatorEncoder<br/>1 per literal feature, parameters by position<br/>16 of 192 features set: (precondition, on-table, (0,)),<br/>(precondition, on-table), ..., (delete, gripper-empty)"]
+        pad["PaddedOperatorEncoder<br/>zeros appended up to 256<br/>one-hot: [1, 0, 0, ... 0]<br/>multi-hot: 1 at 29, 30, 71, 72, ... 185; norm 4"]
         random["RandomOperatorEncoder<br/>random unit vector seeded by SHA-256(seed:name)<br/>[0.02, -0.11, -0.02, 0.01, -0.05, ...]; norm 1"]
         paragraph["operator_paragraph / to_pddl<br/>Action pickup with parameters ?o (block).<br/>It can be applied when (on-table ?o), (clear ?o)<br/>and (gripper-empty) hold. Afterwards ..."]
         text["TextOperatorEncoder + TextEmbeddingBackend<br/>(MockTextBackend or OpenAIBackend, via CachedTextBackend)<br/>[0.10, -0.05, -0.10, -0.05, 0.00, ...]; norm 1"]
-        structured["StructuredOperatorEncoder (OperatorLayout)<br/>structure array of ids, not an embedding<br/>[1, 0, 0 | 3,1,1,0,0,0 | 3,2,0,0,0,0 | ... | name text]<br/>size 131 (see the compositional diagram)"]
+        structured["StructuredOperatorEncoder (OperatorLayout)<br/>structure array of ids, not an embedding<br/>[1, 0, 0 | 3,6,1,0,0,0 | 3,7,0,0,0,0 | ... | name text]<br/>size 131 (see the compositional diagram)"]
     end
 
-    obs[/"obs['operator_embedding']<br/>float32 vector: 128 for one-hot, multi-hot, random, text;<br/>131 (the structure array) for compositional"/]
+    obs[/"obs['operator_embedding']<br/>float32 vector: 256 for one-hot, multi-hot, random, text;<br/>131 (the structure array) for compositional"/]
 
     subgraph pol["Policy side: features extractor, trained with the RL losses"]
         direction TB
         default["Stable-Baselines3 default extractor<br/>passes the vector through unchanged"]
-        trainable["TrainableOperatorEmbeddingExtractor<br/>(--trainable-operator-embedding)<br/>W @ vector, W 128 x 128 starting at the identity"]
-        compositional["CompositionalPolicyFeaturesExtractor<br/>unpack, compose, normalize<br/>128 values, zero mean, norm 1"]
+        trainable["TrainableOperatorEmbeddingExtractor<br/>(--trainable-operator-embedding)<br/>W @ vector, W 256 x 256 starting at the identity"]
+        compositional["CompositionalPolicyFeaturesExtractor<br/>unpack, compose, normalize<br/>256 values, zero mean, norm 1"]
     end
 
     features[/"features = [grounding, observation, operator part]<br/>input to the policy and value MLPs"/]
@@ -83,25 +83,25 @@ structure (`StructuredOperatorEncoder`), and the embedding is composed from it i
 
 ```mermaid
 flowchart TB
-    config["OperatorLayout.from_predicate_arities(...)<br/>the array's vocabularies and sizes<br/>predicates: beside 1, clear 2, gripper-empty 3, holding 4,<br/>on 5, on-table 6, raised 7 (0 = none)<br/>types: block 1 (0 = none)<br/>P = 3 parameters, L = 16 literals, A = 4 arguments, D = 32 name dims<br/>size = P + L x (2 + A) + D = 3 + 96 + 32 = 131"]
+    config["OperatorLayout.from_predicate_arities(...)<br/>the array's vocabularies and sizes<br/>predicates: at-back 1, at-front 2, at-left 3, at-right 4, beside 5,<br/>clear 6, gripper-empty 7, holding 8, on 9, on-table 10, raised 11 (0 = none)<br/>types: block 1 (0 = none)<br/>P = 3 parameters, L = 16 literals, A = 4 arguments, D = 32 name dims<br/>size = P + L x (2 + A) + D = 3 + 96 + 32 = 131"]
 
-    op["PDDLOperator pickup<br/>(?o - block): pre on-table ?o, clear ?o, gripper-empty;<br/>eff holding ?o, not on-table ?o, not clear ?o, not gripper-empty"]
+    op["PDDLOperator pickup<br/>(?o - block): pre on-table ?o, clear ?o, gripper-empty;<br/>eff holding ?o, not raised ?o, not on-table ?o, not clear ?o, not gripper-empty"]
 
     subgraph env["Environment side: serializing the operator (structure.py)"]
         direction TB
         encoder["StructuredOperatorEncoder.encode<br/>1. variables -> parameter position + 1 (?o -> 1)<br/>2. each literal -> (kind, predicate id, argument refs)<br/>3. rows sorted, so literal order does not matter"]
-        array[/"structure array, 131 floats = obs['operator_embedding']<br/>types   [1, 0, 0]<br/>rows    [3 2 1 0 0 0]  pre clear ?o<br/>        [3 3 0 0 0 0]  pre gripper-empty<br/>        [3 6 1 0 0 0]  pre on-table ?o<br/>        [5 4 1 0 0 0]  add holding ?o<br/>        [6 2 1 0 0 0]  del clear ?o<br/>        [6 3 0 0 0 0]  del gripper-empty<br/>        [6 6 1 0 0 0]  del on-table ?o<br/>        9 rows of 0 (EMPTY)<br/>name    32 dims, text embedding of 'pickup'<br/>kinds: EMPTY 0, NAME 1, PARAMETER 2, PRECONDITION 3,<br/>NEGATED_PRECONDITION 4, ADD 5, DELETE 6"/]
+        array[/"structure array, 131 floats = obs['operator_embedding']<br/>types   [1, 0, 0]<br/>rows    [3 6 1 0 0 0]  pre clear ?o<br/>        [3 7 0 0 0 0]  pre gripper-empty<br/>        [3 10 1 0 0 0]  pre on-table ?o<br/>        [5 8 1 0 0 0]  add holding ?o<br/>        [6 6 1 0 0 0]  del clear ?o<br/>        [6 7 0 0 0 0]  del gripper-empty<br/>        [6 10 1 0 0 0]  del on-table ?o<br/>        [6 11 1 0 0 0]  del raised ?o<br/>        8 rows of 0 (EMPTY)<br/>name    32 dims, text embedding of 'pickup'<br/>kinds: EMPTY 0, NAME 1, PARAMETER 2, PRECONDITION 3,<br/>NEGATED_PRECONDITION 4, ADD 5, DELETE 6"/]
     end
 
     subgraph pol["Policy side: composing the embedding (CompositionalPolicyFeaturesExtractor, extractor.py)"]
         direction TB
-        unpack["unpack(structure, layout) -> OperatorParts<br/>types (B, 3): [1, 0, 0]<br/>kinds (B, 16): [3, 3, 3, 5, 6, 6, 6, 0, ...]<br/>predicates (B, 16): [2, 3, 6, 4, 2, 3, 6, 0, ...]<br/>arguments (B, 16, 4): [[1,0,0,0], [0,0,0,0], ...]<br/>name (B, 32)"]
+        unpack["unpack(structure, layout) -> OperatorParts<br/>types (B, 3): [1, 0, 0]<br/>kinds (B, 16): [3, 3, 3, 5, 6, 6, 6, 6, 0, ...]<br/>predicates (B, 16): [6, 7, 10, 8, 6, 7, 10, 11, 0, ...]<br/>arguments (B, 16, 4): [[1,0,0,0], [0,0,0,0], ...]<br/>name (B, 32)"]
         components["ComponentEmbeddings (components.py), each in R^32<br/>typed variable: TYPED(variable_embedding[0], type_embedding[block])<br/>literal: LITERAL(predicate_embedding[on-table], typed ?o, 0, 0, 0)<br/>name: Linear(name text)<br/>padding (EMPTY) components are exactly 0 and masked out"]
-        tree["TreeComposition (tree.py)<br/>OPERATOR(NAME, PARAMETERS{?o},<br/>PRE(AND{clear, gripper-empty, on-table}),<br/>EFF(AND{holding, NOT clear, NOT gripper-empty, NOT on-table}))"]
-        slots["SlotComposition (slots.py)<br/>9 real tokens (name, ?o, 7 literals; padding masked) + kind embeddings<br/>-> SlotAttention -> 4 slots x 32 -> Linear"]
+        tree["TreeComposition (tree.py)<br/>OPERATOR(NAME, PARAMETERS{?o},<br/>PRE(AND{clear, gripper-empty, on-table}),<br/>EFF(AND{holding, NOT clear, NOT gripper-empty, NOT on-table, NOT raised}))"]
+        slots["SlotComposition (slots.py)<br/>10 real tokens (name, ?o, 8 literals; padding masked) + kind embeddings<br/>-> SlotAttention -> 4 slots x 32 -> Linear"]
         geometric["GeometricComposition (geometric.py)<br/>grid 32 channels x 20 rows (name, 3 params, 16 literals)<br/>x 7 kind columns -> CNN -> SlotAttention -> Linear"]
-        norm["LayerNorm (no gain, no bias) x 128^-0.5<br/>keeps the scale fixed during training"]
-        out[/"operator part of the features: 128 values, zero mean, norm 1"/]
+        norm["LayerNorm (no gain, no bias) x 256^-0.5<br/>keeps the scale fixed during training"]
+        out[/"operator part of the features: 256 values, zero mean, norm 1"/]
     end
 
     config -.-> encoder

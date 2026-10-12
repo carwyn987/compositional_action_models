@@ -93,6 +93,7 @@ A block is *gripped* when the gripper is within `GRASP_DISTANCE` of it with the 
 | `gripper-empty` | no block is gripped (the fingers are open, or closed on nothing) |
 | `raised(b)` | `holding(b)` and `b` at least `RAISED_HEIGHT` (0.30) above table rest |
 | `beside(b, c)` | `on-table(b)`, `on-table(c)`, centres `BESIDE_DISTANCE` (0.055 to 0.10) apart |
+| `at-left/right/front/back(b)` | `on-table(b)` and at least `REGION_DISTANCE` (0.10) from `REGION_CENTRE` (1.34, 0.75), the centre of the reset area, in that direction (front = toward the robot, smaller x; left = +y) |
 
 So grasping skills (pickup, unstack) succeed only once the block is lifted, and placing skills
 (putdown, stack) only once it is released.
