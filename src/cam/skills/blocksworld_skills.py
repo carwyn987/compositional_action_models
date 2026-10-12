@@ -32,3 +32,28 @@ class UnstackSkill(Skill):
 
     name = "unstack"
     setup_skills = ("pickup", "stack")
+
+
+# Variants of the skills above, each one literal (or one parameter and literal) away from its original,
+# for repair and new-skill experiments.
+
+
+class PickupRaisedSkill(Skill):
+    """pickup + effect (raised ?o): pick a block up and hold it high."""
+
+    name = "pickup-raised"
+
+
+class UnstackRaisedSkill(Skill):
+    """unstack + effect (raised ?o): lift a block off another and hold it high (a repair of unstack)."""
+
+    name = "unstack-raised"
+    setup_skills = ("pickup", "stack")
+
+
+class PlaceBesideSkill(Skill):
+    """putdown + parameter ?u + effect (beside ?o ?u): put the held block on the table next to block ?u.
+    Setup picks up a random block and the grounding picks a random block on the table for ?u."""
+
+    name = "place-beside"
+    setup_skills = ("pickup",)

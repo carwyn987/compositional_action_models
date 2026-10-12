@@ -1,4 +1,5 @@
-"""Scripted (hardcoded) Fetch policies for pickup, putdown, stack and unstack.
+"""Scripted (hardcoded) Fetch policies for pickup, putdown, stack and place-beside (unstack and the
+raised variants use the pickup policy, whose motion is relative to the block and lifts high enough).
 
 Each reads the moved block from the grounded action's first argument (stack and
 unstack: the other block from the second) and the scene from
@@ -9,7 +10,7 @@ info["environment_state"] (FetchState). Actions are
 import numpy as np
 
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
-from cam.environments.fetch.fetch_predicate_evaluation_wrapper import TABLE_REST_Z
+from cam.environments.fetch.fetch_predicate_evaluation_wrapper import RAISED_HEIGHT, TABLE_REST_Z
 from cam.policies.policy import Policy
 
 OPEN, CLOSE = 1.0, -1.0
@@ -57,8 +58,20 @@ class FetchScriptedPickupPolicy(Policy):
             if self.close_steps_taken >= self.CLOSE_STEPS:
                 self.phase = "lift"
             return np.array([0.0, 0.0, 0.0, CLOSE], dtype=np.float32)
-        return servo(gripper, self.block_start + [0.0, 0.0, self.LIFT_HEIGHT], CLOSE)
+        return servo(gripper, self.lift_target(), CLOSE)
 
+    def lift_target(self) -> np.ndarray:
+        """Where to lift the gripper (and block) to: LIFT_HEIGHT above where the block started."""
+        return self.block_start + [0.0, 0.0, self.LIFT_HEIGHT]
+
+
+
+class FetchScriptedPickupRaisedPolicy(FetchScriptedPickupPolicy):
+    """The pickup motion, lifting the block to 3 cm above the raised height wherever it started (for
+    pickup-raised and unstack-raised)."""
+
+    def lift_target(self) -> np.ndarray:
+        return np.array([self.block_start[0], self.block_start[1], TABLE_REST_Z + RAISED_HEIGHT + 0.03])
 
 class FetchScriptedPutdownPolicy(Policy):
     """Lower the held target block to the table, then open the gripper."""
@@ -94,20 +107,24 @@ class FetchScriptedStackPolicy(Policy):
     def reset(self) -> None:
         self.phase = "carry"
 
+    def resting_position(self, state, block: np.ndarray, base: np.ndarray) -> np.ndarray:
+        """Where the held block's centre should end up: on top of the base."""
+        return base + [0.0, 0.0, 2 * BLOCK_HALF_SIZE]
+
     def __call__(self, obs, info, grounded_action_model) -> np.ndarray:
         state = info["environment_state"]
         gripper = state.gripper_position
         block, base = (state.block_positions[name] for name in grounded_action_model.arguments[:2])
-        resting = base + [0.0, 0.0, 2 * BLOCK_HALF_SIZE]  # block centre when resting on the base
-        carry_height = resting[2] + self.CARRY_CLEARANCE
+        resting = self.resting_position(state, block, base)
+        carry_height = base[2] + 2 * BLOCK_HALF_SIZE + self.CARRY_CLEARANCE  # held block's centre clears the base
 
         if self.phase == "carry":  # straight up first, so the move over the base does not hit it
             target = np.array([block[0], block[1], carry_height])
             if block[2] >= carry_height - 0.005:
                 self.phase = "align"
         if self.phase == "align":
-            target = np.array([base[0], base[1], carry_height])
-            if np.linalg.norm(block[:2] - base[:2]) < self.ALIGNED_TOLERANCE:
+            target = np.array([resting[0], resting[1], carry_height])
+            if np.linalg.norm(block[:2] - resting[:2]) < self.ALIGNED_TOLERANCE:
                 self.phase = "lower"
         if self.phase == "lower":
             target = resting
@@ -117,3 +134,21 @@ class FetchScriptedStackPolicy(Policy):
             return np.array([0.0, 0.0, 0.0, OPEN], dtype=np.float32)
         return servo(gripper, gripper + (target - block), CLOSE)
 
+
+
+class FetchScriptedPlaceBesidePolicy(FetchScriptedStackPolicy):
+    """Place the held block (first argument) on the table next to the other block (second argument): the
+    stack motion, landing at SPACING from the other block on the side the held block comes from."""
+
+    SPACING = 0.075  # centre-to-centre, inside beside's range
+
+    def reset(self) -> None:
+        super().reset()
+        self.spot = None
+
+    def resting_position(self, state, block: np.ndarray, base: np.ndarray) -> np.ndarray:
+        if self.spot is None:  # fixed for the episode, from where the block starts
+            direction = block[:2] - base[:2]
+            direction = direction / max(np.linalg.norm(direction), 1e-6)
+            self.spot = np.array([*(base[:2] + self.SPACING * direction), TABLE_REST_Z])
+        return self.spot

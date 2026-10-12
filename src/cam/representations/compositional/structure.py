@@ -74,13 +74,13 @@ class StructuredOperatorEncoder(OperatorEncoder):
             [1, 0, 0]                   ?o is a block; no 2nd or 3rd parameter
         part 2: one row per literal: [what it is, which predicate, its arguments (A of them)]
              kind  predicate     arguments
-            [3,    1,            1, 0, 0, 0]   precondition  (clear ?o)
-            [3,    2,            0, 0, 0, 0]   precondition  (gripper-empty)
-            [3,    5,            1, 0, 0, 0]   precondition  (on-table ?o)
-            [5,    3,            1, 0, 0, 0]   add           (holding ?o)
-            [6,    1,            1, 0, 0, 0]   delete        (clear ?o)
-            [6,    2,            0, 0, 0, 0]   delete        (gripper-empty)
-            [6,    5,            1, 0, 0, 0]   delete        (on-table ?o)
+            [3,    2,            1, 0, 0, 0]   precondition  (clear ?o)
+            [3,    3,            0, 0, 0, 0]   precondition  (gripper-empty)
+            [3,    6,            1, 0, 0, 0]   precondition  (on-table ?o)
+            [5,    4,            1, 0, 0, 0]   add           (holding ?o)
+            [6,    2,            1, 0, 0, 0]   delete        (clear ?o)
+            [6,    3,            0, 0, 0, 0]   delete        (gripper-empty)
+            [6,    6,            1, 0, 0, 0]   delete        (on-table ?o)
             [0,    0,            0, 0, 0, 0]   x 9 unused rows (EMPTY)
         part 3: the operator name's text embedding (name_dim numbers; absent when name_dim = 0)
 
@@ -89,7 +89,7 @@ class StructuredOperatorEncoder(OperatorEncoder):
                     DELETE 6 (EMPTY 0 for an unused row; NAME 1 and PARAMETER 2 are never in a row, they
                     are used by the architectures for the name and parameter components)
         predicate   which predicate: its index in layout.predicates + 1
-                    (clear 1, gripper-empty 2, holding 3, on 4, on-table 5)
+                    (beside 1, clear 2, gripper-empty 3, holding 4, on 5, on-table 6, raised 7)
         arguments   each argument's parameter position + 1 (?o, the 1st parameter -> 1), then 0s up to A.
                     (on ?a ?b) would be [1, 2, 0, 0] and (on ?b ?a) [2, 1, 0, 0]
     "Type" in part 1 is the PDDL object type of each parameter (the `- block` in `?o - block`): its index

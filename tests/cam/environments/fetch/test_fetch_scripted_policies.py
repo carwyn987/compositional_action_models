@@ -2,6 +2,8 @@ import pytest
 
 from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
+    FetchScriptedPickupRaisedPolicy,
+    FetchScriptedPlaceBesidePolicy,
     FetchScriptedPutdownPolicy,
     FetchScriptedStackPolicy,
 )
@@ -13,6 +15,9 @@ SCRIPTED_POLICIES = {
     "putdown": FetchScriptedPutdownPolicy,
     "stack": FetchScriptedStackPolicy,
     "unstack": FetchScriptedPickupPolicy,
+    "pickup-raised": FetchScriptedPickupRaisedPolicy,
+    "unstack-raised": FetchScriptedPickupRaisedPolicy,
+    "place-beside": FetchScriptedPlaceBesidePolicy,
 }
 CONFIG = {
     "symbolic_action_model_format": "pddl", "environment_id": "FetchMultiBlock-v0", "render": False,

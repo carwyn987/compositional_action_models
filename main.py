@@ -46,7 +46,7 @@ logger = logging.getLogger("cam.main")
 
 MODES = ["train-evaluate", "train", "evaluate"]
 # Options for one invocation only: not taken from a resumed run's config.json.
-PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render"]
+PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device"]
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
@@ -115,6 +115,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     training.add_argument("--seed", type=int, default=0)
     training.add_argument(
+        "--device", default="auto",
+        help="torch device for the policy: auto (a CUDA GPU if available, else cpu), cpu, cuda, cuda:1, ...",
+    )
+    training.add_argument(
         "--operator-encoder", choices=sorted(OPERATOR_ENCODERS), default="multi-hot",
         help="how the lifted action model is embedded for the policy (docs/policy_inputs.md)",
     )
@@ -145,6 +149,12 @@ def build_parser() -> argparse.ArgumentParser:
     training.add_argument(
         "--max-operator-arity", type=int, default=3,
         help="most parameters any operator may have; fixes the multi-hot vocabulary and grounding slots",
+    )
+    training.add_argument(
+        "--operator-identity-aliases", nargs="+", default=[], metavar="NEW=OLD",
+        help="one-hot and random only: encode operator NEW exactly as OLD (same index / vector), e.g. "
+        "unstack-raised=unstack, so a repaired operator is indistinguishable from the original to them "
+        "(a baseline for repair experiments); content-based encoders are unaffected",
     )
     training.add_argument(
         "--reward", choices=["sparse", "shaped"], default="sparse",
@@ -296,10 +306,14 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
     during training in train-evaluate mode."""
     from cam.evaluation.metrics_callback import MetricsCallback
     from cam.training.checkpointing import atomic_write_text
-    from cam.training.stable_baselines3_trainer import train_stable_baselines3
+    from cam.training.stable_baselines3_trainer import OperatorEmbeddingMagnitudeCallback, train_stable_baselines3
 
     atomic_write_text(run_directory / "config.json", json.dumps(config, indent=2))
     callbacks, on_save, eval_env = [], [], None
+    if config["trainable_operator_embedding"] or config["operator_encoder"] == "compositional":
+        # learned operator embeddings: log their magnitude (L2 norm) per skill to TensorBoard
+        operator_inputs = {skill.name: env.operator_encoder.encode(skill.symbolic_action_model) for skill in skills}
+        callbacks.append(OperatorEmbeddingMagnitudeCallback(operator_inputs))
     if config["mode"] == "train-evaluate":
         metrics_path = run_directory / "metrics.json"
         eval_env = setup_environment(config | {"render": False}, skills)
@@ -330,6 +344,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             save_replay_buffer=config["save_replay_buffer"],
             on_save=on_save,
             policy_kwargs=policy_kwargs(config),
+            device=config["device"],
         )
     finally:
         if eval_env is not None:
@@ -346,7 +361,7 @@ def evaluate_run(config: dict, run_directory: Path) -> None:
     eval_skills = config["eval_skills"] or config["skills"]
     environment_skills = list(config["skills"]) + [skill for skill in eval_skills if skill not in config["skills"]]
     env = setup_environment(config, [build_skill(name, config) for name in environment_skills])
-    model = ALGORITHMS[config["algorithm"]].load(run_directory / "model.zip")
+    model = ALGORITHMS[config["algorithm"]].load(run_directory / "model.zip", device=config["device"])
     try:
         results = {
             mode: evaluate(

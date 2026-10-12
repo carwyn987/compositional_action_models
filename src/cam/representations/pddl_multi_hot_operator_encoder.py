@@ -86,9 +86,10 @@ class PDDLMultiHotOperatorEncoder(OperatorEncoder):
 
     Size: 4 sections x (1 name-only + max_arity!/(max_arity - k)! positional
     features per predicate of arity k). For Fetch (holding/1, on-table/1,
-    clear/1, on/2, gripper-empty/0): max_arity 1 -> 36, 2 -> 56, 3 -> 84.
+    clear/1, on/2, gripper-empty/0, raised/1, beside/2): max_arity 1 -> 48,
+    2 -> 80, 3 -> 128.
 
-    Example, Fetch predicates with max_arity=1 (36 features); the features set
+    Example, Fetch predicates with max_arity=1 (48 features); the features set
     for pickup and putdown (each positional / name-only pair is one row, every
     other feature is 0):
 
