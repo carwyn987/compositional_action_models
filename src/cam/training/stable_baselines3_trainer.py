@@ -12,7 +12,7 @@ Outputs, under <output_dir>/<run_name>/:
     tensorboard/       SB3 training curves, plus success_rate/<skill> (and eval_<mode>/<skill>/... with a
                        MetricsCallback, which also writes metrics.json)
 
-Hyperparameters follow deprecated/train_skill.py.
+Hyperparameters follow the original deprecated/train_skill.py (removed; see git commit 59054395).
 """
 
 import logging

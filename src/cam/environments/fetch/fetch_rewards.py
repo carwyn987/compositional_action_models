@@ -1,4 +1,4 @@
-"""Shaped Fetch rewards (ported from deprecated/fetch_blockworld/rewards/).
+"""Shaped Fetch rewards (ported from the original deprecated/fetch_blockworld/rewards/, removed; see git commit 59054395).
 
 Each reads the moved block from the grounded action's first argument (stack: the
 base block from the second) and the scene from info["environment_state"]
@@ -267,7 +267,7 @@ class FetchStackRewardConfig:
 class FetchStackReward(RewardFunction):
     """Staged stack shaping, starting with the block held (setup picks it up): carry it above the base,
     align over the base, lower gently onto it, release, success. Ported from
-    deprecated/fetch_blockworld/rewards/stack_rewards.py without its approach and grasp stages, which
+    the original deprecated/fetch_blockworld/rewards/stack_rewards.py without its approach and grasp stages, which
     belong to pickup here.
 
     Carry and align progress count only while the block is held, so dropping it earns nothing. Progress
@@ -489,7 +489,7 @@ def squareness(rotation: np.ndarray | None, sharpness: float) -> float:
 class FetchPutdownReward(RewardFunction):
     """Staged putdown shaping, starting with the block held (setup picks it up): lower it gently and square
     onto the table, without opening early, then release, success. Ported from
-    deprecated/fetch_blockworld/rewards/putdown_rewards.py, plus a smoothness penalty on action changes.
+    the original deprecated/fetch_blockworld/rewards/putdown_rewards.py, plus a smoothness penalty on action changes.
     """
 
     config: FetchPutdownRewardConfig = field(default_factory=FetchPutdownRewardConfig)
