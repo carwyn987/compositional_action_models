@@ -26,9 +26,10 @@ Z_TOLERANCE = 0.01  # height tolerance for resting on the table / on another blo
 GRASP_DISTANCE = 0.03  # max gripper-to-block-centre distance for gripping
 OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper grips nothing
 # Height above table rest at which a held block counts as raised. Well above what pickup or unstack reach on
-# their own (they succeed ~1 cm off their support; a stacked block already starts 5 cm up), and several
-# full-speed control steps (at most 5 cm each) from a stacked start, so raised is never satisfied by accident.
-RAISED_HEIGHT = 0.20
+# their own (they succeed ~1 cm off their support and must stay below this: (not (raised ?o))), and 25 cm
+# from a stacked start: at least 5 full-speed control steps (at most 5 cm each), then held there for
+# --success-hold-steps, so raised is never satisfied by one upward burst.
+RAISED_HEIGHT = 0.30
 BESIDE_DISTANCE = (0.055, 0.10)  # centre-to-centre distance range for two blocks side by side on the table
 
 # A block is *supported* when it rests on the table or on another block (on-table, on), and *gripped*

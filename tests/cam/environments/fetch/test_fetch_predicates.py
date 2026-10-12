@@ -60,9 +60,9 @@ def test_held_block_is_not_clear_and_not_on_anything():
 
 @pytest.mark.unit
 def test_raised_needs_holding_high_above_the_table():
-    """pickup succeeds 1 cm up; raised needs the held block 20 cm up (15 cm above a stacked start)."""
-    low = [1.2, 0.6, TABLE_REST_Z + 0.11]
-    high = [1.2, 0.6, TABLE_REST_Z + 0.21]
+    """pickup succeeds 1 cm up; raised needs the held block 30 cm up (25 cm above a stacked start)."""
+    low = [1.2, 0.6, TABLE_REST_Z + 0.21]
+    high = [1.2, 0.6, TABLE_REST_Z + 0.31]
     assert fact("raised", "block0") not in facts(low, GRIPPING, low)
     assert {fact("holding", "block0"), fact("raised", "block0")} <= facts(high, GRIPPING, high)
     assert fact("raised", "block0") not in facts(FAR, OPEN, high)  # not held (falling)
