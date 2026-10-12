@@ -78,3 +78,20 @@ def test_training_logs_operator_embedding_magnitude_to_tensorboard(tmp_path, opt
                  "--total-timesteps", "1100", "--mode", "train", "--output-dir", str(tmp_path)]
     main(arguments)
     assert expected <= logged_tags(tmp_path / run_name(parse_args(arguments)))
+
+
+@pytest.mark.integration
+def test_composition_weight_decay_shrinks_only_the_composition(tmp_path):
+    """After gradient updates with a large decay, the composition's weights are smaller than without it,
+    while the rest of the policy trains as usual."""
+    from stable_baselines3 import SAC
+
+    def composition_norm(decay):
+        arguments = ["--skills", "pickup", "--algorithm", "sac", "--operator-encoder", "compositional",
+                     "--num-blocks", "2", "--max-steps-per-episode", "10", "--total-timesteps", "1300",
+                     "--mode", "train", "--composition-weight-decay", str(decay), "--output-dir", str(tmp_path / str(decay))]
+        main(arguments)
+        model = SAC.load(tmp_path / str(decay) / run_name(parse_args(arguments)) / "model.zip")
+        return sum(float(p.norm()) for p in model.policy.actor.features_extractor.composition.parameters())
+
+    assert composition_norm(100.0) < composition_norm(0.0)

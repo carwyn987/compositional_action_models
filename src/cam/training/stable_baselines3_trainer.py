@@ -120,6 +120,36 @@ class OperatorEmbeddingMagnitudeCallback(BaseCallback):
         return True
 
 
+class CompositionWeightDecayCallback(BaseCallback):
+    """Decoupled weight decay (as in AdamW) on the compositional operator embedding's parameters only.
+
+    The extractor normalizes the composition's output, so nothing in the loss limits the composition's scale
+    and its weights drift upward (its raw output grew from ~2.5 to ~2800 in 500k SAC steps), slowing how
+    much each update changes what the policy sees. After every gradient update this multiplies each parameter
+    under a features extractor's `composition` by (1 - learning_rate * weight_decay), pulling the scale back.
+    """
+
+    def __init__(self, weight_decay: float):
+        super().__init__()
+        self.weight_decay = weight_decay
+        self.updates_seen: int | None = None
+
+    def _on_step(self) -> bool:
+        updates = getattr(self.model, "_n_updates", 0)
+        new = updates - (updates if self.updates_seen is None else self.updates_seen)
+        self.updates_seen = updates
+        if new > 0:
+            factor = (1.0 - self.model.lr_schedule(self.model._current_progress_remaining) * self.weight_decay) ** new
+            policy = self.model.policy
+            extractors = [policy.actor.features_extractor, policy.critic.features_extractor] if hasattr(policy, "actor") \
+                else [policy.features_extractor]
+            with torch.no_grad():
+                for extractor in extractors:
+                    for parameter in getattr(extractor, "composition", torch.nn.Module()).parameters():
+                        parameter.mul_(factor)
+        return True
+
+
 def train_stable_baselines3(
     env: gym.Env,
     algorithm: str,
