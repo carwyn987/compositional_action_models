@@ -1,6 +1,6 @@
 """The blocksworld skills. Each is its name (which also names its action model files) and its setup
 chain; everything else is in Skill. Fetch resets with every block on the table, so skills that start
-from a held or stacked block reach that state through setup_skills."""
+from a held or stacked block reach that state through setup_skills (alternative chains of skills)."""
 
 from cam.skills.skill import Skill
 
@@ -17,8 +17,7 @@ class PutdownSkill(Skill):
     is a failure)."""
 
     name = "putdown"
-    setup_skills = ("pickup",)
-    setup_alternatives = (("pickup-raised",),)
+    setup_skills = (("pickup",), ("pickup-raised",))
 
 
 class StackSkill(Skill):
@@ -26,7 +25,7 @@ class StackSkill(Skill):
     grounding picks a random clear block for ?u, so both vary between episodes. Needs at least two blocks."""
 
     name = "stack"
-    setup_skills = ("pickup",)
+    setup_skills = (("pickup",),)
 
 
 class UnstackSkill(Skill):
@@ -34,11 +33,10 @@ class UnstackSkill(Skill):
     other block, so the stacked pair varies between episodes. Needs at least two blocks."""
 
     name = "unstack"
-    setup_skills = ("pickup", "stack")
+    setup_skills = (("pickup", "stack"),)
 
 
-# Variants of the skills above, each one literal (or one parameter and literal) away from its original,
-# for repair and new-skill experiments.
+# Variants of the skills above, each one literal (or one parameter and literal) away from its original.
 
 
 class PickupRaisedSkill(Skill):
@@ -48,10 +46,10 @@ class PickupRaisedSkill(Skill):
 
 
 class UnstackRaisedSkill(Skill):
-    """unstack + effect (raised ?o): lift a block off another and hold it high (a repair of unstack)."""
+    """unstack + effect (raised ?o): lift a block off another and hold it high."""
 
     name = "unstack-raised"
-    setup_skills = ("pickup", "stack")
+    setup_skills = (("pickup", "stack"),)
 
 
 class PlaceBesideSkill(Skill):
@@ -59,7 +57,7 @@ class PlaceBesideSkill(Skill):
     Setup picks up a random block and the grounding picks a random block on the table for ?u."""
 
     name = "place-beside"
-    setup_skills = ("pickup",)
+    setup_skills = (("pickup",),)
 
 
 
@@ -84,8 +82,7 @@ class PushBackSkill(Skill):
 
 
 class PushLeftFrontSkill(Skill):
-    """push-left + effect (at-front ?o): a diagonal, combining two pushes' goals. Held out for testing: the
-    other three diagonals are trained, so both its literals and diagonal pushing are seen, only not together."""
+    """push-left + effect (at-front ?o): the diagonal toward the front left."""
 
     name = "push-left-front"
 
@@ -103,6 +100,6 @@ class PushRightBackSkill(Skill):
 
 
 class PushBesideSkill(Skill):
-    """Push block ?o along the table until it is beside block ?u (teaches beside without carrying)."""
+    """Push block ?o along the table until it is beside block ?u."""
 
     name = "push-beside"

@@ -6,7 +6,7 @@ task over one or more skills. Each episode is one grounded action of one skill
 
     reset  choose the episode's skill (options={"skill": name}, otherwise the
            next skill in turn), reset the scene, run that skill's setup chain
-           (skill.setup_skills, e.g. pickup before putdown) to reach a state
+           (one of skill.setup_skills, e.g. pickup before putdown) to reach a state
            where it applies, then choose a random grounding whose
            preconditions hold
     step   the episode ends (terminated) once the grounding's effects have held for
@@ -79,7 +79,7 @@ class SkillEnvironment(gym.Wrapper):
         self.skills = {skill.name: skill for skill in skills}
         self.setup_chains = {  # skill -> its setup chains (one chosen at random per episode)
             skill.name: [[build_skill(name, skill.config) for name in chain]
-                         for chain in (skill.setup_skills, *skill.setup_alternatives)]
+                         for chain in skill.setup_skills or ((),)]
             for skill in skills
         }
         self.setup_policies = setup_policies or {}

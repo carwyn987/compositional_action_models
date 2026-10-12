@@ -102,9 +102,9 @@ is released.
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | pre `(not (beside ?o ?u))`, eff `(beside ?o ?u)` | – | push toward ?u | as push |
 
-`push-left-front` is held out for testing; the other three diagonals are trained. Every scripted policy
-succeeds with 5-step settled success (2 and 3 blocks): pick/place skills 10/10, pushes 18–20/20 (with 3
-blocks another block can lie on a straight push path).
+In the default overnight plan (`scripts/overnight_runs.py`), `push-left-front` is held out and the other
+three diagonals are trained. Every scripted policy succeeds with 5-step settled success (2 and 3 blocks):
+pick/place skills 10/10, pushes 18–20/20 (with 3 blocks another block can lie on a straight push path).
 
 ### Operator embedding conditions (`--operator-encoder`, `--operator-embedding-dim 256`)
 - **Identity only:** one-hot (indexed by registry order, so indices don't depend on the training
@@ -119,8 +119,9 @@ blocks another block can lie on a straight push path).
 
 ### Metrics (`evaluation/`)
 Evaluated every `--eval-interval` steps (50k) with `--eval-episodes` (20) per skill, deterministic and
-stochastic. With `--stop-skills` (repair runs), those skills are also evaluated alone every
-`--stop-eval-interval` (5k) steps.
+stochastic. A skill added on resume (a repaired or new operator) is also evaluated alone 1k, 2k, 4k, …
+steps after it was added, doubling until `--eval-interval` takes over: precise steps to threshold early,
+where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in `metrics_callback.py`).
 - **success rate**;
 - **steps / episodes to threshold:** from the skill's first evaluation, until success ≥ 0.95;
 - **zero-shot:** the first evaluation of a skill;
@@ -133,7 +134,7 @@ stochastic. With `--stop-skills` (repair runs), those skills are also evaluated 
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
   runs the unit tests, writes `run_info.txt`, blocks sleep, then runs `overnight_runs.py`.
 - **`scripts/overnight_runs.py`:**
-  - **runs `JOBS` (default 4) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
+  - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
     by side get through the plan several times faster;
   - announces each run (what it trains, why), reports progress every minute and each outcome; training
     runs as child processes logging to `<OUT>/logs/`;
@@ -189,37 +190,25 @@ Each addresses something that run showed:
 - **Non-trivial putdown:** sometimes set up 30 cm up; a drop is a failure; smoothness and jerk penalties.
 - **Failure precedence:** a failure is never counted as success.
 - **Composition weight decay.**
-- **Repaired skills evaluated every 5k steps.**
+- **Repaired / added skills evaluated densely, then sparsely** (1k, 2k, 4k, … after being added).
 - **Global regions** (10–18 cm bands) with push skills, the four diagonals (one held out) and
   push-beside, so every literal of every held-out operator is seen in training.
 - **Runner:** a list of repair pairs; several runs at once.
 
 ## 5. Open issues and proposals
-1. **Repair evaluation schedule.** `--stop-eval-interval` evaluates only the repaired skill, on a fixed 5k
-   grid. Lowering `--eval-interval` instead would evaluate *every* skill that often, about 10× the
-   evaluation cost. Better options:
-   - **(a) Dense-then-sparse schedule for newly added skills,** replacing `--stop-eval-interval`:
-     evaluate a skill at +1k, 2k, 4k, 8k, … steps after it was added, doubling up to `--eval-interval`,
-     then every `--eval-interval`. Precise early, where repair differences are, and cheap later.
-   - **(b) Steps to threshold from training episodes:** the per-skill rolling success rate of training
-     episodes (already logged as `success_rate/<skill>`) is free and continuous. Use it to detect the
-     crossing, and confirm with one evaluation.
-   - **(c) Cheaper intermediate evaluations:** fewer episodes (e.g. 5) between the full evaluations.
-
-   (a) or (a)+(b) is recommended.
-2. **Runtime.** The default plan is 50 runs: 13 learnability; 7 RQ1 on 13 skills; 27 repair (3 pairs × 7
-   conditions, plus 2 repair-hidden per pair). With 4 jobs the first estimate is about a day at typical CPU
+1. **Runtime.** The default plan is 50 runs: 13 learnability; 7 RQ1 on 13 skills; 27 repair (3 pairs × 7
+   conditions, plus 2 repair-hidden per pair). With 2 jobs the first estimate is about two days at typical CPU
    speeds; the runner refines it after the first runs. Trim with `RUN_GROUPS`, `CONDITIONS` or `*_STEPS`,
    or raise `JOBS`.
-3. **RQ1 budget.** 500k steps for 13 skills is about 40k per skill, and single skills need 50–150k, so
+2. **RQ1 budget.** 500k steps for 13 skills is about 40k per skill, and single skills need 50–150k, so
    expect partial learning. Consider `RQ1_STEPS=1000000` once runtime allows.
-4. **One seed.** Use 3+ seeds before ranking conditions.
-5. **`stack` → `place-beside` is a larger edit** than the other repairs (a parameter's role, the
+3. **One seed.** Use 3+ seeds before ranking conditions.
+4. **`stack` → `place-beside` is a larger edit** than the other repairs (a parameter's role, the
    preconditions and several effects change). Read it as a new-skill test more than a one-literal repair.
-6. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; about 1 GB per run),
+5. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; about 1 GB per run),
    the same for every condition.
-7. **Old runs don't resume:** the predicate set and the embedding size (256) changed.
-8. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
+6. **Old runs don't resume:** the predicate set and the embedding size (256) changed.
+7. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
    them.
 
 ## 6. Future work
@@ -254,7 +243,7 @@ Each addresses something that run showed:
 
 ## 7. How to run
 ```bash
-./scripts/start_overnight.sh                       # plan, checks, then 4 runs at a time, each explained
+./scripts/start_overnight.sh                       # plan, checks, then 2 runs at a time, each explained
 DEVICE=cuda ./scripts/start_overnight.sh           # on a GPU
 DRY_RUN=1 ./scripts/start_overnight.sh             # the plan and its time estimate only
 RUN_GROUPS=learnability JOBS=6 ./scripts/start_overnight.sh

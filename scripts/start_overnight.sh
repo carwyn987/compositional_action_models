@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start the overnight experiments (scripts/overnight_runs.py) from the current branch, in this terminal.
 #
-#   ./scripts/start_overnight.sh                    # check, then run the plan (4 runs at a time), explaining each
+#   ./scripts/start_overnight.sh                    # check, then run the plan (2 runs at a time), explaining each
 #   DEVICE=cuda ./scripts/start_overnight.sh        # on a GPU (fails fast if CUDA is not available)
 #   JOBS=1 ./scripts/start_overnight.sh             # one run at a time
 #   ./scripts/start_overnight.sh --no-tests         # skip the unit tests before starting

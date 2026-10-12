@@ -264,14 +264,14 @@ classDiagram
     class Skill {
         <<abstract>>
         +name() str*
-        +setup_skills: tuple~str~
+        +setup_skills: tuple~tuple~str~~
         +symbolic_action_model: SymbolicActionModel
         +ground(binding) GroundedSymbolicActionModel
         +applicable_groundings(facts, objects) list
     }
     class PickupSkill
     class PutdownSkill {
-        +setup_skills = pickup
+        +setup_skills = (pickup), (pickup-raised)
     }
     class registry {
         <<module>>

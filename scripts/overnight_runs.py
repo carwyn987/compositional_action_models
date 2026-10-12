@@ -7,7 +7,7 @@
     RUN_GROUPS="learnability" SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py
 
 How it runs
-  * Up to JOBS runs at once (default 4). One run uses a fraction of a GPU or CPU: SAC alternates a
+  * Up to JOBS runs at once (default 2). One run uses a fraction of a GPU or CPU: SAC alternates a
     simulator step (CPU) with one small gradient step, so several runs side by side get through the plan
     several times faster. JOBS=1 runs one at a time.
   * Each run is a child process (main.py) whose full output goes to <OUT>/logs/<label>.log. The terminal
@@ -27,7 +27,8 @@ Groups
                 and seed: steps to threshold, AUC and final success per condition.
   repair        RQ2 / RQ3: for each FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by its
                 repaired version TO: TO's zero-shot success at the resume step, then the steps it needs to
-                reach the success threshold (TO evaluated every 5k steps). Two variants:
+                reach the success threshold (TO evaluated alone 1k, 2k, 4k, ... steps after it is added,
+                then every EVAL_INTERVAL). Two variants:
                   repair-visible  the repaired operator is encoded on its own: content-based embeddings
                                   (multi-hot, text, compositional) show the changed literals; one-hot and
                                   random give it a code no training has used
@@ -46,7 +47,7 @@ View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 
 Settings (environment variables, defaults in brackets)
   OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  ALGORITHM [sac]  SEEDS ["0"]
-  JOBS [4] runs at once   DEVICE [auto]   THREADS [cores / JOBS] torch threads per run   DRY_RUN [0]
+  JOBS [2] runs at once   DEVICE [auto]   THREADS [cores / JOBS] torch threads per run   DRY_RUN [0]
   CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
               compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
   TEXT_BACKEND [openai] (the text condition and compositional name embeddings; mock: offline, no meaning)
@@ -104,7 +105,7 @@ EVAL_INTERVAL = int(setting("EVAL_INTERVAL", "50000"))
 EVAL_EPISODES = int(setting("EVAL_EPISODES", "20"))
 SAVE_INTERVAL = int(setting("SAVE_INTERVAL", "50000"))
 DEVICE = setting("DEVICE", "auto")
-JOBS = max(1, int(setting("JOBS", "4")))
+JOBS = max(1, int(setting("JOBS", "2")))
 THREADS = setting("THREADS", str(max(1, (os.cpu_count() or 1) // JOBS)))  # no CPU oversubscription
 DRY_RUN = setting("DRY_RUN", "0") == "1"
 STATUS_EVERY = 60 if sys.stdout.isatty() else 600  # seconds between progress reports while runs go

@@ -44,8 +44,7 @@ class TwoBlockFactsEnv(gym.Env):
 class PutdownAfterPickup(PutdownSkill):
     """putdown set up by plain pickup, which this symbolic stand-in can run (it has no raised)."""
 
-    setup_skills = ("pickup",)
-    setup_alternatives = ()
+    setup_skills = (("pickup",),)
 
 
 class GraspTarget(Policy):
@@ -120,8 +119,7 @@ def test_a_failure_overrides_effects_that_hold():
 @pytest.mark.unit
 def test_each_episode_uses_one_of_the_skills_setup_chains():
     class PutdownEitherWay(PutdownSkill):
-        setup_skills = ("pickup",)
-        setup_alternatives = (("pickup", "putdown", "pickup"),)
+        setup_skills = (("pickup",), ("pickup", "putdown", "pickup"))
 
     env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownEitherWay(PDDL_CONFIG)],
                            {"pickup": GraspTarget(), "putdown": Release()})
@@ -131,7 +129,7 @@ def test_each_episode_uses_one_of_the_skills_setup_chains():
 
 @pytest.mark.unit
 def test_setup_chain_runs_declared_skills():
-    """putdown declares setup_skills=("pickup",): reset runs pickup, so putdown targets the held block."""
+    """putdown set up by pickup: reset runs pickup, so putdown targets the held block."""
     env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownAfterPickup(PDDL_CONFIG)], {"pickup": GraspTarget()})
     _, info = env.reset(seed=0)
     (setup_action, steps), = info["setup"]
@@ -144,7 +142,7 @@ def test_setup_chain_of_several_skills():
     """Setup skills run in order: pickup then putdown leaves a block on the table to pick up again."""
 
     class PickupAfterPickupAndPutdown(PickupSkill):
-        setup_skills = ("pickup", "putdown")
+        setup_skills = (("pickup", "putdown"),)
 
     policies = {"pickup": GraspTarget(), "putdown": Release()}
     env = SkillEnvironment(TwoBlockFactsEnv(), [PickupAfterPickupAndPutdown(PDDL_CONFIG)], policies)

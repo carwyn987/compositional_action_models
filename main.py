@@ -46,7 +46,7 @@ logger = logging.getLogger("cam.main")
 
 MODES = ["train-evaluate", "train", "evaluate"]
 # Options for one invocation only: not taken from a resumed run's config.json.
-PER_INVOCATION = ["mode", "run_directory", "stop_skills", "stop_eval_interval", "patience", "eval_skills", "render", "device"]
+PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device"]
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
@@ -218,11 +218,6 @@ def build_parser() -> argparse.ArgumentParser:
         help="stop training once all of these reach --success-threshold (deterministic evaluation)",
     )
     evaluation.add_argument(
-        "--stop-eval-interval", type=int, default=5_000,
-        help="with --stop-skills: also evaluate those skills alone every this many steps, so their steps to "
-        "threshold (e.g. a repaired skill's) is measured finely (0: only at --eval-interval)",
-    )
-    evaluation.add_argument(
         "--patience", type=int, default=0,
         help="stop training after this many evaluations without improvement of the mean success rate (0: off)",
     )
@@ -348,7 +343,6 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             stop_skills=config["stop_skills"],
             patience=config["patience"],
             metrics=json.loads(metrics_path.read_text()) if resume and metrics_path.exists() else None,
-            stop_eval_interval=config["stop_eval_interval"],
         )
         callbacks.append(metrics_callback)
         on_save.append(metrics_callback.write_metrics)

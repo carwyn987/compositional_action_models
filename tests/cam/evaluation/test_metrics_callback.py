@@ -111,9 +111,10 @@ def test_resume_at_the_last_evaluation_only_evaluates_added_skills(monkeypatch):
 
 
 @pytest.mark.integration
-def test_stop_skills_are_evaluated_every_stop_eval_interval_and_not_again_after_stopping(monkeypatch):
-    """With stop_eval_interval 10, the stop skill alone is evaluated every 10 steps, training stops at the
-    first evaluation at the threshold, and no extra evaluation follows the stop."""
+def test_skills_added_on_resume_are_evaluated_densely_then_sparsely(monkeypatch):
+    """A skill added on resume is evaluated alone at +10, +20, +40, ... steps (first evaluation 10 here),
+    doubling until the regular interval (100) takes over; training stops at the first evaluation at the
+    threshold, and no extra evaluation follows the stop."""
     from unittest.mock import MagicMock
 
     import cam.evaluation.metrics_callback as metrics_callback_module
@@ -123,21 +124,22 @@ def test_stop_skills_are_evaluated_every_stop_eval_interval_and_not_again_after_
 
     def fake_evaluate(env, policy, skill_names, episodes, seed=None):
         evaluated.append((callback.num_timesteps, list(skill_names)))
-        rate = 1.0 if callback.num_timesteps >= 30 else 0.0
+        rate = 1.0 if callback.num_timesteps >= 40 else 0.0
         return EvaluationResult({skill: SkillEvaluation(1, rate, 0.0, 1.0, 0.0, 5.0, 0.0) for skill in skill_names})
 
     monkeypatch.setattr(metrics_callback_module, "evaluate", fake_evaluate)
-    callback = MetricsCallback(None, ["a", "b"], 100, 1, "unused", stop_skills=["b"], stop_eval_interval=10)
+    monkeypatch.setattr(metrics_callback_module, "ADDED_SKILL_FIRST_EVALUATION", 10)
+    callback = MetricsCallback(None, ["a", "b", "c"], 100, 1, "unused", stop_skills=["c"])
+    callback.curves["deterministic"].add(0, result(a=0.5, b=0.5))  # trained on a and b; "c" is added on resume
     monkeypatch.setattr(callback, "write_metrics", lambda: None)
     monkeypatch.setattr(type(callback), "logger", property(lambda self: MagicMock()))
     callback.model, callback.num_timesteps = None, 0
-    callback.locals = {"dones": [False], "infos": [{"skill": "b"}]}
+    callback.locals = {"dones": [False], "infos": [{"skill": "c"}]}
     callback._on_training_start()
     running = True
     while running:
         callback.num_timesteps += 1
         running = callback._on_step()
     callback._on_training_end()
-    steps = [step for step, skills in evaluated[::2]]  # deterministic, stochastic per evaluation
-    assert steps == [0, 10, 20, 30] and callback.num_timesteps == 30
-    assert callback.curves["deterministic"].steps_to_threshold("b", 0.95) == 30
+    assert evaluated[::2] == [(0, ["c"]), (10, ["c"]), (20, ["c"]), (40, ["c"])]  # deterministic of each pair
+    assert callback.curves["deterministic"].steps_to_threshold("c", 0.95) == 40

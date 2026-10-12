@@ -35,7 +35,7 @@ flowchart LR
     subgraph skills[&quot;cam.skills&quot;]
         direction TB
         skill[&quot;skill.py: Skill&lt;br/&gt;symbolic_action_model · setup_skills&lt;br/&gt;ground · applicable_groundings&quot;]
-        concrete[&quot;PickupSkill · PutdownSkill&lt;br/&gt;(putdown setup_skills = pickup)&quot;]
+        concrete[&quot;PickupSkill · PutdownSkill&lt;br/&gt;(putdown setup_skills = (pickup), (pickup-raised))&quot;]
         registry[&quot;registry.py&lt;br/&gt;SKILL_REGISTRY · build_skill&quot;]
     end
 
@@ -258,14 +258,14 @@ classDiagram
     class Skill {
         &lt;&lt;abstract&gt;&gt;
         +name() str*
-        +setup_skills: tuple~str~
+        +setup_skills: tuple~tuple~str~~
         +symbolic_action_model: SymbolicActionModel
         +ground(binding) GroundedSymbolicActionModel
         +applicable_groundings(facts, objects) list
     }
     class PickupSkill
     class PutdownSkill {
-        +setup_skills = pickup
+        +setup_skills = (pickup), (pickup-raised)
     }
     class registry {
         &lt;&lt;module&gt;&gt;

@@ -44,6 +44,10 @@ from cam.training.checkpointing import atomic_write_text
 logger = logging.getLogger(__name__)
 
 MODES = {"deterministic": True, "stochastic": False}
+# Skills added on resume (e.g. a repaired operator) are also evaluated alone this many steps after being added,
+# doubling (1k, 2k, 4k, ...) until the regular --eval-interval takes over: precise steps to threshold early,
+# where conditions differ most, at little cost.
+ADDED_SKILL_FIRST_EVALUATION = 1_000
 
 
 class MetricsCallback(BaseCallback):
@@ -59,7 +63,6 @@ class MetricsCallback(BaseCallback):
         stop_skills: list[str] | None = None,
         patience: int = 0,
         metrics: dict | None = None,
-        stop_eval_interval: int = 0,
     ):
         super().__init__()
         self.eval_env = eval_env
@@ -74,8 +77,9 @@ class MetricsCallback(BaseCallback):
         if unknown:
             raise ValueError(f"stop skills {unknown} are not among the trained skills {skill_names}")
         self.patience = patience
-        self.stop_eval_interval = stop_eval_interval  # stop_skills alone are also evaluated this often (0: off)
-        self.next_stop_evaluation_step = 0
+        self.added_skills: list[str] = []  # skills added on resume, evaluated on the dense-then-sparse schedule
+        self.added_at = 0
+        self.next_added_evaluation = ADDED_SKILL_FIRST_EVALUATION  # steps after added_at
         self.best_mean_success = -1.0
         self.evaluations_without_improvement = 0
         self.stop_reason: str | None = None
@@ -97,6 +101,9 @@ class MetricsCallback(BaseCallback):
     def _on_training_start(self) -> None:
         self._reconcile_with_model()
         points = self.curves["deterministic"].points
+        seen = {skill for _, result, _ in points for skill in result.skills}
+        self.added_skills = [skill for skill in self.skill_names if points and skill not in seen]
+        self.added_at = self.num_timesteps
         if points and points[-1][0] == self.num_timesteps:
             # Resumed right at the last evaluation: evaluate only skills added since (their zero-shot point).
             missing = [skill for skill in self.skill_names if skill not in points[-1][1].skills]
@@ -105,7 +112,6 @@ class MetricsCallback(BaseCallback):
         else:
             self._evaluate()
         self.next_evaluation_step = self.num_timesteps + self.eval_interval
-        self.next_stop_evaluation_step = self.num_timesteps + self.stop_eval_interval
 
     def _reconcile_with_model(self) -> None:
         """On resume, drop curve points after the model's step (written after its last checkpoint) and,
@@ -133,10 +139,12 @@ class MetricsCallback(BaseCallback):
         if self.num_timesteps >= self.next_evaluation_step:
             self._evaluate()
             self.next_evaluation_step += self.eval_interval
-        if self.stop_skills and self.stop_eval_interval and self.num_timesteps >= self.next_stop_evaluation_step:
+        added_offset = self.num_timesteps - self.added_at
+        if (self.added_skills and self.next_added_evaluation < self.eval_interval
+                and added_offset >= self.next_added_evaluation):
             if self.curves["deterministic"].last_step != self.num_timesteps:
-                self._evaluate(self.stop_skills)  # finer steps to threshold for the skills that decide the stop
-            self.next_stop_evaluation_step += self.stop_eval_interval
+                self._evaluate(self.added_skills)  # dense early: 1k, 2k, 4k, ... after the skills were added
+            self.next_added_evaluation *= 2
         return self.stop_reason is None
 
     def _on_training_end(self) -> None:
