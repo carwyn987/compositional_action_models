@@ -158,12 +158,13 @@ class FetchScriptedPushPolicy(Policy):
     """Push the block (first argument) along the table to its goal (push_goal: a region, or beside the second
     argument): move above a point behind the block (opposite the goal), lower to the block's height with the
     gripper closed, then push toward the goal and stop there. A goal that differs along both axes (the
-    diagonal) is reached in two straight pushes, x then y: pushing a cube diagonally hits a corner and spins it."""
+    diagonal) is reached in two straight pushes, x then y: pushing a cube diagonally hits a corner and spins it.
+    While pushing it steers toward the goal, so a block that drifts sideways is pushed back on course."""
 
     BEHIND = BLOCK_HALF_SIZE + 0.03  # gripper centre this far behind the block centre while pushing
     HOVER = 0.08
     REACHED_TOLERANCE = 0.01
-    LEG_DONE = 0.025  # block within this of a leg's goal along the leg (goals are 3 cm inside their region)
+    LEG_DONE = 0.025  # block within this of a leg's goal along the leg (goals are mid-band, 4 cm inside their region)
 
     def reset(self) -> None:
         self.legs: list[np.ndarray] | None = None
@@ -189,6 +190,10 @@ class FetchScriptedPushPolicy(Policy):
             offset = goal - block[:2]
             self.direction = offset / max(np.linalg.norm(offset), 1e-6)
         behind = np.array([*(block[:2] - self.BEHIND * self.direction), block[2]])
+        if self.phase == "rise":  # straight up first, so moving to the next leg's start does not sweep the block
+            target = np.array([gripper[0], gripper[1], block[2] + self.HOVER])
+            if gripper[2] >= block[2] + self.HOVER - self.REACHED_TOLERANCE:
+                self.phase = "approach"
         if self.phase == "approach":
             target = behind + [0.0, 0.0, self.HOVER]
             if np.linalg.norm(gripper - target) < self.REACHED_TOLERANCE:
@@ -197,11 +202,14 @@ class FetchScriptedPushPolicy(Policy):
             target = behind
             if np.linalg.norm(gripper - target) < self.REACHED_TOLERANCE:
                 self.phase = "push"
-        if self.phase == "push":  # along the push: stop behind the goal; across it: follow the block's centre
-            across = np.array([-self.direction[1], self.direction[0]])
-            target_xy = goal - self.BEHIND * self.direction + across * np.dot(block[:2] - goal, across)
-            target = np.array([*target_xy, block[2]])
+        if self.phase == "push":
+            # Aim just ahead of the point behind the block, along the block -> goal direction recomputed each step:
+            # pushes through the block's centre and steers it back if it drifts sideways; slows down at the goal.
+            to_goal = goal - block[:2]
+            distance = float(np.linalg.norm(to_goal))
+            heading = to_goal / distance if distance > 0.005 else self.direction
+            target = np.array([*(block[:2] - self.BEHIND * heading + min(distance, 0.05) * heading), block[2]])
         return servo(gripper, target, CLOSE)
 
     def start_leg(self) -> None:
-        self.phase, self.direction = "approach", None
+        self.phase, self.direction = "rise", None

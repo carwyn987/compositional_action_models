@@ -95,6 +95,8 @@ def test_dropped_means_let_go_in_the_air():
     assert not dropped(putdown, info(high, GRIPPING, high))  # still held
     assert not dropped(putdown, info(FAR, OPEN, [1.2, 0.6, TABLE_REST_Z + 0.01]))  # released just above the table
     assert not dropped(putdown, info(FAR, OPEN, ON_BLOCK1))  # resting on a block
+    assert not dropped(putdown, info(FAR, OPEN, ON_BLOCK1 + [0, 0, 0.015]))  # released 1.5 cm above a block
+    assert dropped(putdown, info(FAR, OPEN, ON_BLOCK1 + [0, 0, 0.05]))  # let go 5 cm above a block
 
 
 @pytest.mark.unit
@@ -108,6 +110,7 @@ def test_regions_are_global_areas_of_the_table_and_push_goals_lie_inside_them():
     assert {fact("at-left", "block0"), fact("at-front", "block0")} <= result
     assert not {fact("at-right", "block0"), fact("at-back", "block0")} & result
     assert fact("at-left", "block0") not in facts(left_front + [0, 0, 0.05], GRIPPING, left_front + [0, 0, 0.05])  # held
+    assert fact("at-left", "block0") not in facts(FAR, OPEN, centre + [0.0, 0.20, 0.0])  # past the band
 
     state = FetchState(np.array(FAR), OPEN, {"block0": centre.copy(), "block1": BLOCK1})
     diagonal = build_skill("push-left-front", {"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})

@@ -45,6 +45,7 @@ class PutdownAfterPickup(PutdownSkill):
     """putdown set up by plain pickup, which this symbolic stand-in can run (it has no raised)."""
 
     setup_skills = ("pickup",)
+    setup_alternatives = ()
 
 
 class GraspTarget(Policy):
@@ -104,6 +105,28 @@ def test_failure_condition_ends_the_episode_unsuccessfully():
     env.reset(seed=0)
     _, _, terminated, _, info = env.step(WAIT)
     assert terminated and info["failed"] and info["is_success"] == 0.0
+
+
+@pytest.mark.unit
+def test_a_failure_overrides_effects_that_hold():
+    """If the failure condition holds on a step where the effects hold, the episode fails."""
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)],
+                           failure_conditions={"pickup": lambda grounded, info: True})
+    _, info = env.reset(seed=0)
+    _, _, terminated, _, info = env.step(grasp(info["grounded_action_model"].arguments[0]))
+    assert terminated and info["failed"] and info["is_success"] == 0.0
+
+
+@pytest.mark.unit
+def test_each_episode_uses_one_of_the_skills_setup_chains():
+    class PutdownEitherWay(PutdownSkill):
+        setup_skills = ("pickup",)
+        setup_alternatives = (("pickup", "putdown", "pickup"),)
+
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownEitherWay(PDDL_CONFIG)],
+                           {"pickup": GraspTarget(), "putdown": Release()})
+    chains = {len(env.reset(seed=seed)[1]["setup"]) for seed in range(20)}
+    assert chains == {1, 3}
 
 
 @pytest.mark.unit

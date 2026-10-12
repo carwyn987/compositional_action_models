@@ -29,6 +29,9 @@ class Skill(ABC):
     # on the environment's reset distribution: Fetch resets with every block on
     # the table, so putdown needs ("pickup",) and unstack ("pickup", "stack").
     setup_skills: tuple[str, ...] = ()
+    # Other setup chains, each an alternative to setup_skills; each episode uses one of them, chosen at random
+    # (e.g. putdown: from a block held just off the table, or held high).
+    setup_alternatives: tuple[tuple[str, ...], ...] = ()
 
     def __init__(self, config: dict):
         self.config = config

@@ -127,6 +127,13 @@ class CompositionWeightDecayCallback(BaseCallback):
     and its weights drift upward (its raw output grew from ~2.5 to ~2800 in 500k SAC steps), slowing how
     much each update changes what the policy sees. After every gradient update this multiplies each parameter
     under a features extractor's `composition` by (1 - learning_rate * weight_decay), pulling the scale back.
+
+    Weight decay has no task-specific learning direction: it simply shrinks every parameter toward zero. The
+    learning signal has to keep re-growing what it needs, so the scale settles where the two balance.
+    Drawbacks: too strong a decay shrinks features the task needs (the composition underfits, operators
+    blur together) and acts as a constant pull against learning; it shrinks every composition parameter
+    alike, including component embeddings of rarely seen predicates, which get few gradient updates to
+    restore them; and it adds a setting to tune (watch operator_embedding_magnitude_before_normalization).
     """
 
     def __init__(self, weight_decay: float):

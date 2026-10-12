@@ -12,11 +12,13 @@ class PickupSkill(Skill):
 
 
 class PutdownSkill(Skill):
-    """Put a held block down on the table. Set up by pickup-raised, so the block starts 30 cm up and has to
-    be lowered: with a plain pickup it starts ~1 cm up and letting go is enough."""
+    """Put a held block down on the table. Each episode starts from either setup at random: pickup (the block
+    held just off the table) or pickup-raised (held 30 cm up, so it must be lowered before letting go: a drop
+    is a failure)."""
 
     name = "putdown"
-    setup_skills = ("pickup-raised",)
+    setup_skills = ("pickup",)
+    setup_alternatives = (("pickup-raised",),)
 
 
 class StackSkill(Skill):

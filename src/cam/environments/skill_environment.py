@@ -77,12 +77,15 @@ class SkillEnvironment(gym.Wrapper):
         if not skills:
             raise ValueError("SkillEnvironment needs at least one skill")
         self.skills = {skill.name: skill for skill in skills}
-        self.setup_chains = {
-            skill.name: [build_skill(name, skill.config) for name in skill.setup_skills] for skill in skills
+        self.setup_chains = {  # skill -> its setup chains (one chosen at random per episode)
+            skill.name: [[build_skill(name, skill.config) for name in chain]
+                         for chain in (skill.setup_skills, *skill.setup_alternatives)]
+            for skill in skills
         }
         self.setup_policies = setup_policies or {}
         missing = sorted(
-            {name for skill in skills for name in skill.setup_skills if name not in self.setup_policies}
+            {setup.name for chains in self.setup_chains.values() for chain in chains for setup in chain
+             if setup.name not in self.setup_policies}
         )
         if missing:
             raise ValueError(f"no setup policy for {missing}")
@@ -119,13 +122,15 @@ class SkillEnvironment(gym.Wrapper):
 
     def step(self, action):
         obs, _, terminated, truncated, info = self.env.step(action)
-        held = self.grounded_action_model.effects_hold(info["facts"])
+        # A failure takes precedence: a step where the failure condition holds never counts toward success,
+        # even if the effects hold then (e.g. a dropped block that lands in place), and ends the episode.
+        failure = self.failure_conditions.get(self.skill.name)
+        failed = failure is not None and failure(self.grounded_action_model, info)
+        held = self.grounded_action_model.effects_hold(info["facts"]) and not failed
         self.steps_effects_held = self.steps_effects_held + 1 if held else 0
         success = self.steps_effects_held >= self.success_hold_steps
         reward_function = self.reward_functions[self.skill.name]
         reward, components = reward_function(self.grounded_action_model, action, info, success)
-        failure = self.failure_conditions.get(self.skill.name)
-        failed = not success and failure is not None and failure(self.grounded_action_model, info)
         info = {**self._annotate(info, success), "reward_components": components, "failed": failed}
         return obs, reward, terminated or success or failed, truncated, info
 
@@ -140,7 +145,7 @@ class SkillEnvironment(gym.Wrapper):
     def _check_scene_has_objects_for(self, skill: Skill, objects: dict[str, str]) -> None:
         """Raise ValueError if the skill or a setup skill has no grounding at all over the scene's objects
         (e.g. stack needs two distinct blocks), since then setup could never succeed."""
-        for needed in [*self.setup_chains[skill.name], skill]:
+        for needed in [*(setup for chain in self.setup_chains[skill.name] for setup in chain), skill]:
             if not groundings(needed.symbolic_action_model, objects):
                 parameters = ", ".join(f"{p.name} - {p.type}" for p in needed.symbolic_action_model.parameters)
                 raise ValueError(
@@ -148,9 +153,11 @@ class SkillEnvironment(gym.Wrapper):
                 )
 
     def _run_setup_chain(self, obs, info):
-        """Execute each setup skill of the episode's skill in order; setup=None if any fails."""
+        """Execute each setup skill of one of the episode skill's setup chains (chosen at random) in order;
+        setup=None if any fails."""
+        chains = self.setup_chains[self.skill.name]
         setup = []
-        for setup_skill in self.setup_chains[self.skill.name]:
+        for setup_skill in chains[self.np_random.integers(len(chains))]:
             grounded = self._choose_grounding(setup_skill, info)
             if grounded is None:
                 logger.info("setup failed: no applicable grounding of %s", setup_skill.name)
