@@ -1,7 +1,6 @@
-# Project status and fixes
+# Project status
 
-State of the code, what the experiments so far show, and what to change next. Written 2026-10-11,
-updated on branch `rq-fixes`. Each section says what is done and what is still open.
+State of the code, what the experiments so far show, what is still open, and what to change next.
 
 ## 1. Compositional embedding magnitude growth
 
@@ -22,7 +21,7 @@ constant, so a step changes the normalized output less as the weights grow. The 
 slowly late in training. An earlier note said "1000× slower": that overstates it. The slowdown is set by
 each layer's weight growth, not by the full output growth, and hasn't been measured.
 
-**Fixes** (A is implemented: `--composition-weight-decay`, default 0.01):
+**Fixes** (A is implemented: `--composition-weight-decay`, default 0.01, compositional runs only):
 
 | fix | how it works | trade-off |
 | --- | --- | --- |
@@ -33,7 +32,7 @@ each layer's weight growth, not by the full output growth, and hasn't been measu
 | E. Norm-aware optimizer (LAMB/LARS) | step size proportional to ‖w‖ | treats the symptom; a different optimizer for one module |
 | F. Penalty on the raw magnitude | a backward hook adds the gradient of λ(‖raw‖ − 1)² | direct, but hacky inside Stable-Baselines3's losses |
 
-**File changes for A** (done):
+**A, as implemented** (`CompositionWeightDecayCallback`):
 - `src/cam/training/stable_baselines3_trainer.py`: add `CompositionWeightDecayCallback(weight_decay)`.
   On each step it reads how many gradient updates happened since the last call (`model._n_updates`) and
   multiplies every parameter under each features extractor's `.composition` by (1 − lr·wd)^updates.
@@ -45,8 +44,11 @@ each layer's weight growth, not by the full output growth, and hasn't been measu
   `operator_embedding_magnitude_before_normalization` bounded.
 - `scripts/overnight_runs.py`: pass the option to compositional runs.
 
-Tune wd by watching `operator_embedding_magnitude_before_normalization/*`: it should settle at O(1–10)
-instead of growing.
+Weight decay has no task-specific learning direction: it shrinks every parameter toward zero, and the
+learning signal has to keep re-growing what it needs. Too strong, and the composition underfits and
+operators blur together. It also shrinks the embeddings of rarely seen predicates, which get few updates to
+recover. Tune wd by watching `operator_embedding_magnitude_before_normalization/*`: it should settle at
+O(1–10) instead of growing.
 
 ## 2. State of the code
 
@@ -54,8 +56,8 @@ instead of growing.
 Fetch simulator (`FetchMultiBlock-v0`, 1–5 blocks), wrapped from the inside out:
 1. `FetchEnvStateAnnotationWrapper`: named state, including block positions and rotations.
 2. `FetchPredicateEvaluationWrapper`: the facts true in the current state.
-3. `SkillEnvironment`: per episode, picks a skill, runs its setup chain with scripted policies, picks a
-   random applicable grounding, and computes success and reward.
+3. `SkillEnvironment`: per episode, picks a skill, runs one of its setup chains with scripted policies,
+   picks a random applicable grounding, and computes success, failure and reward.
 4. `TimeLimit`.
 5. `PolicyObservationWrapper`: builds `{observation, operator_embedding, grounding}`.
 
@@ -74,71 +76,75 @@ centre at z = 0.425, and a block stacked on another has its centre at 0.475.
 | `on(b, c)` | b rests on c: within half a block horizontally, one block height above it |
 | `clear(b)` | nothing on b and not held |
 | `gripper-empty` | no block gripped (fingers open, or closed on nothing) |
-| `raised(b)` | held, centre at least `RAISED_HEIGHT` = **0.30** above table rest (25 cm above a stacked start) |
+| `raised(b)` | held, centre **30–36 cm** above table rest (a band: it must be stopped there, not just passed) |
 | `beside(b, c)` | both on the table, centres 5.5–10 cm apart (reset places blocks ≥ 10 cm apart) |
-| `at-left/right/front/back(b)` | on the table, ≥ 10 cm from the centre of the reset area (1.34, 0.75) in that direction (front = toward the robot) |
+| `at-left/right/front/back(b)` | on the table, **10–18 cm** from the centre of the reset area (1.34, 0.75) in that direction (front = toward the robot, left = +y) |
 
-Grasping skills succeed only once the block is lifted, and placing skills only once it is released.
-Success is **settled**: the effects must hold for `--success-hold-steps` (default 5) consecutive steps. A
-placing skill **fails** if its block is let go in the air (`dropped`: more than 2 cm above the table, not on
-a block).
+**Success is settled:** the effects must hold for `--success-hold-steps` (default 5) consecutive steps.
+**Failure conditions** end an episode unsuccessfully and take precedence over success: a step where one
+holds never counts toward success. The placing skills (putdown, stack, place-beside) fail if their block is
+**dropped**, i.e. let go more than `DROP_HEIGHT` (2 cm) above its support, the table or the block below.
+Grasping skills therefore succeed only once the block is lifted (and held), and placing skills only once it
+is released.
 
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 
-| skill | operator | setup chain | scripted policy | shaped reward |
+| skill | operator | setup | scripted policy | shaped reward |
 | --- | --- | --- | --- | --- |
-| pickup(?o) | classic blocksworld + `(not (raised ?o))` (hold it low) | – | approach, descend, close, lift | staged pickup |
-| putdown(?o) | classic | **pickup-raised** (starts 30 cm up) | lower, open | staged putdown (gentle, square, smoothness, jerk) |
+| pickup(?o) | classic blocksworld + `(not (raised ?o))`: hold it low | – | approach, descend, close, lift | staged pickup |
+| putdown(?o) | classic | pickup **or** pickup-raised (random per episode) | lower, open | staged putdown (gentle, square, smoothness, jerk) |
 | stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack (+ smoothness, jerk) |
 | unstack(?o ?u) | classic + `(not (raised ?o))` | pickup, stack | pickup motion | pickup's stages, lift from the block below |
-| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift target 31 cm |
-| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift target 26 cm above the base rest |
+| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift target 33 cm |
+| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift target 28 cm above the base rest |
 | place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u along x | stack's stages, target ring around ?u |
-| push-left/right/front/back(?o) | pre `(not (at-X ?o))`, eff `(at-X ?o)` | – | behind the block, lower, push | reach behind, push progress |
-| push-left-front(?o) | push-left + `(at-front ?o)` (held out) | – | two straight pushes | as push |
+| push-left/right/front/back(?o) | pre `(not (at-X ?o))`, eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | reach behind, push progress |
+| push-right-front, push-left-back, push-right-back, push-left-front(?o) | both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | pre `(not (beside ?o ?u))`, eff `(beside ?o ?u)` | – | push toward ?u | as push |
 
-Every scripted policy succeeds with 5-step settled success: the pick/place skills 10/10 and the pushes 18–20/20
-(with 3 blocks, another block sometimes lies on a straight push path), with 2 and 3 blocks.
+`push-left-front` is held out for testing; the other three diagonals are trained. Every scripted policy
+succeeds with 5-step settled success (2 and 3 blocks): pick/place skills 10/10, pushes 18–20/20 (with 3
+blocks another block can lie on a straight push path).
 
-### Operator embedding conditions (`--operator-encoder`)
+### Operator embedding conditions (`--operator-encoder`, `--operator-embedding-dim 256`)
 - **Identity only:** one-hot (indexed by registry order, so indices don't depend on the training
   skills); random (a fixed vector per name).
-- **Structure, nothing learned:** multi-hot (literal features: 192 of `--operator-embedding-dim` 256); text (a paragraph or the PDDL, embedded by OpenAI `text-embedding-3-small` or the
-  offline mock, which only matches shared character snippets).
-- **Learned:** `--trainable-operator-embedding` (a learnable linear layer on top); compositional
-  (tree / slots / geometric, composed inside the policy and normalized to magnitude 1).
+- **Structure, nothing learned:** multi-hot (192 literal features); text (a paragraph or the PDDL,
+  embedded by OpenAI `text-embedding-3-small` or the offline mock, which only matches shared character
+  snippets).
+- **Learned:** `--trainable-operator-embedding` (a learnable linear layer on top); compositional (tree /
+  slots / geometric, composed inside the policy, normalized to magnitude 1, with composition weight decay).
 - `--operator-identity-aliases NEW=OLD` makes one-hot and random encode NEW exactly as OLD. This is the
   repair-hidden control.
 
 ### Metrics (`evaluation/`)
-Evaluated every `--eval-interval` steps with `--eval-episodes` per skill, deterministic and stochastic:
+Evaluated every `--eval-interval` steps (50k) with `--eval-episodes` (20) per skill, deterministic and
+stochastic. With `--stop-skills` (repair runs), those skills are also evaluated alone every
+`--stop-eval-interval` (5k) steps.
 - **success rate**;
 - **steps / episodes to threshold:** from the skill's first evaluation, until success ≥ 0.95;
 - **zero-shot:** the first evaluation of a skill;
 - **final success**;
 - **AUC:** the *average* success rate over the run (area under the curve divided by the steps). It stays
-  low if early success is low, even when the run ends at 100% (learnability pickup: 0 / 0.4 / 1 / 1 at
-  0/50k/100k/150k gives AUC 0.63). Compare AUC only between runs with the same budget.
+  low if early success is low, even when the run ends at 100%. Compare AUC only between runs with the same
+  budget.
 
 ### Scripts
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
-  runs the unit tests, writes `run_info.txt`, blocks sleep, then runs `overnight_runs.py` in the
-  foreground. Use tmux for overnight runs.
+  runs the unit tests, writes `run_info.txt`, blocks sleep, then runs `overnight_runs.py`.
 - **`scripts/overnight_runs.py`:**
-  - runs one at a time, printing each run's purpose and live progress; training runs as a child process
-    logging to `<OUT>/logs/`;
-  - pre-flight (fail fast): text backend usable, with every text embedded and cached (default
-    `TEXT_BACKEND=openai`); device; scripted policies; disk space;
-  - Ctrl+C saves and stops, and the same command resumes;
-  - groups learnability, rq1 and repair (repair-visible / repair-hidden), with a list of repair pairs
-    (`REPAIRS`, default `unstack:unstack-raised stack:place-beside push-left:push-left-front`);
-  - repaired skills are evaluated every 5k steps (`--stop-eval-interval`);
-  - conditions by default: one-hot, random, multi-hot-trainable, text, compositional tree / slots /
-    geometric.
+  - **runs `JOBS` (default 4) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
+    by side get through the plan several times faster;
+  - announces each run (what it trains, why), reports progress every minute and each outcome; training
+    runs as child processes logging to `<OUT>/logs/`;
+  - **pre-flight (fail fast):** text backend usable, with every text embedded and cached (default
+    `TEXT_BACKEND=openai`); device (`DEVICE=cuda` fails if unavailable); scripted policies; disk space;
+  - Ctrl+C saves and stops every run, and the same command resumes;
+  - **groups:** learnability (each skill alone), rq1 (one shared policy per condition and seed), repair
+    (each `FROM:TO` in `REPAIRS`, repair-visible and repair-hidden).
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training
-  statistics including embedding magnitudes, added and repaired skills (with an **invalid repair** flag
-  when repair-hidden succeeds zero-shot), and learned embedding geometry.
+  statistics including embedding magnitudes, added and repaired skills (with an **invalid repair** flag when
+  repair-hidden succeeds zero-shot), and learned embedding geometry.
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
 - **`scripts/start_tensorboard.sh`:** `LOGDIR=<folder> ./scripts/start_tensorboard.sh`.
 
@@ -175,66 +181,85 @@ normalization.
   pickup-raised teaches it to keep lifting. Repair runs also evaluated only every 50k steps, so
   steps-to-threshold could not separate conditions.
 
-## 4. Changes since that run
-On `repair-experiments` (merged in PR #7):
-- `raised` raised to 20 cm; a sequential overnight runner with pre-flight checks (OpenAI text by
-  default) and resume; compositional-geometric in the default conditions; repair variants renamed
-  repair-visible / repair-hidden; an invalid-repair flag in the review report; `--device`.
+## 4. Changes made after the 2026-10-10 run
+Each addresses something that run showed:
+- **Settled success,** so skills must stop in their goal state.
+- **Hold low unless asked:** pickup and unstack get `(not (raised ?o))`.
+- **`raised` as a 30–36 cm band:** 25 cm of lift from a stacked start, and it must be stopped and held.
+- **Non-trivial putdown:** sometimes set up 30 cm up; a drop is a failure; smoothness and jerk penalties.
+- **Failure precedence:** a failure is never counted as success.
+- **Composition weight decay.**
+- **Repaired skills evaluated every 5k steps.**
+- **Global regions** (10–18 cm bands) with push skills, the four diagonals (one held out) and
+  push-beside, so every literal of every held-out operator is seen in training.
+- **Runner:** a list of repair pairs; several runs at once.
 
-On `rq-fixes`:
-- **Settled success** (`--success-hold-steps 5`).
-- **Hold low unless asked:** pickup and unstack get `(not (raised ?o))`, and `raised` is now 30 cm.
-- **Non-trivial putdown:** set up by pickup-raised; a drop is a failure; smoothness and jerk penalties in
-  putdown and stack.
-- **Composition weight decay** (`--composition-weight-decay 0.01`).
-- **Repair resolution:** stop skills are evaluated every 5k steps, with no redundant evaluation after a
-  stop.
-- **Global regions and push skills,** with `push-beside`; `--operator-embedding-dim` 256.
-- **Runner:** a list of repair pairs; the pushes are in the default training skills.
+## 5. Open issues and proposals
+1. **Repair evaluation schedule.** `--stop-eval-interval` evaluates only the repaired skill, on a fixed 5k
+   grid. Lowering `--eval-interval` instead would evaluate *every* skill that often, about 10× the
+   evaluation cost. Better options:
+   - **(a) Dense-then-sparse schedule for newly added skills,** replacing `--stop-eval-interval`:
+     evaluate a skill at +1k, 2k, 4k, 8k, … steps after it was added, doubling up to `--eval-interval`,
+     then every `--eval-interval`. Precise early, where repair differences are, and cheap later.
+   - **(b) Steps to threshold from training episodes:** the per-skill rolling success rate of training
+     episodes (already logged as `success_rate/<skill>`) is free and continuous. Use it to detect the
+     crossing, and confirm with one evaluation.
+   - **(c) Cheaper intermediate evaluations:** fewer episodes (e.g. 5) between the full evaluations.
 
-## 5. Known issues and planned fixes
-Done on `rq-fixes`: putdown non-triviality, settled success, raised reached by overshoot, repair
-resolution, held-out operators with literals seen in training, several repair pairs, and the redundant
-evaluation. Still open:
-
-1. **Sequential runtime.** The default plan is 47 runs: 13 learnability; 7 RQ1 on 10 skills; 27 repair
-   (3 pairs × 7 conditions, plus 2 repair-hidden per pair). At single-process CPU speeds that's about
-   **83 hours**. A GPU may help, unmeasured. Options:
-   - fewer conditions or steps per night (`CONDITIONS`, `*_STEPS`);
-   - groups split across nights (`RUN_GROUPS`);
-   - parallel jobs on many-core CPUs (the parallel bash runner is in git history,
-     `d6c7c0d3:scripts/overnight_runs.sh`).
-2. **The RQ1 budget.** 500k steps for 10 skills is about 50k per skill. Learnability shows single skills
-   need 50–150k, so expect partial learning. Consider `RQ1_STEPS=1000000` once runtime allows.
-3. **One seed.** Use 3+ seeds before ranking conditions.
-4. **`stack` → `place-beside` is a larger edit** than the other repairs: a parameter's role, the
-   preconditions and several effects change. Treat it as a new-skill test more than a one-literal repair.
-5. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; about 1 GB per run).
-   Repair runs start fresh, the same for every condition.
-6. **Old runs don't resume:** the predicate set changed again (regions), so multi-hot features,
-   compositional ids and the embedding size (256) differ.
-7. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
+   (a) or (a)+(b) is recommended.
+2. **Runtime.** The default plan is 50 runs: 13 learnability; 7 RQ1 on 13 skills; 27 repair (3 pairs × 7
+   conditions, plus 2 repair-hidden per pair). With 4 jobs the first estimate is about a day at typical CPU
+   speeds; the runner refines it after the first runs. Trim with `RUN_GROUPS`, `CONDITIONS` or `*_STEPS`,
+   or raise `JOBS`.
+3. **RQ1 budget.** 500k steps for 13 skills is about 40k per skill, and single skills need 50–150k, so
+   expect partial learning. Consider `RQ1_STEPS=1000000` once runtime allows.
+4. **One seed.** Use 3+ seeds before ranking conditions.
+5. **`stack` → `place-beside` is a larger edit** than the other repairs (a parameter's role, the
+   preconditions and several effects change). Read it as a new-skill test more than a one-literal repair.
+6. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; about 1 GB per run),
+   the same for every condition.
+7. **Old runs don't resume:** the predicate set and the embedding size (256) changed.
+8. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
    them.
 
 ## 6. Future work
+- **Rotation skills.** For example `rotate-90(?o)` and `rotate-180(?o)`, with a held-out in-between angle
+  (`rotate-45`) or a chain (rotate, then place offset) to test generalization. This needs two things the
+  setup lacks:
+  - **a way to rotate:** Fetch's action is (dx, dy, dz, gripper) with a fixed downward wrist, so the robot
+    can only turn a block by pushing it off-centre. That calls for an environment variant with wrist yaw
+    control (a 5-D action);
+  - **orientation predicates:** global yaw bands from the block's orientation (e.g. `yaw-0`, `yaw-45`,
+    `yaw-90`), like the regions. A cube looks the same every 90°, but the simulator tracks its body yaw, so
+    the predicates can use it.
+- **A drop skill** (`drop(?o)`: holding → on-table, released from height). Its effects would match
+  putdown's, so it can only be told apart from putdown by its name, plus a literal such as a `(dropped ?o)`
+  marker. Use: a control for operators that are structurally identical but behave differently (where
+  structure-based embeddings *should* fail), and a contrast that makes "lower first" depend on the operator.
 - **RQ2 (new skills):** the protocol from `docs/research_focus.md`: add skills one at a time to a
-  growing training set, measure steps to threshold for each new skill, and shuffle the order across
-  seeds. The repair mechanism (resume with added skills) already supports this.
+  growing training set, measure steps to threshold for each new skill, and shuffle the order across seeds.
+  Resume-with-added-skills already supports it.
 - **RQ4 (hypernetworks):** first FiLM conditioning (the embedding scales and shifts the state features),
   then a real hypernetwork: a custom SB3 SAC actor whose action head weights come from the operator
   embedding (low-rank: W(e) = U·diag(h(e))·V). The learnability runs are the "individually trained
   policies" baseline.
 - **RQ5 (does the embedding encode structure?):** linear probes from each learned embedding to its
-  literals, with the multi-hot vector as the target.
+  literals (multi-hot as the target). A 2-D PCA plot of embeddings moving during training would help; one
+  existed in the original implementation (`plot_embeddings.py`, git commit 59054395).
 - **RQ6 (behavioural sensitivity):** remove one literal at a time and compare behaviour.
+- **From the original implementation** (git commit 59054395): behaviour-cloning warm starts from the
+  scripted policies (`fetch_blockworld/teacher.py`), keyboard teleoperation with live facts
+  (`experimental/manual_fetch.py`), and a penalty on rotating the block in the push reward.
 - **Statistics:** 3–5 seeds per condition, mean ± std or bootstrap intervals in `review_runs.py`.
 
 ## 7. How to run
 ```bash
-./scripts/start_overnight.sh                     # inside tmux; plan, checks, then each run explained
-DRY_RUN=1 ./scripts/start_overnight.sh           # the plan and its time estimate only
-RUN_GROUPS=learnability ./scripts/start_overnight.sh
+./scripts/start_overnight.sh                       # plan, checks, then 4 runs at a time, each explained
+DEVICE=cuda ./scripts/start_overnight.sh           # on a GPU
+DRY_RUN=1 ./scripts/start_overnight.sh             # the plan and its time estimate only
+RUN_GROUPS=learnability JOBS=6 ./scripts/start_overnight.sh
 CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh
-./scripts/review_runs.py outputs/overnight_<date>   # the report, at any time
+./scripts/review_runs.py outputs/overnight_<date>  # the report, at any time
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
+./scripts/run_skill.py --policy model --run-directory <run> --skill <skill> --render   # watch a trained skill
 ```
