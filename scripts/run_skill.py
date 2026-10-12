@@ -56,6 +56,7 @@ DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model
     "text_embedding_cache": "outputs/text_embedding_cache.json",
     "max_operator_arity": 3,
     "max_steps_per_episode": 100,
+    "success_hold_steps": 5,
     "seed": 0,
 }
 
