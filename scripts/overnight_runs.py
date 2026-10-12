@@ -1,38 +1,42 @@
 #!/usr/bin/env python3
-"""Overnight experiments for the research questions, run one at a time, explained as they go.
+"""Overnight experiments for the research questions: a plan of training runs, executed and explained.
 
     ./scripts/start_overnight.sh                     # usual way: environment checks + unit tests, then this
     .venv/bin/python scripts/overnight_runs.py       # this runner alone
     DRY_RUN=1 .venv/bin/python scripts/overnight_runs.py              # print the plan, run nothing
-    RUN_GROUPS="learnability" SEEDS="0 1" .venv/bin/python scripts/overnight_runs.py
+    RUN_GROUPS="learnability" SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py
 
-Runs execute sequentially, so each has the whole machine (and the GPU, if there is one) to itself. For
-each run the terminal shows what is trained, why (which research question or check), live progress
-(steps, steps/s, time left), and the outcome; the training itself runs as a child process whose full
-output goes to <OUT>/logs/<label>.log. Ctrl+C stops the current run after it saves; starting again skips
-finished runs and continues an interrupted one from its last save.
+How it runs
+  * Up to JOBS runs at once (default 4). One run uses a fraction of a GPU or CPU: SAC alternates a
+    simulator step (CPU) with one small gradient step, so several runs side by side get through the plan
+    several times faster. JOBS=1 runs one at a time.
+  * Each run is a child process (main.py) whose full output goes to <OUT>/logs/<label>.log. The terminal
+    shows, as each run starts, what it trains and why (which research question or check it serves);
+    while runs go, their progress (steps, steps/s, time left) and the overall time left; when one ends,
+    its outcome. A repair run waits for the RQ1 run it continues.
+  * Ctrl+C stops every running run after it saves. Starting the same command again skips finished runs and
+    resumes interrupted ones from their last save.
+  * Before anything long starts (fail fast): the text backend is checked and every operator text the runs
+    need is embedded and cached (TEXT_BACKEND=openai needs the API key and network), the device is reported,
+    and every skill's scripted policy must succeed (which checks each skill's setup and predicates).
 
-Before anything long starts (fail fast): the text backend is checked and every operator text the runs
-need is embedded and cached (with TEXT_BACKEND=openai this needs the API key and network), the device is
-reported, and every skill's scripted policy must succeed, which checks the skill's setup and predicates.
-
-Groups:
-  learnability  each skill alone (BASE_SKILLS and every repaired skill), multi-hot: can it be trained at all, and
-                how fast? These single-skill policies are also the "individual policy" baseline of RQ4.
+Groups
+  learnability  each skill alone (BASE_SKILLS and every repaired skill), multi-hot: can it be trained at
+                all, and how fast? Also the "individual policy" baseline for RQ4 (hypernetworks).
   rq1           RQ1: one shared policy on BASE_SKILLS for each operator embedding condition (CONDITIONS)
                 and seed: steps to threshold, AUC and final success per condition.
-  repair        RQ2 / RQ3: for each pair FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by
-                its repaired version TO: TO's zero-shot success at the resume step, then the steps it
-                needs to reach the success threshold (TO evaluated every 5k steps). Two variants:
+  repair        RQ2 / RQ3: for each FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by its
+                repaired version TO: TO's zero-shot success at the resume step, then the steps it needs to
+                reach the success threshold (TO evaluated every 5k steps). Two variants:
                   repair-visible  the repaired operator is encoded on its own: content-based embeddings
                                   (multi-hot, text, compositional) show the changed literals; one-hot and
                                   random give it a code no training has used
                   repair-hidden   (ALIAS_CONDITIONS only) the repaired operator gets exactly FROM's
                                   embedding (--operator-identity-aliases), so the policy cannot see the
                                   repair. A control: if it succeeds zero-shot, the repair needs no new
-                                  behaviour and the test is invalid.
+                                  behaviour and the test is invalid (review.txt flags it).
 
-Outputs, under OUT (default outputs/overnight_<date>):
+Outputs, under OUT (default outputs/overnight_<date>)
   learnability/<skill>/<run name>/, rq1/<condition>_seed<n>/<run name>/   run directories (metrics.json,
                                                                             model.zip, tensorboard/, ...)
   repair/<TO>/<condition>_<repair-visible|repair-hidden>_seed<n>/          copy of the rq1 run, continued
@@ -40,17 +44,18 @@ Outputs, under OUT (default outputs/overnight_<date>):
   summary.csv        per run and skill metrics     review.txt   scripts/review_runs.py's report
 View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 
-Settings (environment variables, defaults in brackets):
+Settings (environment variables, defaults in brackets)
   OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  ALGORITHM [sac]  SEEDS ["0"]
+  JOBS [4] runs at once   DEVICE [auto]   THREADS [cores / JOBS] torch threads per run   DRY_RUN [0]
   CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
               compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
   TEXT_BACKEND [openai] (the text condition and compositional name embeddings; mock: offline, no meaning)
-  BASE_SKILLS [pickup putdown stack unstack pickup-raised push-left push-right push-front push-back push-beside]
+  BASE_SKILLS [pickup putdown stack unstack pickup-raised push-left push-right push-front push-back
+               push-right-front push-left-back push-right-back push-beside]
   REPAIRS ["unstack:unstack-raised stack:place-beside push-left:push-left-front"] (FROM:TO pairs; every
           literal of each TO appears in some base skill, so a policy reading the operator can use it)
   LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000]
-  EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]  DEVICE [auto]
-  THREADS [torch's default] torch threads per run   DRY_RUN [0]
+  EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]
 """
 
 import csv
@@ -84,8 +89,10 @@ CONDITIONS = setting(
 ).split()
 ALIAS_CONDITIONS = setting("ALIAS_CONDITIONS", "one-hot random").split()
 TEXT_BACKEND = setting("TEXT_BACKEND", "openai")
-BASE_SKILLS = setting(
-    "BASE_SKILLS", "pickup putdown stack unstack pickup-raised push-left push-right push-front push-back push-beside"
+BASE_SKILLS = setting(  # the training skills; held-out operators (REPAIRS' TO) only appear in repair runs
+    "BASE_SKILLS",
+    "pickup putdown stack unstack pickup-raised push-left push-right push-front push-back "
+    "push-right-front push-left-back push-right-back push-beside",
 ).split()
 REPAIRS = [tuple(pair.split(":")) for pair in
            setting("REPAIRS", "unstack:unstack-raised stack:place-beside push-left:push-left-front").split()]
@@ -97,8 +104,10 @@ EVAL_INTERVAL = int(setting("EVAL_INTERVAL", "50000"))
 EVAL_EPISODES = int(setting("EVAL_EPISODES", "20"))
 SAVE_INTERVAL = int(setting("SAVE_INTERVAL", "50000"))
 DEVICE = setting("DEVICE", "auto")
-THREADS = setting("THREADS", "")
+JOBS = max(1, int(setting("JOBS", "4")))
+THREADS = setting("THREADS", str(max(1, (os.cpu_count() or 1) // JOBS)))  # no CPU oversubscription
 DRY_RUN = setting("DRY_RUN", "0") == "1"
+STATUS_EVERY = 60 if sys.stdout.isatty() else 600  # seconds between progress reports while runs go
 
 # Operator embedding conditions: name -> (main.py options, what the policy is told about the skill).
 CONDITION_OPTIONS = {
@@ -120,7 +129,8 @@ CONDITION_OPTIONS = {
         "the operator's components on a grid, read by a CNN and slot attention",
     ),
 }
-# Rough single-process SAC steps/s per condition, for the first time estimate; replaced by measurements.
+# Rough single-run SAC steps/s per condition on a CPU, for the first time estimate; replaced by the speeds
+# measured as runs finish.
 EXPECTED_RATE = {"compositional-tree": 24, "compositional-slots": 23, "compositional-geometric": 18}
 DEFAULT_RATE = 40
 COMMON = [
@@ -129,7 +139,6 @@ COMMON = [
     "--save-interval", str(SAVE_INTERVAL), "--text-backend", TEXT_BACKEND,
 ]
 PROGRESS = re.compile(r"(\d[\d,]*)/(\d[\d,]*)\s")
-INTERACTIVE = sys.stdout.isatty()
 
 
 @dataclass
@@ -322,54 +331,119 @@ def check_scripted_policies(skills: list[str]) -> None:
 # ---------------------------------------------------------------- running
 
 
+@dataclass
+class Job:
+    """A run in progress: its child process and what is needed to report its progress."""
+
+    run: Run
+    index: int
+    process: subprocess.Popen
+    log: object
+    started: float
+    samples: list  # recent (time, steps done) pairs, for the speed
+
+
 class Runner:
+    """Executes the plan: up to JOBS runs at once, each announced, followed and reported."""
+
     def __init__(self, runs: list[Run]):
         self.runs = runs
-        self.rates: dict[str, float] = {}  # measured steps/s per condition
+        self.rates: dict[str, float] = {}  # measured steps/s per condition (at the current parallelism)
+        self.done: set[str] = set()
         self.failed: set[str] = set()
         self.started = time.monotonic()
-        self.child: subprocess.Popen | None = None
+        self.jobs: list[Job] = []
+        self.last_status = 0.0
+
+    # ---- time estimates
 
     def rate(self, condition: str) -> float:
+        """Steps/s of one run of this condition: measured if one finished, else the rough default, scaled by
+        how fast this machine was on the conditions measured so far."""
         if condition in self.rates:
             return self.rates[condition]
-        if self.rates:  # scale the default by what this machine measured so far
+        if self.rates:
             measured = [self.rates[c] / EXPECTED_RATE.get(c, DEFAULT_RATE) for c in self.rates]
             return EXPECTED_RATE.get(condition, DEFAULT_RATE) * sum(measured) / len(measured)
         return EXPECTED_RATE.get(condition, DEFAULT_RATE)
 
-    def estimate(self, runs: list[Run]) -> float:
-        return sum(run.steps / self.rate(run.condition) for run in runs if not run.finished())
+    def time_left(self) -> float:
+        """Seconds until the plan is done: the runs not finished, spread over JOBS parallel slots."""
+        seconds = 0.0
+        for run in self.runs:
+            if run.label in self.done or run.label in self.failed:
+                continue
+            job = next((job for job in self.jobs if job.run is run), None)
+            left = run.steps - (self.progress(run)[0] or 0 if job else 0)
+            seconds += left / self.rate(run.condition)
+        return seconds / JOBS
 
     def print_plan(self) -> None:
-        say(f"\nPlan: {len(self.runs)} runs, one at a time ({ALGORITHM}, device {DEVICE}), output in {OUT}")
+        say(f"\nPlan: {len(self.runs)} runs, {JOBS} at a time ({ALGORITHM}, device {DEVICE}, "
+            f"{THREADS} torch threads each), output in {OUT}")
         for index, run in enumerate(self.runs, 1):
             state = "done" if run.finished() else f"{run.steps // 1000}k steps"
-            say(f"  {index:2d}. {run.title:58s} {state}")
-        remaining = self.estimate(self.runs)
-        say(f"Estimated time: ~{duration(remaining)} (a first guess; refined from measured speed as runs finish)")
+            after = f"  (after {run.depends_on})" if run.depends_on else ""
+            say(f"  {index:2d}. {run.title:66s} {state}{after}")
+        say(f"Estimated time: ~{duration(self.time_left())} (a first guess from typical CPU speeds; refined from "
+            "the measured speed as runs finish)")
+
+    # ---- the main loop
 
     def execute(self) -> None:
-        for index, run in enumerate(self.runs, 1):
-            say(f"\n━━ [{index}/{len(self.runs)}] {run.title}")
-            say(f"   what: {run.what}")
-            say(f"   why:  {run.why}")
-            say(f"   log:  {run.log}")
-            if run.finished():
-                say("   ✓ already finished (skipped)")
-                self.report(run)
+        pending = list(self.runs)
+        while pending or self.jobs:
+            for run in list(pending):  # start every run that can start, in plan order
+                if len(self.jobs) >= JOBS:
+                    break
+                if run.depends_on and run.depends_on not in self.done | self.failed:
+                    continue  # waits for the run it continues
+                pending.remove(run)
+                self.start(run, self.runs.index(run) + 1)
+            if not self.jobs:
+                if pending:  # only runs whose dependency is missing from the plan: cannot happen, but never spin
+                    for run in pending:
+                        say(f"\n✗ {run.title}: depends on {run.depends_on}, which is not in the plan; skipped")
+                    break
                 continue
-            if run.depends_on in self.failed:
-                say(f"   ⤼ skipped: {run.depends_on} failed")
-                self.failed.add(run.label)
-                continue
-            command = self.prepare(run)
-            if command is None:
-                continue
-            self.train(run, command)
-            remaining = [r for r in self.runs[index:] if r.label not in self.failed]
-            say(f"   overall: {index}/{len(self.runs)} runs · elapsed {duration(time.monotonic() - self.started)} · "
-                f"estimated remaining ~{duration(self.estimate(remaining))}")
+            time.sleep(5)
+            for job in list(self.jobs):
+                done, _ = self.progress(job.run)
+                if done is not None:
+                    job.samples = (job.samples + [(time.monotonic(), done)])[-24:]  # the last ~2 minutes
+                if job.process.poll() is not None:
+                    self.jobs.remove(job)
+                    self.finish(job)
+            self.show_status()
+
+    def start(self, run: Run, index: int) -> None:
+        """Announce the run (what and why), then launch it, unless it is done or cannot run."""
+        say(f"\n━━ [{index}/{len(self.runs)}] {run.title}")
+        say(f"   what: {run.what}")
+        say(f"   why:  {run.why}")
+        say(f"   log:  {run.log}")
+        if run.finished():
+            say("   ✓ already finished (skipped)")
+            self.done.add(run.label)
+            self.report(run)
+            return
+        if run.depends_on in self.failed:
+            say(f"   ⤼ skipped: {run.depends_on} failed")
+            self.failed.add(run.label)
+            return
+        command = self.prepare(run)
+        if command is None:
+            self.done.add(run.label)
+            return
+        run.log.parent.mkdir(parents=True, exist_ok=True)
+        log = open(run.log, "a")
+        log.write(f"\n# {datetime.now():%Y-%m-%d %H:%M:%S} {' '.join(command)}\n")
+        log.flush()
+        environment = os.environ | {"OMP_NUM_THREADS": THREADS, "MKL_NUM_THREADS": THREADS}
+        process = subprocess.Popen([PYTHON, *command], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
+                                   env=environment, start_new_session=True)
+        self.jobs.append(Job(run, index, process, log, time.monotonic(), []))
+        say(f"   ▶ started ({len(self.jobs)} of {JOBS} slots busy)")
 
     def prepare(self, run: Run) -> list[str] | None:
         """The command to run: a new run, a repair copied from its rq1 run, or a resume of an interrupted run."""
@@ -403,52 +477,50 @@ class Runner:
             shutil.rmtree(run_directory)
         return run.command
 
-    def train(self, run: Run, command: list[str]) -> None:
-        run.log.parent.mkdir(parents=True, exist_ok=True)
-        environment = os.environ | ({"OMP_NUM_THREADS": THREADS, "MKL_NUM_THREADS": THREADS} if THREADS else {})
-        start = time.monotonic()
-        with open(run.log, "a") as log:
-            log.write(f"\n# {datetime.now():%Y-%m-%d %H:%M:%S} {' '.join(command)}\n")
-            log.flush()
-            self.child = subprocess.Popen([PYTHON, *command], cwd=ROOT, stdout=log, stderr=subprocess.STDOUT,
-                                          env=environment, start_new_session=True)
-            last_print, samples = 0.0, []
-            while self.child.poll() is None:
-                time.sleep(5)
-                done, total = self.progress(run)
-                now = time.monotonic()
-                if done is not None:
-                    samples = (samples + [(now, done)])[-24:]  # the last ~2 minutes
-                if done is not None and len(samples) > 1 and (INTERACTIVE or now - last_print > 600):
-                    rate = ((samples[-1][1] - samples[0][1]) / (samples[-1][0] - samples[0][0])
-                            if len(samples) > 1 and samples[-1][0] > samples[0][0] else 0.0)
-                    left = (total - done) / rate if rate > 0 else None
-                    line = (f"   {done:>9,}/{total:,} steps · {rate:5.1f} steps/s · elapsed {duration(now - start)}"
-                            + (f" · ~{duration(left)} left" if left is not None else ""))
-                    print(f"\r{line}\033[K" if INTERACTIVE else line, end="" if INTERACTIVE else "\n", flush=True)
-                    last_print = now
-            code = self.child.wait()
-            self.child = None
-        if INTERACTIVE:
-            print(flush=True)
-        elapsed = time.monotonic() - start
+    def finish(self, job: Job) -> None:
+        """Report a run that ended: its outcome, or why it failed."""
+        job.log.close()
+        run, elapsed = job.run, time.monotonic() - job.started
         done, _ = self.progress(run)
         if done and elapsed > 60:
             self.rates[run.condition] = done / elapsed
-        if code != 0 or not run.finished():
+        say(f"\n■ [{job.index}/{len(self.runs)}] {run.title}")
+        if job.process.returncode != 0 or not run.finished():
             self.failed.add(run.label)
             with open(OUT / "failed.txt", "a") as failed:
                 failed.write(run.label + "\n")
-            say(f"   ✗ failed (exit code {code}) after {duration(elapsed)}; last lines of the log:")
+            say(f"   ✗ failed (exit code {job.process.returncode}) after {duration(elapsed)}; last lines of its log:")
             tail = run.log.read_text(errors="replace").replace("\r", "\n").strip().splitlines()[-12:]
             say("\n".join(f"     {line}" for line in tail))
+        else:
+            self.done.add(run.label)
+            say(f"   ✓ finished in {duration(elapsed)}")
+            self.report(run)
+        finished = len(self.done) + len(self.failed)
+        say(f"   overall: {finished}/{len(self.runs)} runs ended · elapsed {duration(time.monotonic() - self.started)}"
+            f" · ~{duration(self.time_left())} left")
+
+    def show_status(self) -> None:
+        """Every STATUS_EVERY seconds: each running run's progress, and the time left overall."""
+        now = time.monotonic()
+        if not self.jobs or now - self.last_status < STATUS_EVERY:
             return
-        say(f"   ✓ finished in {duration(elapsed)}")
-        self.report(run)
+        self.last_status = now
+        say(f"\n   ── {datetime.now():%H:%M} · {len(self.jobs)} running · "
+            f"{len(self.done) + len(self.failed)}/{len(self.runs)} ended · ~{duration(self.time_left())} left overall")
+        for job in self.jobs:
+            done, total = self.progress(job.run)
+            first, last = (job.samples[0], job.samples[-1]) if job.samples else (None, None)
+            rate = (last[1] - first[1]) / (last[0] - first[0]) if first and last[0] > first[0] else 0.0
+            left = f" · ~{duration((total - done) / rate)} left" if rate > 0 and done is not None else ""
+            steps = f"{done:,}/{total:,} steps" if done is not None else "starting"
+            say(f"      [{job.index:2d}] {job.run.title[:60]:60s} {steps} · {rate:.0f} steps/s{left}")
+
+    # ---- reading a run's state
 
     @staticmethod
     def progress(run: Run) -> tuple[int | None, int]:
-        """(steps done in this invocation, its total) from the progress bar at the end of the log."""
+        """(steps done in this invocation, its total) from the progress bar at the end of the run's log."""
         try:
             with open(run.log, "rb") as log:
                 log.seek(max(log.seek(0, 2) - 4000, 0))
@@ -481,15 +553,18 @@ class Runner:
         say(f"   result (final success, deterministic): {'; '.join(cells)}")
 
     def interrupt(self, *_) -> None:
-        if self.child is not None and self.child.poll() is None:
-            say("\n   stopping the current run (it saves first) ...")
-            os.killpg(self.child.pid, signal.SIGINT)
+        """Ctrl+C: stop every running run (each saves first), then exit; the same command resumes."""
+        say(f"\n   stopping {len(self.jobs)} running run(s); each saves first ...")
+        for job in self.jobs:
+            if job.process.poll() is None:
+                os.killpg(job.process.pid, signal.SIGINT)
+        for job in self.jobs:
             try:
-                self.child.wait(timeout=120)
+                job.process.wait(timeout=120)
             except subprocess.TimeoutExpired:
-                os.killpg(self.child.pid, signal.SIGKILL)
-        say("\nStopped. Start the same command again to continue: finished runs are skipped and the interrupted "
-            "run resumes from its last save.")
+                os.killpg(job.process.pid, signal.SIGKILL)
+        say("\nStopped. Start the same command again to continue: finished runs are skipped and interrupted "
+            "runs resume from their last save.")
         sys.exit(130)
 
 
