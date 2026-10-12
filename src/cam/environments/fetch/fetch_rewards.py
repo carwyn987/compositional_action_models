@@ -677,5 +677,6 @@ FETCH_SHAPED_REWARDS = {
     "unstack-raised": FetchUnstackRaisedReward,
     "place-beside": FetchPlaceBesideReward,
     **{name: FetchPushReward for name in
-       ("push-left", "push-right", "push-front", "push-back", "push-left-front", "push-beside")},
+       ("push-left", "push-right", "push-front", "push-back", "push-left-front", "push-right-front",
+        "push-left-back", "push-right-back", "push-beside")},
 }

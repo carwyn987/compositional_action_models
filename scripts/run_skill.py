@@ -49,6 +49,9 @@ SCRIPTED_POLICIES = {
     "push-front": FetchScriptedPushPolicy,
     "push-back": FetchScriptedPushPolicy,
     "push-left-front": FetchScriptedPushPolicy,
+    "push-right-front": FetchScriptedPushPolicy,
+    "push-left-back": FetchScriptedPushPolicy,
+    "push-right-back": FetchScriptedPushPolicy,
     "push-beside": FetchScriptedPushPolicy,
 }
 DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model

@@ -208,6 +208,11 @@ class FetchScriptedPushPolicy(Policy):
             to_goal = goal - block[:2]
             distance = float(np.linalg.norm(to_goal))
             heading = to_goal / distance if distance > 0.005 else self.direction
+            if distance > 0.02 and np.dot(block[:2] - gripper[:2], heading) < 0.02:
+                # The gripper is no longer behind the block (it overshot the goal or slid past): lift and
+                # come back from behind, instead of pushing it the wrong way.
+                self.phase, self.direction = "rise", heading
+                return servo(gripper, np.array([gripper[0], gripper[1], block[2] + self.HOVER]), CLOSE)
             target = np.array([*(block[:2] - self.BEHIND * heading + min(distance, 0.05) * heading), block[2]])
         return servo(gripper, target, CLOSE)
 

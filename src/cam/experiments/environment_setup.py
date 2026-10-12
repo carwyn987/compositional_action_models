@@ -121,6 +121,9 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
         "push-front": FetchScriptedPushPolicy(),
         "push-back": FetchScriptedPushPolicy(),
         "push-left-front": FetchScriptedPushPolicy(),
+        "push-right-front": FetchScriptedPushPolicy(),
+        "push-left-back": FetchScriptedPushPolicy(),
+        "push-right-back": FetchScriptedPushPolicy(),
         "push-beside": FetchScriptedPushPolicy(),
     }
     reward_functions = (

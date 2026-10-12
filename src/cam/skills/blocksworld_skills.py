@@ -84,9 +84,22 @@ class PushBackSkill(Skill):
 
 
 class PushLeftFrontSkill(Skill):
-    """push-left + effect (at-front ?o): the diagonal, combining two pushes' goals (held out for testing)."""
+    """push-left + effect (at-front ?o): a diagonal, combining two pushes' goals. Held out for testing: the
+    other three diagonals are trained, so both its literals and diagonal pushing are seen, only not together."""
 
     name = "push-left-front"
+
+
+class PushRightFrontSkill(Skill):
+    name = "push-right-front"
+
+
+class PushLeftBackSkill(Skill):
+    name = "push-left-back"
+
+
+class PushRightBackSkill(Skill):
+    name = "push-right-back"
 
 
 class PushBesideSkill(Skill):

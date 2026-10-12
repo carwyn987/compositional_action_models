@@ -7,8 +7,11 @@ from cam.skills.blocksworld_skills import (
     PushBackSkill,
     PushBesideSkill,
     PushFrontSkill,
+    PushLeftBackSkill,
     PushLeftFrontSkill,
     PushLeftSkill,
+    PushRightBackSkill,
+    PushRightFrontSkill,
     PushRightSkill,
     PutdownSkill,
     StackSkill,
@@ -30,6 +33,9 @@ SKILL_REGISTRY: dict[str, type[Skill]] = {
     PushFrontSkill.name: PushFrontSkill,
     PushBackSkill.name: PushBackSkill,
     PushLeftFrontSkill.name: PushLeftFrontSkill,
+    PushRightFrontSkill.name: PushRightFrontSkill,
+    PushLeftBackSkill.name: PushLeftBackSkill,
+    PushRightBackSkill.name: PushRightBackSkill,
     PushBesideSkill.name: PushBesideSkill,
 }
 
