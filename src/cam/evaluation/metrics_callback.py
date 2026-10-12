@@ -59,6 +59,7 @@ class MetricsCallback(BaseCallback):
         stop_skills: list[str] | None = None,
         patience: int = 0,
         metrics: dict | None = None,
+        stop_eval_interval: int = 0,
     ):
         super().__init__()
         self.eval_env = eval_env
@@ -73,6 +74,8 @@ class MetricsCallback(BaseCallback):
         if unknown:
             raise ValueError(f"stop skills {unknown} are not among the trained skills {skill_names}")
         self.patience = patience
+        self.stop_eval_interval = stop_eval_interval  # stop_skills alone are also evaluated this often (0: off)
+        self.next_stop_evaluation_step = 0
         self.best_mean_success = -1.0
         self.evaluations_without_improvement = 0
         self.stop_reason: str | None = None
@@ -102,6 +105,7 @@ class MetricsCallback(BaseCallback):
         else:
             self._evaluate()
         self.next_evaluation_step = self.num_timesteps + self.eval_interval
+        self.next_stop_evaluation_step = self.num_timesteps + self.stop_eval_interval
 
     def _reconcile_with_model(self) -> None:
         """On resume, drop curve points after the model's step (written after its last checkpoint) and,
@@ -129,10 +133,15 @@ class MetricsCallback(BaseCallback):
         if self.num_timesteps >= self.next_evaluation_step:
             self._evaluate()
             self.next_evaluation_step += self.eval_interval
+        if self.stop_skills and self.stop_eval_interval and self.num_timesteps >= self.next_stop_evaluation_step:
+            if self.curves["deterministic"].last_step != self.num_timesteps:
+                self._evaluate(self.stop_skills)  # finer steps to threshold for the skills that decide the stop
+            self.next_stop_evaluation_step += self.stop_eval_interval
         return self.stop_reason is None
 
     def _on_training_end(self) -> None:
-        if self.curves["deterministic"].last_step != self.num_timesteps:
+        # A stop follows right after the evaluation that triggered it, so that evaluation is the last point.
+        if self.stop_reason is None and self.curves["deterministic"].last_step != self.num_timesteps:
             self._evaluate()
 
     def _evaluate(self, skill_names: list[str] | None = None) -> None:
@@ -182,7 +191,7 @@ class MetricsCallback(BaseCallback):
             curve.steps_to_threshold(skill, self.success_threshold) is not None for skill in self.stop_skills
         ):
             self.stop_reason = f"{', '.join(self.stop_skills)} reached success rate {self.success_threshold}"
-        if self.patience > 0:
+        if self.patience > 0 and all(skill in curve.points[-1][1].skills for skill in self.skill_names):
             _, result, _ = curve.points[-1]
             mean_success = float(np.mean([result.skills[skill].success_rate for skill in self.skill_names]))
             if mean_success > self.best_mean_success:
