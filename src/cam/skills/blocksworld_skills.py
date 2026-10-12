@@ -1,6 +1,6 @@
 """The blocksworld skills. Each is its name (which also names its action model files) and its setup
 chain; everything else is in Skill. Fetch resets with every block on the table, so skills that start
-from a held or stacked block reach that state through setup_skills."""
+from a held or stacked block reach that state through setup_skills (alternative chains of skills)."""
 
 from cam.skills.skill import Skill
 
@@ -12,10 +12,12 @@ class PickupSkill(Skill):
 
 
 class PutdownSkill(Skill):
-    """Put a held block down on the table."""
+    """Put a held block down on the table. Each episode starts from either setup at random: pickup (the block
+    held just off the table) or pickup-raised (held 30 cm up, so it must be lowered before letting go: a drop
+    is a failure)."""
 
     name = "putdown"
-    setup_skills = ("pickup",)
+    setup_skills = (("pickup",), ("pickup-raised",))
 
 
 class StackSkill(Skill):
@@ -23,7 +25,7 @@ class StackSkill(Skill):
     grounding picks a random clear block for ?u, so both vary between episodes. Needs at least two blocks."""
 
     name = "stack"
-    setup_skills = ("pickup",)
+    setup_skills = (("pickup",),)
 
 
 class UnstackSkill(Skill):
@@ -31,11 +33,10 @@ class UnstackSkill(Skill):
     other block, so the stacked pair varies between episodes. Needs at least two blocks."""
 
     name = "unstack"
-    setup_skills = ("pickup", "stack")
+    setup_skills = (("pickup", "stack"),)
 
 
-# Variants of the skills above, each one literal (or one parameter and literal) away from its original,
-# for repair and new-skill experiments.
+# Variants of the skills above, each one literal (or one parameter and literal) away from its original.
 
 
 class PickupRaisedSkill(Skill):
@@ -45,10 +46,10 @@ class PickupRaisedSkill(Skill):
 
 
 class UnstackRaisedSkill(Skill):
-    """unstack + effect (raised ?o): lift a block off another and hold it high (a repair of unstack)."""
+    """unstack + effect (raised ?o): lift a block off another and hold it high."""
 
     name = "unstack-raised"
-    setup_skills = ("pickup", "stack")
+    setup_skills = (("pickup", "stack"),)
 
 
 class PlaceBesideSkill(Skill):
@@ -56,4 +57,49 @@ class PlaceBesideSkill(Skill):
     Setup picks up a random block and the grounding picks a random block on the table for ?u."""
 
     name = "place-beside"
-    setup_skills = ("pickup",)
+    setup_skills = (("pickup",),)
+
+
+
+# Pushes along the table into global regions (at-left / at-right / at-front / at-back: 10 cm from the centre of
+# the reset area) or next to another block, starting with the gripper empty and the block on the table.
+
+
+class PushLeftSkill(Skill):
+    name = "push-left"
+
+
+class PushRightSkill(Skill):
+    name = "push-right"
+
+
+class PushFrontSkill(Skill):
+    name = "push-front"
+
+
+class PushBackSkill(Skill):
+    name = "push-back"
+
+
+class PushLeftFrontSkill(Skill):
+    """push-left + effect (at-front ?o): the diagonal toward the front left."""
+
+    name = "push-left-front"
+
+
+class PushRightFrontSkill(Skill):
+    name = "push-right-front"
+
+
+class PushLeftBackSkill(Skill):
+    name = "push-left-back"
+
+
+class PushRightBackSkill(Skill):
+    name = "push-right-back"
+
+
+class PushBesideSkill(Skill):
+    """Push block ?o along the table until it is beside block ?u."""
+
+    name = "push-beside"

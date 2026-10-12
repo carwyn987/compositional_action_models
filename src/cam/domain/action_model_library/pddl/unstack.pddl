@@ -2,6 +2,7 @@
     :parameters (?o - block ?u - block)
     :precondition (and (on ?o ?u) (clear ?o) (gripper-empty))
     :effect (and (holding ?o)
+                 (not (raised ?o))
                  (clear ?u)
                  (not (on ?o ?u))
                  (not (clear ?o))

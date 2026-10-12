@@ -25,6 +25,7 @@ from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
     FetchScriptedPickupRaisedPolicy,
     FetchScriptedPlaceBesidePolicy,
+    FetchScriptedPushPolicy,
     FetchScriptedPutdownPolicy,
     FetchScriptedStackPolicy,
 )
@@ -43,6 +44,15 @@ SCRIPTED_POLICIES = {
     "pickup-raised": FetchScriptedPickupRaisedPolicy,
     "unstack-raised": FetchScriptedPickupRaisedPolicy,
     "place-beside": FetchScriptedPlaceBesidePolicy,
+    "push-left": FetchScriptedPushPolicy,
+    "push-right": FetchScriptedPushPolicy,
+    "push-front": FetchScriptedPushPolicy,
+    "push-back": FetchScriptedPushPolicy,
+    "push-left-front": FetchScriptedPushPolicy,
+    "push-right-front": FetchScriptedPushPolicy,
+    "push-left-back": FetchScriptedPushPolicy,
+    "push-right-back": FetchScriptedPushPolicy,
+    "push-beside": FetchScriptedPushPolicy,
 }
 DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model
     "symbolic_action_model_format": "pddl",
@@ -50,12 +60,13 @@ DEFAULT_CONFIG = {  # main.py's defaults, for runs without a trained model
     "num_blocks": 3,
     "reward": "sparse",
     "operator_encoder": "multi-hot",
-    "operator_embedding_dim": 128,
+    "operator_embedding_dim": 256,
     "text_backend": "mock",
     "operator_text": "pddl",
     "text_embedding_cache": "outputs/text_embedding_cache.json",
     "max_operator_arity": 3,
     "max_steps_per_episode": 100,
+    "success_hold_steps": 5,
     "seed": 0,
 }
 

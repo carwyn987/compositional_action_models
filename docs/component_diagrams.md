@@ -29,14 +29,14 @@ flowchart LR
         parser["pddl/pddl_parser.py<br/>parse_operator"]
         writer["pddl/pddl_writer.py<br/>to_pddl"]
         loader["action_model_library/loader.py<br/>load_symbolic_action_model"]
-        files[("action_model_library/pddl/<br/>pickup · putdown · stack · unstack<br/>pickup-raised · unstack-raised · place-beside .pddl")]
+        files[("action_model_library/pddl/<br/>pickup · putdown · stack · unstack<br/>raised variants · place-beside · push-* .pddl")]
     end
 
     %% ---------------- skills ----------------
     subgraph skills["cam.skills"]
         direction TB
         skill["skill.py: Skill<br/>symbolic_action_model · setup_skills<br/>ground · applicable_groundings"]
-        concrete["blocksworld_skills.py: pickup · putdown · stack · unstack<br/>+ pickup-raised · unstack-raised · place-beside"]
+        concrete["blocksworld_skills.py: pickup · putdown · stack · unstack<br/>+ raised variants · place-beside · pushes (4 sides, 4 diagonals, beside)"]
         registry["registry.py<br/>SKILL_REGISTRY · build_skill"]
     end
 
@@ -48,7 +48,7 @@ flowchart LR
         annot["fetch/fetch_env_state_annotation_wrapper.py<br/>drops goal keys; info: environment_state,<br/>objects, object_features"]
         preds["fetch/fetch_predicate_evaluation_wrapper.py<br/>FETCH_PREDICATES → info: facts"]
         skillenv["skill_environment.py: SkillEnvironment<br/>skill per reset · setup chain · grounding<br/>success · reward"]
-        scripted["fetch/fetch_scripted_policies.py<br/>scripted pickup / putdown / stack / place-beside"]
+        scripted["fetch/fetch_scripted_policies.py<br/>scripted pickup / putdown / stack / place-beside / push"]
         fetchrewards["fetch/fetch_rewards.py<br/>staged rewards for every skill (shaped)"]
     end
 
@@ -264,14 +264,14 @@ classDiagram
     class Skill {
         <<abstract>>
         +name() str*
-        +setup_skills: tuple~str~
+        +setup_skills: tuple~tuple~str~~
         +symbolic_action_model: SymbolicActionModel
         +ground(binding) GroundedSymbolicActionModel
         +applicable_groundings(facts, objects) list
     }
     class PickupSkill
     class PutdownSkill {
-        +setup_skills = pickup
+        +setup_skills = (pickup), (pickup-raised)
     }
     class registry {
         <<module>>

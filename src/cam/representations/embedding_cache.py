@@ -1,4 +1,4 @@
-"""On-disk cache of text embeddings: one JSON file of {key: [floats]} (ported from deprecated/)."""
+"""On-disk cache of text embeddings: one JSON file of {key: [floats]} (ported from the original deprecated/, now removed)."""
 
 import json
 import os

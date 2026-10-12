@@ -1,4 +1,4 @@
-"""Shaped Fetch rewards (ported from deprecated/fetch_blockworld/rewards/).
+"""Shaped Fetch rewards (ported from the original deprecated/fetch_blockworld/rewards/, removed; see git commit 59054395).
 
 Each reads the moved block from the grounded action's first argument (stack: the
 base block from the second) and the scene from info["environment_state"]
@@ -7,6 +7,7 @@ progress terms (the change since the previous step, clipped) and a one-time
 bonus, and every term is reported as a named reward component.
 """
 
+from collections import deque
 from dataclasses import dataclass, field
 
 import numpy as np
@@ -18,9 +19,35 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     OPEN_FINGER_WIDTH,
     RAISED_HEIGHT,
     TABLE_REST_Z,
+    push_goal,
 )
 from cam.rewards.reward_function import RewardFunction
 
+
+
+class MotionPenalties:
+    """Penalties for abrupt motion, for the placing rewards:
+        smoothness  the change between consecutive actions, squared
+        jerk        the block's jerk (third difference of its position over steps), squared: high when the
+                    block is jolted, e.g. slammed down or knocked
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        self.previous_action: np.ndarray | None = None
+        self.positions: deque = deque(maxlen=4)
+
+    def __call__(self, action: np.ndarray, block_position: np.ndarray) -> tuple[float, float]:
+        """(smoothness, jerk), both >= 0."""
+        smoothness = 0.0 if self.previous_action is None else float(np.sum((action - self.previous_action) ** 2))
+        self.previous_action = action
+        self.positions.append(np.asarray(block_position, dtype=np.float64))
+        if len(self.positions) < 4:
+            return smoothness, 0.0
+        p0, p1, p2, p3 = self.positions
+        return smoothness, float(np.sum((p3 - 3 * p2 + 3 * p1 - p0) ** 2))
 
 @dataclass(frozen=True)
 class FetchPickupRewardConfig:
@@ -231,13 +258,16 @@ class FetchStackRewardConfig:
     success_bonus: float = 15.0
 
     max_position_progress: float = 0.025
+    # Abrupt motion (MotionPenalties): action changes and block jerk
+    smoothness_penalty: float = 0.005
+    jerk_penalty: float = 50.0
 
 
 @dataclass
 class FetchStackReward(RewardFunction):
     """Staged stack shaping, starting with the block held (setup picks it up): carry it above the base,
     align over the base, lower gently onto it, release, success. Ported from
-    deprecated/fetch_blockworld/rewards/stack_rewards.py without its approach and grasp stages, which
+    the original deprecated/fetch_blockworld/rewards/stack_rewards.py without its approach and grasp stages, which
     belong to pickup here.
 
     Carry and align progress count only while the block is held, so dropping it earns nothing. Progress
@@ -260,6 +290,7 @@ class FetchStackReward(RewardFunction):
         self.placed_earned = False
         self.release_earned = False
         self.success_earned = False
+        self.motion = MotionPenalties()
 
     def resting_z(self, block: np.ndarray, base: np.ndarray) -> float:
         """Height of the block's centre once placed: on top of the base."""
@@ -297,9 +328,12 @@ class FetchStackReward(RewardFunction):
         placed = self.placed(info["facts"], block_name, base_name)
         released = Predicate("gripper-empty", ()) in info["facts"]
 
+        smoothness, jerk = self.motion(action, block)
         components = {
             "time": -cfg.time_penalty,
             "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
+            "smoothness": -cfg.smoothness_penalty * smoothness,
+            "jerk": -cfg.jerk_penalty * jerk,
             "carry": 0.0,
             "align": 0.0,
             "descend": 0.0,
@@ -361,21 +395,21 @@ class FetchStackReward(RewardFunction):
 
 @dataclass
 class FetchPickupRaisedReward(FetchPickupReward):
-    """pickup's stages with the lift target RAISED_HEIGHT + 1 cm above the table, so the lift stage leads
+    """pickup's stages with the lift target at the middle of the raised band above the table, so the lift stage leads
     to (raised ?o)."""
 
     config: FetchPickupRewardConfig = field(
-        default_factory=lambda: FetchPickupRewardConfig(target_lift=RAISED_HEIGHT + 0.01)
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)))
     )
 
 
 @dataclass
 class FetchUnstackRaisedReward(FetchUnstackReward):
-    """unstack's stages with the lift target 1 cm past the raised height; the lift is measured from where
+    """unstack's stages with the lift target at the middle of the raised band; the lift is measured from where
     the block rests on the block below, one block height above the table."""
 
     config: FetchPickupRewardConfig = field(
-        default_factory=lambda: FetchPickupRewardConfig(target_lift=RAISED_HEIGHT - 2 * BLOCK_HALF_SIZE + 0.01)
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)) - 2 * BLOCK_HALF_SIZE)
     )
 
 
@@ -406,6 +440,7 @@ class FetchPutdownRewardConfig:
     # Smoothness: penalize the change between consecutive actions, a proxy for jerk (the rate of change
     # of acceleration). The descent-speed cap below limits speed only, not abrupt changes.
     smoothness_penalty: float = 0.005
+    jerk_penalty: float = 50.0  # the block's jerk (MotionPenalties): slamming it down jolts it
 
     # 1. Lower the block toward the table
     descend_progress_weight: float = 20.0
@@ -454,7 +489,7 @@ def squareness(rotation: np.ndarray | None, sharpness: float) -> float:
 class FetchPutdownReward(RewardFunction):
     """Staged putdown shaping, starting with the block held (setup picks it up): lower it gently and square
     onto the table, without opening early, then release, success. Ported from
-    deprecated/fetch_blockworld/rewards/putdown_rewards.py, plus a smoothness penalty on action changes.
+    the original deprecated/fetch_blockworld/rewards/putdown_rewards.py, plus a smoothness penalty on action changes.
     """
 
     config: FetchPutdownRewardConfig = field(default_factory=FetchPutdownRewardConfig)
@@ -466,7 +501,7 @@ class FetchPutdownReward(RewardFunction):
         self.previous_height: float | None = None
         self.previous_squareness: float | None = None
         self.previous_gripper_width: float | None = None
-        self.previous_action: np.ndarray | None = None
+        self.motion = MotionPenalties()
         self.square_land_earned = False
         self.on_table_earned = False
         self.release_earned = False
@@ -487,6 +522,7 @@ class FetchPutdownReward(RewardFunction):
             "time": -cfg.time_penalty,
             "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
             "smoothness": 0.0,
+            "jerk": 0.0,
             "descend": 0.0,
             "gentle": 0.0,
             "square": 0.0,
@@ -496,9 +532,9 @@ class FetchPutdownReward(RewardFunction):
             "success": 0.0,
         }
 
-        if self.previous_action is not None:
-            change = action - self.previous_action
-            components["smoothness"] = -cfg.smoothness_penalty * float(np.dot(change, change))
+        smoothness, jerk = self.motion(action, state.block_positions[block])
+        components["smoothness"] = -cfg.smoothness_penalty * smoothness
+        components["jerk"] = -cfg.jerk_penalty * jerk
 
         # 1. Lower the block toward the table until it rests there.
         if not on_table:
@@ -549,7 +585,84 @@ class FetchPutdownReward(RewardFunction):
         self.previous_height = height
         self.previous_squareness = square
         self.previous_gripper_width = gripper_width
-        self.previous_action = action
+        components = {name: float(value) for name, value in components.items()}
+        return sum(components.values()), components
+
+
+@dataclass(frozen=True)
+class FetchPushRewardConfig:
+    time_penalty: float = 0.01
+    action_l2_penalty: float = 0.001
+    # 1. Get behind the block (opposite its goal), at its height
+    behind_offset: float = 0.055  # gripper centre behind the block centre
+    reach_progress_weight: float = 15.0
+    behind_tolerance: float = 0.02
+    behind_bonus: float = 2.0
+    # 2. Push the block toward its goal
+    push_progress_weight: float = 30.0
+    # 3. Complete push
+    success_bonus: float = 15.0
+    max_position_progress: float = 0.025
+
+
+@dataclass
+class FetchPushReward(RewardFunction):
+    """Staged push shaping: reach the point behind the block (opposite its goal, push_goal), then push the
+    block toward its goal, success. The push progress counts at any stage, so any way of moving the block
+    toward its goal is rewarded."""
+
+    config: FetchPushRewardConfig = field(default_factory=FetchPushRewardConfig)
+
+    def __post_init__(self):
+        self.reset(None, {})
+
+    def reset(self, grounded_action_model, info) -> None:
+        self.previous_reach: float | None = None
+        self.previous_goal_distance: float | None = None
+        self.behind_earned = False
+        self.success_earned = False
+
+    def __call__(self, grounded_action_model, action, info, success):
+        cfg = self.config
+        state = info["environment_state"]
+        block = np.asarray(state.block_positions[grounded_action_model.arguments[0]], dtype=np.float64)
+        gripper = np.asarray(state.gripper_position, dtype=np.float64)
+        action = np.asarray(action, dtype=np.float64)
+        goal = push_goal(state, grounded_action_model)
+        to_goal = goal - block[:2]
+        goal_distance = float(np.linalg.norm(to_goal))
+        direction = to_goal / max(goal_distance, 1e-6)
+        behind = np.array([*(block[:2] - cfg.behind_offset * direction), block[2]])
+        reach = float(np.linalg.norm(gripper - behind))
+        limit = cfg.max_position_progress
+
+        components = {
+            "time": -cfg.time_penalty,
+            "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
+            "reach": 0.0,
+            "behind": 0.0,
+            "push": 0.0,
+            "success": 0.0,
+        }
+        # 1. Get behind the block.
+        if not self.behind_earned:
+            if self.previous_reach is not None:
+                components["reach"] = cfg.reach_progress_weight * float(np.clip(self.previous_reach - reach, -limit, limit))
+            if reach <= cfg.behind_tolerance:
+                components["behind"] = cfg.behind_bonus
+                self.behind_earned = True
+        # 2. Move the block toward its goal.
+        if self.previous_goal_distance is not None:
+            components["push"] = cfg.push_progress_weight * float(
+                np.clip(self.previous_goal_distance - goal_distance, -limit, limit)
+            )
+        # 3. One-time terminal success reward.
+        if success and not self.success_earned:
+            components["success"] = cfg.success_bonus
+            self.success_earned = True
+
+        self.previous_reach = reach
+        self.previous_goal_distance = goal_distance
         components = {name: float(value) for name, value in components.items()}
         return sum(components.values()), components
 
@@ -563,4 +676,7 @@ FETCH_SHAPED_REWARDS = {
     "pickup-raised": FetchPickupRaisedReward,
     "unstack-raised": FetchUnstackRaisedReward,
     "place-beside": FetchPlaceBesideReward,
+    **{name: FetchPushReward for name in
+       ("push-left", "push-right", "push-front", "push-back", "push-left-front", "push-right-front",
+        "push-left-back", "push-right-back", "push-beside")},
 }

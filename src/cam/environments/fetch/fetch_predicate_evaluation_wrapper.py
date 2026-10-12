@@ -25,11 +25,14 @@ TABLE_REST_Z = 0.425  # block centre height when resting on the table
 Z_TOLERANCE = 0.01  # height tolerance for resting on the table / on another block
 GRASP_DISTANCE = 0.03  # max gripper-to-block-centre distance for gripping
 OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper grips nothing
-# Height above table rest at which a held block counts as raised. Well above what pickup or unstack reach on
-# their own (they succeed ~1 cm off their support; a stacked block already starts 5 cm up), and several
-# full-speed control steps (at most 5 cm each) from a stacked start, so raised is never satisfied by accident.
-RAISED_HEIGHT = 0.20
+# Height band above table rest (min, max) in which a held block counts as raised. Well above what pickup or
+# unstack reach on their own (they succeed ~1 cm off their support and must stay below it: (not (raised ?o))),
+# 25 cm from a stacked start (at least 5 full-speed control steps of at most 5 cm), and bounded above, so the
+# block has to be stopped in the band and held there for --success-hold-steps: neither one upward burst nor
+# lifting on and on satisfies it. The scripted lift and the raised rewards aim at the middle of the band.
+RAISED_HEIGHT = (0.30, 0.36)
 BESIDE_DISTANCE = (0.055, 0.10)  # centre-to-centre distance range for two blocks side by side on the table
+BESIDE_SPACING = float(np.mean(BESIDE_DISTANCE))  # the middle of that range, where placing / pushing aims
 
 # A block is *supported* when it rests on the table or on another block (on-table, on), and *gripped*
 # when the closed fingers are around it. Holding needs both gripped and lifted off its support, so
@@ -75,8 +78,9 @@ def clear(state: FetchState, block: str) -> bool:
 
 
 def raised(state: FetchState, block: str) -> bool:
-    """Held at least RAISED_HEIGHT above where it rests on the table (pickup only needs a lift off it)."""
-    return holding(state, block) and state.block_positions[block][2] - TABLE_REST_Z >= RAISED_HEIGHT
+    """Held with its centre within the RAISED_HEIGHT band above where it rests on the table."""
+    height = state.block_positions[block][2] - TABLE_REST_Z
+    return holding(state, block) and RAISED_HEIGHT[0] <= height <= RAISED_HEIGHT[1]
 
 
 def beside(state: FetchState, block: str, other: str) -> bool:
@@ -88,6 +92,61 @@ def beside(state: FetchState, block: str, other: str) -> bool:
         and on_table(state, other)
         and BESIDE_DISTANCE[0] <= distance < BESIDE_DISTANCE[1]
     )
+
+
+# Global table regions, so pushes have fixed goals (no relative predicates): a block resting on the table
+# between REGION_DISTANCE[0] and REGION_DISTANCE[1] from the centre of the reset area (where blocks are
+# placed, around the gripper's start), in one direction: a band, so a push has to stop in it, not just cross
+# a line. Robot frame: front is toward the robot (smaller x), left is +y. push_goal() (and so the scripted
+# push and the push reward) aims at the middle of the band.
+REGION_CENTRE = (1.34, 0.75)
+REGION_DISTANCE = (0.10, 0.18)
+REGIONS = {  # name -> (axis, sign)
+    "at-left": (1, +1), "at-right": (1, -1), "at-back": (0, +1), "at-front": (0, -1),
+}
+
+
+def in_region(state: FetchState, block: str, region: str) -> bool:
+    axis, sign = REGIONS[region]
+    position = state.block_positions[block]
+    distance = sign * (position[axis] - REGION_CENTRE[axis])
+    return on_table(state, block) and REGION_DISTANCE[0] <= distance <= REGION_DISTANCE[1]
+
+
+def at_left(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-left")
+
+
+def at_right(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-right")
+
+
+def at_front(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-front")
+
+
+def at_back(state: FetchState, block: str) -> bool:
+    return in_region(state, block, "at-back")
+
+
+def push_goal(state: FetchState, grounded_action_model) -> np.ndarray:
+    """Where a push should bring the moved block (first argument), from its effects: the middle of each
+    region's band (other coordinates unchanged), or BESIDE_SPACING from ?u (second argument) for (beside ?o ?u).
+    Shared by the scripted push policy and the push reward."""
+    block = grounded_action_model.arguments[0]
+    goal = state.block_positions[block][:2].astype(np.float64).copy()
+    for effect in grounded_action_model.effects:
+        if effect.delete:
+            continue
+        name = effect.predicate.name
+        if name in REGIONS:
+            axis, sign = REGIONS[name]
+            goal[axis] = REGION_CENTRE[axis] + sign * float(np.mean(REGION_DISTANCE))
+        elif name == "beside":
+            other = state.block_positions[grounded_action_model.arguments[1]][:2]
+            away = goal - other
+            goal = other + BESIDE_SPACING * away / max(np.linalg.norm(away), 1e-6)
+    return goal
 
 
 def gripper_empty(state: FetchState) -> bool:
@@ -103,7 +162,32 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
     "gripper-empty": gripper_empty,
     "raised": raised,
     "beside": beside,
+    "at-left": at_left,
+    "at-right": at_right,
+    "at-front": at_front,
+    "at-back": at_back,
 }
+
+# Failure conditions: a state in which a skill's episode ends unsuccessfully, whatever its effects.
+DROP_HEIGHT = 0.02  # a block let go more than this above its support was dropped, not placed
+
+
+def dropped(grounded_action_model, info: dict) -> bool:
+    """The moved block (first argument) is not gripped and its centre is more than DROP_HEIGHT above where it
+    would rest on its support: the table, or the top of a block under it. It was let go in the air (it is
+    falling). A failure for the placing skills: putdown, stack, place-beside."""
+    state = info["environment_state"]
+    block = grounded_action_model.arguments[0]
+    position = state.block_positions[block]
+    rest_heights = [TABLE_REST_Z] + [  # where the block's centre would rest on the table or on a block below
+        other[2] + 2 * BLOCK_HALF_SIZE for name, other in state.block_positions.items()
+        if name != block and other[2] < position[2] and np.linalg.norm(other[:2] - position[:2]) < 2 * BLOCK_HALF_SIZE
+    ]
+    return not gripping(state, block) and position[2] - max(rest_heights) > DROP_HEIGHT
+
+
+# Failure condition per skill (SkillEnvironment ends the episode unsuccessfully when it holds).
+FETCH_FAILURE_CONDITIONS = {"putdown": dropped, "stack": dropped, "place-beside": dropped}
 
 FETCH_PREDICATE_ARITIES: dict[str, int] = {
     name: len(inspect.signature(function).parameters) - 1 for name, function in FETCH_PREDICATES.items()

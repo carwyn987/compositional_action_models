@@ -129,7 +129,7 @@ def build_parser() -> argparse.ArgumentParser:
         "vector; with multi-hot, a learnable compositional (sum) embedding",
     )
     training.add_argument(
-        "--operator-embedding-dim", type=int, default=128,
+        "--operator-embedding-dim", type=int, default=256,
         help="size of the operator embedding, shared by all embedding methods so conditions are comparable "
         "(one-hot and multi-hot are zero-padded to it)",
     )
@@ -197,6 +197,15 @@ def build_parser() -> argparse.ArgumentParser:
         "and at the end, deterministic and stochastic, on a separate environment; results go to TensorBoard and "
         "<run>/metrics.json. Each costs about 2 x eval-episodes x skills episodes, so start with an infrequent "
         "interval and tune.",
+    )
+    training.add_argument(
+        "--composition-weight-decay", type=float, default=0.01,
+        help="compositional only: decoupled weight decay on the composition's parameters, against its scale "
+        "drifting upward (0: off)",
+    )
+    training.add_argument(
+        "--success-hold-steps", type=int, default=5,
+        help="an episode succeeds once the skill's effects have held this many consecutive steps (settled success)",
     )
     evaluation.add_argument("--eval-interval", type=int, default=50_000, help="training steps between evaluations")
     evaluation.add_argument("--eval-episodes", type=int, default=20, help="episodes per skill per evaluation")
@@ -306,7 +315,11 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
     during training in train-evaluate mode."""
     from cam.evaluation.metrics_callback import MetricsCallback
     from cam.training.checkpointing import atomic_write_text
-    from cam.training.stable_baselines3_trainer import OperatorEmbeddingMagnitudeCallback, train_stable_baselines3
+    from cam.training.stable_baselines3_trainer import (
+        CompositionWeightDecayCallback,
+        OperatorEmbeddingMagnitudeCallback,
+        train_stable_baselines3,
+    )
 
     atomic_write_text(run_directory / "config.json", json.dumps(config, indent=2))
     callbacks, on_save, eval_env = [], [], None
@@ -314,6 +327,8 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
         # learned operator embeddings: log their magnitude (L2 norm) per skill to TensorBoard
         operator_inputs = {skill.name: env.operator_encoder.encode(skill.symbolic_action_model) for skill in skills}
         callbacks.append(OperatorEmbeddingMagnitudeCallback(operator_inputs))
+    if config["operator_encoder"] == "compositional" and config.get("composition_weight_decay"):
+        callbacks.append(CompositionWeightDecayCallback(config["composition_weight_decay"]))
     if config["mode"] == "train-evaluate":
         metrics_path = run_directory / "metrics.json"
         eval_env = setup_environment(config | {"render": False}, skills)

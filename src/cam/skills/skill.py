@@ -24,11 +24,11 @@ class Skill(ABC):
     def name(self) -> str:
         """Skill name; also the name of its action model files."""
 
-    # Skills to execute, in order, starting from the environment's reset state,
-    # to reach a state where this skill's preconditions can hold. This depends
-    # on the environment's reset distribution: Fetch resets with every block on
-    # the table, so putdown needs ("pickup",) and unstack ("pickup", "stack").
-    setup_skills: tuple[str, ...] = ()
+    # Ways to reach a state where this skill's preconditions can hold, starting from the environment's reset
+    # state: alternative chains of skills, each executed in order; each episode uses one chain, chosen at
+    # random. Fetch resets with every block on the table, so stack needs (("pickup",),), unstack
+    # (("pickup", "stack"),), and putdown (("pickup",), ("pickup-raised",)): held low or held high.
+    setup_skills: tuple[tuple[str, ...], ...] = ()
 
     def __init__(self, config: dict):
         self.config = config

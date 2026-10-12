@@ -10,7 +10,7 @@ PICKUP_PDDL = (
 )
 
 
-# Operator strings from deprecated/fetch_blockworld/skills.py.
+# Operator strings from the original deprecated/fetch_blockworld/skills.py (removed; see git commit 59054395).
 LEGACY_OPERATORS = {
     "pickup": (
         "(:action pickup :parameters (?o - block) "

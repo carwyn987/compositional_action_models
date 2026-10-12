@@ -44,6 +44,10 @@ from cam.training.checkpointing import atomic_write_text
 logger = logging.getLogger(__name__)
 
 MODES = {"deterministic": True, "stochastic": False}
+# Skills added on resume (e.g. a repaired operator) are also evaluated alone this many steps after being added,
+# doubling (1k, 2k, 4k, ...) until the regular --eval-interval takes over: precise steps to threshold early,
+# where conditions differ most, at little cost.
+ADDED_SKILL_FIRST_EVALUATION = 1_000
 
 
 class MetricsCallback(BaseCallback):
@@ -73,6 +77,9 @@ class MetricsCallback(BaseCallback):
         if unknown:
             raise ValueError(f"stop skills {unknown} are not among the trained skills {skill_names}")
         self.patience = patience
+        self.added_skills: list[str] = []  # skills added on resume, evaluated on the dense-then-sparse schedule
+        self.added_at = 0
+        self.next_added_evaluation = ADDED_SKILL_FIRST_EVALUATION  # steps after added_at
         self.best_mean_success = -1.0
         self.evaluations_without_improvement = 0
         self.stop_reason: str | None = None
@@ -94,6 +101,9 @@ class MetricsCallback(BaseCallback):
     def _on_training_start(self) -> None:
         self._reconcile_with_model()
         points = self.curves["deterministic"].points
+        seen = {skill for _, result, _ in points for skill in result.skills}
+        self.added_skills = [skill for skill in self.skill_names if points and skill not in seen]
+        self.added_at = self.num_timesteps
         if points and points[-1][0] == self.num_timesteps:
             # Resumed right at the last evaluation: evaluate only skills added since (their zero-shot point).
             missing = [skill for skill in self.skill_names if skill not in points[-1][1].skills]
@@ -129,10 +139,17 @@ class MetricsCallback(BaseCallback):
         if self.num_timesteps >= self.next_evaluation_step:
             self._evaluate()
             self.next_evaluation_step += self.eval_interval
+        added_offset = self.num_timesteps - self.added_at
+        if (self.added_skills and self.next_added_evaluation < self.eval_interval
+                and added_offset >= self.next_added_evaluation):
+            if self.curves["deterministic"].last_step != self.num_timesteps:
+                self._evaluate(self.added_skills)  # dense early: 1k, 2k, 4k, ... after the skills were added
+            self.next_added_evaluation *= 2
         return self.stop_reason is None
 
     def _on_training_end(self) -> None:
-        if self.curves["deterministic"].last_step != self.num_timesteps:
+        # A stop follows right after the evaluation that triggered it, so that evaluation is the last point.
+        if self.stop_reason is None and self.curves["deterministic"].last_step != self.num_timesteps:
             self._evaluate()
 
     def _evaluate(self, skill_names: list[str] | None = None) -> None:
@@ -182,7 +199,7 @@ class MetricsCallback(BaseCallback):
             curve.steps_to_threshold(skill, self.success_threshold) is not None for skill in self.stop_skills
         ):
             self.stop_reason = f"{', '.join(self.stop_skills)} reached success rate {self.success_threshold}"
-        if self.patience > 0:
+        if self.patience > 0 and all(skill in curve.points[-1][1].skills for skill in self.skill_names):
             _, result, _ = curve.points[-1]
             mean_success = float(np.mean([result.skills[skill].success_rate for skill in self.skill_names]))
             if mean_success > self.best_mean_success:
