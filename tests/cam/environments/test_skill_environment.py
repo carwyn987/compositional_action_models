@@ -41,6 +41,12 @@ class TwoBlockFactsEnv(gym.Env):
         return {"facts": frozenset(facts), "objects": {b: "block" for b in BLOCKS}}
 
 
+class PutdownAfterPickup(PutdownSkill):
+    """putdown set up by plain pickup, which this symbolic stand-in can run (it has no raised)."""
+
+    setup_skills = ("pickup",)
+
+
 class GraspTarget(Policy):
     def __call__(self, obs, info, grounded_action_model):
         return grasp(grounded_action_model.arguments[0])
@@ -90,9 +96,20 @@ def test_success_needs_the_effects_to_hold_for_success_hold_steps_in_a_row():
 
 
 @pytest.mark.unit
+def test_failure_condition_ends_the_episode_unsuccessfully():
+    def released(grounded, info):
+        return Predicate("gripper-empty", ()) in info["facts"]
+
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], failure_conditions={"pickup": released})
+    env.reset(seed=0)
+    _, _, terminated, _, info = env.step(WAIT)
+    assert terminated and info["failed"] and info["is_success"] == 0.0
+
+
+@pytest.mark.unit
 def test_setup_chain_runs_declared_skills():
     """putdown declares setup_skills=("pickup",): reset runs pickup, so putdown targets the held block."""
-    env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()})
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PutdownAfterPickup(PDDL_CONFIG)], {"pickup": GraspTarget()})
     _, info = env.reset(seed=0)
     (setup_action, steps), = info["setup"]
     assert str(setup_action).startswith("pickup(") and steps == 1
@@ -117,14 +134,14 @@ def test_setup_chain_of_several_skills():
 def test_missing_setup_policy_is_rejected():
     """Every declared setup skill needs a policy; the error is raised at construction."""
     with pytest.raises(ValueError):
-        SkillEnvironment(TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)])
+        SkillEnvironment(TwoBlockFactsEnv(), [PutdownAfterPickup(PDDL_CONFIG)])
 
 
 @pytest.mark.unit
 def test_reset_raises_when_setup_never_succeeds():
     """A setup policy that never reaches its effects makes reset give up after max_setup_attempts."""
     env = SkillEnvironment(
-        TwoBlockFactsEnv(), [PutdownSkill(PDDL_CONFIG)], {"pickup": DoNothing()},
+        TwoBlockFactsEnv(), [PutdownAfterPickup(PDDL_CONFIG)], {"pickup": DoNothing()},
         max_steps_per_setup_skill=5, max_setup_attempts=3,
     )
     with pytest.raises(RuntimeError):
@@ -135,7 +152,7 @@ def test_reset_raises_when_setup_never_succeeds():
 def test_reset_option_selects_the_skill():
     """reset(options={"skill": name}) runs an episode of that skill, including its setup chain."""
     env = SkillEnvironment(
-        TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()}
+        TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownAfterPickup(PDDL_CONFIG)], {"pickup": GraspTarget()}
     )
     _, info = env.reset(seed=0, options={"skill": "putdown"})
     assert info["skill"] == "putdown" and len(info["setup"]) == 1
@@ -147,7 +164,7 @@ def test_reset_option_selects_the_skill():
 def test_skills_take_turns_without_a_reset_option():
     """Without a skill option, episodes cycle through the skills in the order given."""
     env = SkillEnvironment(
-        TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownSkill(PDDL_CONFIG)], {"pickup": GraspTarget()}
+        TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownAfterPickup(PDDL_CONFIG)], {"pickup": GraspTarget()}
     )
     assert [env.reset(seed=0)[1]["skill"] for _ in range(3)] == ["pickup", "putdown", "pickup"]
 

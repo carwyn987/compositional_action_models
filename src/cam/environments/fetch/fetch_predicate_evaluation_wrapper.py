@@ -106,6 +106,25 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
     "beside": beside,
 }
 
+DROP_HEIGHT = 0.02  # a block let go higher than this above its support was dropped, not placed
+
+
+def dropped(grounded_action_model, info: dict) -> bool:
+    """The moved block (first argument) is not gripped and is more than DROP_HEIGHT above the table without
+    resting on a block: it was let go in the air. A failure for placing skills (putdown, stack, place-*)."""
+    state = info["environment_state"]
+    block = grounded_action_model.arguments[0]
+    resting_on_block = any(fact.name == "on" and fact.args[0] == block for fact in info["facts"])
+    return (
+        not gripping(state, block)
+        and state.block_positions[block][2] - TABLE_REST_Z > DROP_HEIGHT
+        and not resting_on_block
+    )
+
+
+# Failure condition per skill (SkillEnvironment ends the episode unsuccessfully when it holds).
+FETCH_FAILURE_CONDITIONS = {"putdown": dropped, "stack": dropped, "place-beside": dropped}
+
 FETCH_PREDICATE_ARITIES: dict[str, int] = {
     name: len(inspect.signature(function).parameters) - 1 for name, function in FETCH_PREDICATES.items()
 }

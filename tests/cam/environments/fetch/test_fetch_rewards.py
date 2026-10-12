@@ -4,6 +4,7 @@ import pytest
 from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchState
 from cam.environments.fetch.fetch_rewards import (
+    MotionPenalties,
     FetchPickupRaisedReward,
     FetchPickupReward,
     FetchPlaceBesideReward,
@@ -163,3 +164,16 @@ def test_place_beside_aligns_to_the_ring_around_the_other_block():
     assert reward.align_distance(on_ring, BASE) == pytest.approx(0.0)
     assert reward.align_distance(BASE, BASE) == pytest.approx(reward.SPACING)
     assert reward.resting_z(on_ring, BASE) == pytest.approx(0.425)
+
+
+@pytest.mark.unit
+def test_motion_penalties_measure_action_changes_and_block_jerk():
+    """Steady motion has no jerk; a sudden stop (a slam) does."""
+    motion = MotionPenalties()
+    steady = [motion(np.zeros(4), np.array([0.0, 0.0, 0.5 - 0.01 * t])) for t in range(4)]
+    assert steady[-1] == (0.0, pytest.approx(0.0))
+    motion.reset()
+    for z in [0.53, 0.50, 0.47]:
+        motion(np.zeros(4), np.array([0.0, 0.0, z]))
+    smoothness, jerk = motion(np.array([0.0, 0.0, 1.0, 0.0]), np.array([0.0, 0.0, 0.47]))  # stopped dead
+    assert smoothness == pytest.approx(1.0) and jerk > 0

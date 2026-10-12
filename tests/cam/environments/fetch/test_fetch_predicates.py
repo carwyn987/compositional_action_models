@@ -77,3 +77,21 @@ def test_beside_means_side_by_side_on_the_table(distance, expected):
     assert (fact("beside", "block1", "block0") in result) is expected
     lifted = block0 + [0.0, 0.0, 0.05]
     assert fact("beside", "block0", "block1") not in facts(lifted, GRIPPING, lifted)
+
+
+@pytest.mark.unit
+def test_dropped_means_let_go_in_the_air():
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import dropped
+    from cam.skills.blocksworld_skills import PutdownSkill
+
+    putdown = PutdownSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+
+    def info(gripper, finger_width, block0):
+        state = FetchState(np.array(gripper), finger_width, {"block0": np.array(block0), "block1": BLOCK1})
+        return {"environment_state": state, "facts": FetchPredicateEvaluationWrapper.evaluate(state)}
+
+    high = [1.2, 0.6, TABLE_REST_Z + 0.10]
+    assert dropped(putdown, info(FAR, OPEN, high))  # let go 10 cm up
+    assert not dropped(putdown, info(high, GRIPPING, high))  # still held
+    assert not dropped(putdown, info(FAR, OPEN, [1.2, 0.6, TABLE_REST_Z + 0.01]))  # released just above the table
+    assert not dropped(putdown, info(FAR, OPEN, ON_BLOCK1))  # resting on a block

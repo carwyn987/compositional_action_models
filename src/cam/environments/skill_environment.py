@@ -13,7 +13,9 @@ task over one or more skills. Each episode is one grounded action of one skill
            success_hold_steps consecutive steps (settled success: the skill must stop in
            its goal state, not pass through it);
            the reward comes from the skill's reward function (SparseReward,
-           1.0 on success and 0.0 otherwise, unless another is given)
+           1.0 on success and 0.0 otherwise, unless another is given); the
+           episode also ends, unsuccessfully, if the skill's failure condition
+           holds (e.g. the block was dropped)
 
 Each setup skill is executed like an episode of its own: a random applicable
 grounding is chosen and its policy acts until that grounding's effects hold.
@@ -33,6 +35,7 @@ them. Put the episode step limit outside: TimeLimit(SkillEnvironment(...), n).
 """
 
 import logging
+from typing import Callable
 
 import gymnasium as gym
 
@@ -65,9 +68,11 @@ class SkillEnvironment(gym.Wrapper):
         max_steps_per_setup_skill: int = 100,
         max_setup_attempts: int = 10,
         success_hold_steps: int = 1,
+        failure_conditions: dict[str, Callable[[GroundedSymbolicActionModel, dict], bool]] | None = None,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
+        self.failure_conditions = failure_conditions or {}
         self.steps_effects_held = 0
         if not skills:
             raise ValueError("SkillEnvironment needs at least one skill")
@@ -119,8 +124,10 @@ class SkillEnvironment(gym.Wrapper):
         success = self.steps_effects_held >= self.success_hold_steps
         reward_function = self.reward_functions[self.skill.name]
         reward, components = reward_function(self.grounded_action_model, action, info, success)
-        info = {**self._annotate(info, success), "reward_components": components}
-        return obs, reward, terminated or success, truncated, info
+        failure = self.failure_conditions.get(self.skill.name)
+        failed = not success and failure is not None and failure(self.grounded_action_model, info)
+        info = {**self._annotate(info, success), "reward_components": components, "failed": failed}
+        return obs, reward, terminated or success or failed, truncated, info
 
     def _select_skill(self, skill_name: str | None) -> Skill:
         """The named skill, or the next skill in turn when no name is given."""
