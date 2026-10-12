@@ -395,21 +395,21 @@ class FetchStackReward(RewardFunction):
 
 @dataclass
 class FetchPickupRaisedReward(FetchPickupReward):
-    """pickup's stages with the lift target RAISED_HEIGHT + 1 cm above the table, so the lift stage leads
+    """pickup's stages with the lift target at the middle of the raised band above the table, so the lift stage leads
     to (raised ?o)."""
 
     config: FetchPickupRewardConfig = field(
-        default_factory=lambda: FetchPickupRewardConfig(target_lift=RAISED_HEIGHT + 0.01)
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)))
     )
 
 
 @dataclass
 class FetchUnstackRaisedReward(FetchUnstackReward):
-    """unstack's stages with the lift target 1 cm past the raised height; the lift is measured from where
+    """unstack's stages with the lift target at the middle of the raised band; the lift is measured from where
     the block rests on the block below, one block height above the table."""
 
     config: FetchPickupRewardConfig = field(
-        default_factory=lambda: FetchPickupRewardConfig(target_lift=RAISED_HEIGHT - 2 * BLOCK_HALF_SIZE + 0.01)
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)) - 2 * BLOCK_HALF_SIZE)
     )
 
 

@@ -66,6 +66,8 @@ def test_raised_needs_holding_high_above_the_table():
     assert fact("raised", "block0") not in facts(low, GRIPPING, low)
     assert {fact("holding", "block0"), fact("raised", "block0")} <= facts(high, GRIPPING, high)
     assert fact("raised", "block0") not in facts(FAR, OPEN, high)  # not held (falling)
+    too_high = [1.2, 0.6, TABLE_REST_Z + 0.40]
+    assert fact("raised", "block0") not in facts(too_high, GRIPPING, too_high)  # above the band
 
 
 @pytest.mark.unit

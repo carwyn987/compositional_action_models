@@ -67,11 +67,11 @@ class FetchScriptedPickupPolicy(Policy):
 
 
 class FetchScriptedPickupRaisedPolicy(FetchScriptedPickupPolicy):
-    """The pickup motion, lifting the block to 3 cm above the raised height wherever it started (for
+    """The pickup motion, lifting the block to the middle of the raised band wherever it started (for
     pickup-raised and unstack-raised)."""
 
     def lift_target(self) -> np.ndarray:
-        return np.array([self.block_start[0], self.block_start[1], TABLE_REST_Z + RAISED_HEIGHT + 0.03])
+        return np.array([self.block_start[0], self.block_start[1], TABLE_REST_Z + float(np.mean(RAISED_HEIGHT))])
 
 class FetchScriptedPutdownPolicy(Policy):
     """Lower the held target block to the table, then open the gripper."""

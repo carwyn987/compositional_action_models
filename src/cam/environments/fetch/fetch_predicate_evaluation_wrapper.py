@@ -25,11 +25,12 @@ TABLE_REST_Z = 0.425  # block centre height when resting on the table
 Z_TOLERANCE = 0.01  # height tolerance for resting on the table / on another block
 GRASP_DISTANCE = 0.03  # max gripper-to-block-centre distance for gripping
 OPEN_FINGER_WIDTH = 0.07  # finger width at or above which the gripper grips nothing
-# Height above table rest at which a held block counts as raised. Well above what pickup or unstack reach on
-# their own (they succeed ~1 cm off their support and must stay below this: (not (raised ?o))), and 25 cm
-# from a stacked start: at least 5 full-speed control steps (at most 5 cm each), then held there for
-# --success-hold-steps, so raised is never satisfied by one upward burst.
-RAISED_HEIGHT = 0.30
+# Height band above table rest (min, max) in which a held block counts as raised. Well above what pickup or
+# unstack reach on their own (they succeed ~1 cm off their support and must stay below it: (not (raised ?o))),
+# 25 cm from a stacked start (at least 5 full-speed control steps of at most 5 cm), and bounded above, so the
+# block has to be stopped in the band and held there for --success-hold-steps: neither one upward burst nor
+# lifting on and on satisfies it. The scripted lift and the raised rewards aim at the middle of the band.
+RAISED_HEIGHT = (0.30, 0.36)
 BESIDE_DISTANCE = (0.055, 0.10)  # centre-to-centre distance range for two blocks side by side on the table
 BESIDE_SPACING = float(np.mean(BESIDE_DISTANCE))  # the middle of that range, where placing / pushing aims
 
@@ -77,8 +78,9 @@ def clear(state: FetchState, block: str) -> bool:
 
 
 def raised(state: FetchState, block: str) -> bool:
-    """Held at least RAISED_HEIGHT above where it rests on the table (pickup only needs a lift off it)."""
-    return holding(state, block) and state.block_positions[block][2] - TABLE_REST_Z >= RAISED_HEIGHT
+    """Held with its centre within the RAISED_HEIGHT band above where it rests on the table."""
+    height = state.block_positions[block][2] - TABLE_REST_Z
+    return holding(state, block) and RAISED_HEIGHT[0] <= height <= RAISED_HEIGHT[1]
 
 
 def beside(state: FetchState, block: str, other: str) -> bool:
