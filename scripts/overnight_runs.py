@@ -240,6 +240,19 @@ RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STE
              else int(setting("RQ1_STEPS", "500000")))
 
 
+def link_replay_buffer(source: str, destination: str) -> str:
+    """copytree's copy function for a repair: the rq1 run's replay buffer (about 1 GB, only read) is hard-linked
+    instead of copied, everything else copied. Saving writes a new file and renames it, so the link is replaced,
+    never written through."""
+    if Path(source).name == "replay_buffer.pkl":
+        try:
+            os.link(source, destination)
+            return destination
+        except OSError:
+            pass
+    return shutil.copy2(source, destination)
+
+
 def build_plan() -> list[Run]:
     runs: list[Run] = []
     skill_list = ", ".join(BASE_SKILLS)
@@ -274,7 +287,8 @@ def build_plan() -> list[Run]:
                     depends_on=tuple(f"learnability_{skill}" for skill in BASE_SKILLS)
                     if RQ1_AUTO and "learnability" in RUN_GROUPS else (),
                     command=["main.py", "--skills", *BASE_SKILLS, *options, "--total-timesteps", str(RQ1_STEPS),
-                             "--seed", str(seed), *COMMON, "--output-dir", str(rq1_output)],
+                             "--seed", str(seed), *COMMON, "--output-dir", str(rq1_output),
+                             "--save-replay-buffer"],  # the repairs continue from it
                 ))
             if "repair" not in RUN_GROUPS:
                 continue
@@ -306,7 +320,7 @@ def build_plan() -> list[Run]:
                         command=["main.py", "--run-directory", str(run_directory), "--skills", *skills,
                                  "--stop-skills", repair_to, "--repair-mode", mode,
                                  "--total-timesteps", str(REPAIR_STEPS), "--eval-interval", str(REPAIR_EVAL_INTERVAL),
-                                 "--device", DEVICE,
+                                 "--device", DEVICE, "--no-save-replay-buffer",  # the rq1 run's, linked
                                  *(["--operator-identity-aliases", f"{repair_to}={repair_from}"] if hidden else [])],
                     ))
     return runs
@@ -542,7 +556,7 @@ class Runner:
                 say(f"   ✗ no finished rq1 run in {run.copy_from} to continue; skipped")
                 self.failed.add(run.label)
                 return None
-            shutil.copytree(sources[0], run.output)
+            shutil.copytree(sources[0], run.output, copy_function=link_replay_buffer)
             base = json.loads((run.output / "metrics.json").read_text())["progress"]["steps"]
             (run.output / "repair_base_steps.txt").write_text(str(base))
             return run.command
