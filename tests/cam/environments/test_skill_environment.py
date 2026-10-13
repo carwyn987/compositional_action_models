@@ -96,21 +96,23 @@ def test_success_needs_the_effects_to_hold_for_success_hold_steps_in_a_row():
 
 
 @pytest.mark.unit
-def test_failure_condition_ends_the_episode_unsuccessfully():
-    def released(grounded, info):
-        return Predicate("gripper-empty", ()) in info["facts"]
+def test_a_failure_found_by_check_failure_ends_the_episode():
+    def released(grounded, start_info, info):
+        return "released" if Predicate("gripper-empty", ()) in info["facts"] else None
 
-    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], failure_conditions={"pickup": released})
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], check_failure=released,
+                           failure_penalty=2.0)
     env.reset(seed=0)
-    _, _, terminated, _, info = env.step(WAIT)
-    assert terminated and info["failed"] and info["is_success"] == 0.0
+    _, reward, terminated, _, info = env.step(WAIT)
+    assert terminated and info["failed"] and info["failure"] == "released" and info["is_success"] == 0.0
+    assert reward == -2.0 and info["reward_components"]["failure"] == -2.0
 
 
 @pytest.mark.unit
 def test_a_failure_overrides_effects_that_hold():
     """If the failure condition holds on a step where the effects hold, the episode fails."""
     env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)],
-                           failure_conditions={"pickup": lambda grounded, info: True})
+                           check_failure=lambda grounded, start_info, info: "always")
     _, info = env.reset(seed=0)
     _, _, terminated, _, info = env.step(grasp(info["grounded_action_model"].arguments[0]))
     assert terminated and info["failed"] and info["is_success"] == 0.0
@@ -125,6 +127,39 @@ def test_each_episode_uses_one_of_the_skills_setup_chains():
                            {"pickup": GraspTarget(), "putdown": Release()})
     chains = {len(env.reset(seed=seed)[1]["setup"]) for seed in range(20)}
     assert chains == {1, 3}
+
+
+class LiftBothEnv(TwoBlockFactsEnv):
+    """TwoBlockFactsEnv plus action [9]: grasp block0 and lift block1 with it, so block1 leaves the table."""
+
+    def step(self, action):
+        self.both = action[0] == 9 or (getattr(self, "both", False) and action[0] >= 0)
+        return super().step(np.array([1.0]) if action[0] == 9 else action)
+
+    def _info(self):
+        info = super()._info()
+        if getattr(self, "both", False):
+            info["facts"] = info["facts"] - {Predicate("on-table", ("block1",))}
+        return info
+
+
+@pytest.mark.unit
+def test_effects_reached_by_breaking_the_frame_never_succeed():
+    """pickup(block0) by lifting both blocks reaches pickup's effects but takes block1 off the table, which
+    pickup does not mention: no success however long it is held. Released and picked up cleanly, it succeeds:
+    the frame is compared with the episode's start, so a past violation does not stick."""
+    def pickup_block0(frame):
+        env = SkillEnvironment(LiftBothEnv(), [PickupSkill(PDDL_CONFIG)], success_hold_steps=2, frame_predicates=frame)
+        _, info = env.reset(seed=0)
+        while info["grounded_action_model"].arguments[0] != "block0":  # this test lifts block0
+            _, info = env.reset()
+        return env
+
+    env = pickup_block0(frozenset())  # without a frame, lifting both blocks counts (the exploit is real)
+    assert [env.step(action)[2] for action in [np.array([9.0]), WAIT]] == [False, True]
+    env = pickup_block0(frozenset({"on-table", "clear", "holding", "gripper-empty"}))
+    assert [env.step(action)[2] for action in [np.array([9.0]), WAIT, WAIT, WAIT]] == [False, False, False, False]
+    assert [env.step(action)[2] for action in [RELEASE, grasp("block0"), WAIT]] == [False, False, True]
 
 
 @pytest.mark.unit

@@ -18,7 +18,8 @@ How it runs
     resumes interrupted ones from their last save.
   * Before anything long starts (fail fast): the text backend is checked and every operator text the runs
     need is embedded and cached (TEXT_BACKEND=openai needs the API key and network), the device is reported,
-    and every skill's scripted policy must succeed (which checks each skill's setup and predicates).
+    and every skill's scripted policy must succeed at least once in 3 episodes (which checks each skill's
+    setup and predicates).
 
 Groups
   learnability  each skill alone (BASE_SKILLS and every repaired skill), multi-hot: can it be trained at
@@ -315,18 +316,21 @@ def check_text_backend(skills: list[str]) -> None:
 
 
 def check_scripted_policies(skills: list[str]) -> None:
-    """Every skill's scripted policy must succeed after its setup chain (2 episodes, 2 blocks)."""
+    """Every skill's scripted policy must succeed at least once in 3 episodes (2 blocks) after its setup chain:
+    proof that the skill's setup and predicates work. Not every episode: a straight scripted push can knock the
+    other block aside, which is a failure."""
     failed = []
     for skill in skills:
         result = subprocess.run(
-            [PYTHON, "scripts/run_skill.py", "--skill", skill, "--num-blocks", "2", "--episodes", "2"],
+            # 150 steps: the scripted push moves slowly on purpose (gentle contact), so diagonals need >100
+            [PYTHON, "scripts/run_skill.py", "--skill", skill, "--num-blocks", "2", "--episodes", "3", "--max-steps", "150"],
             cwd=ROOT, capture_output=True, text=True,
         )
-        if "success rate: 2/2" not in result.stdout:
+        if not re.search(r"success rate: [1-3]/3", result.stdout):
             failed.append(f"{skill}: {(result.stdout + result.stderr).strip().splitlines()[-1:]}")
     if failed:
         fail("scripted policies failed (the skill's setup or predicates are broken):\n  " + "\n  ".join(failed))
-    say(f"  ✓ scripted policies succeed for all {len(skills)} skills: {', '.join(skills)}")
+    say(f"  ✓ scripted policies succeed (at least 1 of 3 episodes) for all {len(skills)} skills: {', '.join(skills)}")
 
 
 # ---------------------------------------------------------------- running

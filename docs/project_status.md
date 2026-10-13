@@ -80,20 +80,35 @@ centre at z = 0.425, and a block stacked on another has its centre at 0.475.
 | `beside(b, c)` | both on the table, centres 5.5–10 cm apart (reset places blocks ≥ 10 cm apart) |
 | `at-left/right/front/back(b)` | on the table, **10–18 cm** from the centre of the reset area (1.34, 0.75) in that direction (front = toward the robot, left = +y) |
 
-**Success is settled:** the effects must hold for `--success-hold-steps` (default 5) consecutive steps.
-**Failure conditions** end an episode unsuccessfully and take precedence over success: a step where one
-holds never counts toward success. The placing skills (putdown, stack, place-beside) fail if their block is
-**dropped**, i.e. let go more than `DROP_HEIGHT` (2 cm) above its support, the table or the block below.
-Grasping skills therefore succeed only once the block is lifted (and held), and placing skills only once it
-is released.
+**Success is settled and respects the frame:** the effects must hold for `--success-hold-steps` (default 5)
+consecutive steps, and every fact the action does not mention must keep its value from the episode's start
+(the STRIPS frame assumption, checked over `on-table`, `on`, `clear`, `holding`, `gripper-empty`; the
+geometric predicates change as side effects and are left out). So unstack(?o ?u) must leave `(on-table ?u)`
+true: lifting both blocks is not an unstack.
+
+**Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
+over success. It is the same for every skill (`check_fetch_failure`): an **extreme force** on the gripper (net
+contact force above `MAX_GRIPPER_FORCE`, 500 N), the moved block (first argument) was **dropped** (let go
+more than `DROP_HEIGHT`, 2 cm, above its support), or another block was **disturbed** (moved more than
+`DISTURB_DISTANCE`, 3 cm, from where it started: knocked or pushed aside).
+
+**Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`): action changes
+(smoothness), the moved block's acceleration, any movement of the other blocks, and the **gripper force**
+above `SAFE_GRIPPER_FORCE` (100 N). The gripper force is the net contact force on the gripper and fingers,
+read from MuJoCo (`FetchState.gripper_force`): a grasp's squeeze cancels out, so it measures pressing on a
+block or the table, pushing, ramming, and a carried block's weight (~20 N). Lifting and placing peak around
+55 N, steady pushing around 65 N, a full-speed ram around 650 N. This matters for moving to real robots,
+whose grippers such forces would damage. Grasping skills therefore
+succeed only once the block is lifted and held, and placing skills only once it is released, gently, without
+disturbing anything else.
 
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 
 | skill | operator | setup | scripted policy | shaped reward |
 | --- | --- | --- | --- | --- |
 | pickup(?o) | classic blocksworld + `(not (raised ?o))`: hold it low | – | approach, descend, close, lift | staged pickup |
-| putdown(?o) | classic | pickup **or** pickup-raised (random per episode) | lower, open | staged putdown (gentle, square, smoothness, jerk) |
-| stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack (+ smoothness, jerk) |
+| putdown(?o) | classic | pickup **or** pickup-raised (random per episode) | lower, open | staged putdown (gentle descent, square) |
+| stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack |
 | unstack(?o ?u) | classic + `(not (raised ?o))` | pickup, stack | pickup motion | pickup's stages, lift from the block below |
 | pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift target 33 cm |
 | unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift target 28 cm above the base rest |
@@ -147,6 +162,8 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
   statistics including embedding magnitudes, added and repaired skills (with an **invalid repair** flag when
   repair-hidden succeeds zero-shot), and learned embedding geometry.
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
+- **`scripts/watch_best_policies.py`:** for each skill, play the best trained policy in a folder of runs (the
+  newest overnight folder by default), even while it is still training.
 - **`scripts/start_tensorboard.sh`:** `LOGDIR=<folder> ./scripts/start_tensorboard.sh`.
 
 ### Infrastructure notes
@@ -187,7 +204,15 @@ Each addresses something that run showed:
 - **Settled success,** so skills must stop in their goal state.
 - **Hold low unless asked:** pickup and unstack get `(not (raised ?o))`.
 - **`raised` as a 30–36 cm band:** 25 cm of lift from a stacked start, and it must be stopped and held.
-- **Non-trivial putdown:** sometimes set up 30 cm up; a drop is a failure; smoothness and jerk penalties.
+- **Non-trivial putdown:** sometimes set up 30 cm up; a drop is a failure.
+- **The frame:** success requires unmentioned facts to stay unchanged (unstack-raised had learned to lift both
+  blocks).
+- **Gentle, careful motion for every skill:** acceleration and smoothness penalties, and knocking another
+  block aside is a failure with a penalty (pushes had learned to throw blocks around).
+- **Gripper force limits:** net contact force on the gripper penalized above 100 N and a failure above
+  500 N (needed for real robots). The scripted push moves at 0.25 of full speed while pushing, which keeps
+  its contact peaks under 400 N; its diagonals need more than 100 steps, so the pre-flight check gives
+  scripted policies 150.
 - **Failure precedence:** a failure is never counted as success.
 - **Composition weight decay.**
 - **Repaired / added skills evaluated densely, then sparsely** (1k, 2k, 4k, … after being added).
@@ -250,5 +275,6 @@ RUN_GROUPS=learnability JOBS=6 ./scripts/start_overnight.sh
 CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh
 ./scripts/review_runs.py outputs/overnight_<date>  # the report, at any time
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
-./scripts/run_skill.py --policy model --run-directory <run> --skill <skill> --render   # watch a trained skill
+./scripts/watch_best_policies.py                   # the best trained policy for each skill, rendered
+./scripts/run_skill.py --policy model --run-directory <run> --skill <skill> --render   # one run and skill
 ```

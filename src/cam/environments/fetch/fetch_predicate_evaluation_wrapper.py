@@ -168,14 +168,26 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
     "at-back": at_back,
 }
 
-# Failure conditions: a state in which a skill's episode ends unsuccessfully, whatever its effects.
+# The frame: predicates whose facts an action must leave unchanged unless its effects mention them. The
+# geometric predicates (raised, beside, at-*) are left out: they change as side effects of the ones listed
+# (a block picked up leaves its region), which the operators do not spell out.
+FETCH_FRAME_PREDICATES = frozenset({"on-table", "on", "clear", "holding", "gripper-empty"})
+
+# Failure: a state in which an episode ends unsuccessfully, whatever its effects; the same for every skill.
 DROP_HEIGHT = 0.02  # a block let go more than this above its support was dropped, not placed
+DISTURB_DISTANCE = 0.03  # another block moved further than this from its start was knocked or pushed aside
+# Net contact force on the gripper (FetchState.gripper_force). Holding a block is ~20 N, lifting or placing one
+# peaks ~55 N, pushing one ~65 N; ramming a block at full speed spikes to ~650 N. Above SAFE_GRIPPER_FORCE the
+# shaped reward penalizes the excess (FetchMotionReward); above MAX_GRIPPER_FORCE the episode fails: forces a
+# real robot's gripper should never see (pressing hard on a block or the table, ramming).
+SAFE_GRIPPER_FORCE = 100.0
+MAX_GRIPPER_FORCE = 500.0
 
 
-def dropped(grounded_action_model, info: dict) -> bool:
+def dropped(grounded_action_model, start_info: dict, info: dict) -> bool:
     """The moved block (first argument) is not gripped and its centre is more than DROP_HEIGHT above where it
     would rest on its support: the table, or the top of a block under it. It was let go in the air (it is
-    falling). A failure for the placing skills: putdown, stack, place-beside."""
+    falling), or pushed off the table."""
     state = info["environment_state"]
     block = grounded_action_model.arguments[0]
     position = state.block_positions[block]
@@ -186,8 +198,29 @@ def dropped(grounded_action_model, info: dict) -> bool:
     return not gripping(state, block) and position[2] - max(rest_heights) > DROP_HEIGHT
 
 
-# Failure condition per skill (SkillEnvironment ends the episode unsuccessfully when it holds).
-FETCH_FAILURE_CONDITIONS = {"putdown": dropped, "stack": dropped, "place-beside": dropped}
+def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None:
+    """A block other than the moved one (first argument) that is more than DISTURB_DISTANCE from where it was
+    when the episode started (knocked over or pushed aside), or None. Every skill here moves one block."""
+    moved = grounded_action_model.arguments[0]
+    start = start_info["environment_state"].block_positions
+    now = info["environment_state"].block_positions
+    return next((name for name in now if name != moved and np.linalg.norm(now[name] - start[name]) > DISTURB_DISTANCE),
+                None)
+
+
+def check_fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
+    """Checks whether the episode has failed in this step: returns the reason if it has, None if it has not.
+    Called on every step by SkillEnvironment (its check_failure); a returned reason makes the step a failure,
+    which ends the episode. The failures, checked in this order: an extreme force on the gripper, the moved
+    block dropped, another block disturbed."""
+    force = float(np.linalg.norm(info["environment_state"].gripper_force))
+    if force > MAX_GRIPPER_FORCE:
+        return f"excessive force on the gripper ({force:.0f} N)"
+    if dropped(grounded_action_model, start_info, info):
+        return f"dropped {grounded_action_model.arguments[0]}"
+    other = disturbed(grounded_action_model, start_info, info)
+    return f"disturbed {other}" if other else None
+
 
 FETCH_PREDICATE_ARITIES: dict[str, int] = {
     name: len(inspect.signature(function).parameters) - 1 for name, function in FETCH_PREDICATES.items()

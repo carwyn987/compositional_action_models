@@ -4,7 +4,7 @@ import pytest
 from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchState
 from cam.environments.fetch.fetch_rewards import (
-    MotionPenalties,
+    FetchMotionReward,
     FetchPickupRaisedReward,
     FetchPickupReward,
     FetchPlaceBesideReward,
@@ -113,17 +113,6 @@ def putdown_info(height, finger_width=0.048, facts=frozenset(), rotation=(0.0, 0
 
 
 @pytest.mark.unit
-def test_putdown_penalizes_abrupt_action_changes():
-    """The smoothness term penalizes the change between consecutive actions (a jerk proxy)."""
-    reward = FetchPutdownReward()
-    reward.reset(PUTDOWN, {})
-    reward(PUTDOWN, np.array([0.0, 0.0, -0.5, 0.0]), putdown_info(0.05), success=False)
-    steady = reward(PUTDOWN, np.array([0.0, 0.0, -0.5, 0.0]), putdown_info(0.045), success=False)[1]
-    jerky = reward(PUTDOWN, np.array([0.0, 0.0, 0.5, 0.0]), putdown_info(0.045), success=False)[1]
-    assert steady["smoothness"] == 0 > jerky["smoothness"]
-
-
-@pytest.mark.unit
 def test_putdown_penalizes_opening_high_and_dropping_fast():
     reward = FetchPutdownReward()
     reward.reset(PUTDOWN, {})
@@ -167,13 +156,31 @@ def test_place_beside_aligns_to_the_ring_around_the_other_block():
 
 
 @pytest.mark.unit
-def test_motion_penalties_measure_action_changes_and_block_jerk():
-    """Steady motion has no jerk; a sudden stop (a slam) does."""
-    motion = MotionPenalties()
-    steady = [motion(np.zeros(4), np.array([0.0, 0.0, 0.5 - 0.01 * t])) for t in range(4)]
-    assert steady[-1] == (0.0, pytest.approx(0.0))
-    motion.reset()
-    for z in [0.53, 0.50, 0.47]:
-        motion(np.zeros(4), np.array([0.0, 0.0, z]))
-    smoothness, jerk = motion(np.array([0.0, 0.0, 1.0, 0.0]), np.array([0.0, 0.0, 0.47]))  # stopped dead
-    assert smoothness == pytest.approx(1.0) and jerk > 0
+def test_motion_reward_penalizes_action_changes_block_acceleration_and_other_blocks_moving():
+    """Steady motion costs nothing; changing the action, stopping the moved block dead and moving another
+    block each cost."""
+    def info(block0, block1):
+        return {"environment_state": FetchState(np.zeros(3), 0.05, {"block0": np.array(block0), "block1": np.array(block1)})}
+
+    reward = FetchMotionReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    steady = [reward(PICKUP_BLOCK0, np.zeros(4), info([0, 0, 0.5 + 0.01 * t], BASE), False)[1] for t in range(3)]
+    assert steady[-1] == {"smoothness": 0.0, "acceleration": pytest.approx(0.0), "disturbance": 0.0, "force": 0.0}
+    slam = reward(PICKUP_BLOCK0, np.array([0, 0, 1.0, 0]), info([0, 0, 0.52], BASE + [0.01, 0, 0]), False)[1]
+    assert slam["smoothness"] < 0 and slam["acceleration"] < 0 and slam["disturbance"] < 0
+
+
+@pytest.mark.unit
+def test_heavy_gripper_force_is_penalized_and_extreme_force_fails():
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import check_fetch_failure
+
+    def info(force):
+        state = FetchState(np.zeros(3), 0.05, {"block0": np.array([1.3, 0.7, 0.425])}, gripper_force=np.array(force))
+        return {"environment_state": state, "facts": frozenset()}
+
+    reward = FetchMotionReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 20.0]), False)[1]["force"] == 0  # holding a block
+    assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 300.0]), False)[1]["force"] == pytest.approx(-2.0)
+    assert check_fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 300.0])) is None
+    assert check_fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 600.0])).startswith("excessive force")

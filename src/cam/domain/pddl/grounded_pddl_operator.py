@@ -56,6 +56,10 @@ class GroundedPDDLOperator(GroundedSymbolicActionModel):
         facts and every delete effect is not."""
         return all((e.predicate in facts) != e.delete for e in self.effects)
 
+    def mentioned_facts(self) -> frozenset[Predicate]:
+        """The facts of the add and delete effects."""
+        return frozenset(effect.predicate for effect in self.effects)
+
     def _substitute(self, predicate: Predicate) -> Predicate:
         binding = self.binding
         return Predicate(predicate.name, tuple(binding.get(arg, arg) for arg in predicate.args))

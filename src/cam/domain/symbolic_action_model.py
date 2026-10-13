@@ -27,6 +27,19 @@ class GroundedSymbolicActionModel(ABC):
     def effects_hold(self, facts: frozenset[Predicate]) -> bool:
         """True when this action's outcome is reached in facts."""
 
+    @abstractmethod
+    def mentioned_facts(self) -> frozenset[Predicate]:
+        """The ground facts this action says it changes (e.g. its add and delete effects)."""
+
+    def frame_holds(self, before: frozenset[Predicate], after: frozenset[Predicate], predicates: frozenset[str]) -> bool:
+        """True when every fact over `predicates` that this action does not mention (mentioned_facts) has the
+        same truth value in before and after: the frame assumption, that an action changes only what it says it
+        changes. E.g. unstack(block0, block1) must leave (on-table block1) true, so lifting both blocks is not an
+        unstack. Generic over model types; a model with other frame semantics (e.g. conditional effects, where
+        what is mentioned depends on the state) can override it."""
+        mentioned = self.mentioned_facts()
+        return not any(fact.name in predicates and fact not in mentioned for fact in before ^ after)
+
 
 class SymbolicActionModel(ABC):
     name: str

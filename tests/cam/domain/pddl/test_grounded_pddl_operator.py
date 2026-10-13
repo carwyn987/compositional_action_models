@@ -106,3 +106,37 @@ def test_groundings_are_equal_and_hashable_by_operator_and_arguments(pickup_oper
     """Two groundings of the same operator on the same objects are interchangeable (e.g. as set members)."""
     assert ground(pickup_operator, BLOCK0) == GroundedPDDLOperator(pickup_operator, ("block0",))
     assert len({ground(pickup_operator, BLOCK0), ground(pickup_operator, BLOCK0)}) == 1
+
+
+@pytest.mark.unit
+def test_frame_holds_only_if_unmentioned_facts_are_unchanged():
+    """unstack(b0, b1) changes what its effects say; (on-table b1) is not mentioned, so it must stay true.
+    Facts over predicates outside the frame (e.g. a region) may change."""
+    unstack = parse_operator("""(:action unstack :parameters (?o - block ?u - block)
+        :precondition (and (on ?o ?u) (clear ?o) (gripper-empty))
+        :effect (and (holding ?o) (clear ?u) (not (on ?o ?u)) (not (clear ?o)) (not (gripper-empty))))""")
+    grounded = ground(unstack, {"?o": "b0", "?u": "b1"})
+    frame = frozenset({"on-table", "on", "clear", "holding", "gripper-empty"})
+    before = frozenset({Predicate("on", ("b0", "b1")), Predicate("clear", ("b0",)), Predicate("gripper-empty", ()),
+                        Predicate("on-table", ("b1",)), Predicate("at-left", ("b1",))})
+    after = frozenset({Predicate("holding", ("b0",)), Predicate("clear", ("b1",)), Predicate("on-table", ("b1",))})
+    assert grounded.effects_hold(after) and grounded.frame_holds(before, after, frame)  # at-left is not in the frame
+    both_lifted = after - {Predicate("on-table", ("b1",))}
+    assert grounded.effects_hold(both_lifted) and not grounded.frame_holds(before, both_lifted, frame)
+
+
+
+@pytest.mark.unit
+def test_frame_breaks_when_an_unmentioned_fact_becomes_true():
+    """Not only facts lost: a fact the action does not mention appearing (e.g. a second block now held) breaks
+    the frame too."""
+    pickup = parse_operator("""(:action pickup :parameters (?o - block)
+        :precondition (and (on-table ?o) (clear ?o) (gripper-empty))
+        :effect (and (holding ?o) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))""")
+    grounded = ground(pickup, {"?o": "b0"})
+    frame = frozenset({"on-table", "clear", "holding", "gripper-empty"})
+    before = frozenset({Predicate("on-table", ("b0",)), Predicate("clear", ("b0",)), Predicate("gripper-empty", ()),
+                        Predicate("on-table", ("b1",)), Predicate("clear", ("b1",))})
+    after = frozenset({Predicate("holding", ("b0",)), Predicate("on-table", ("b1",)), Predicate("clear", ("b1",))})
+    assert grounded.frame_holds(before, after, frame)
+    assert not grounded.frame_holds(before, after | {Predicate("holding", ("b1",))}, frame)

@@ -98,3 +98,25 @@ def test_object_features_are_position_and_offset_from_gripper(pick_and_place):
     features = info["object_features"]["block0"]
     np.testing.assert_allclose(features[:3], state.block_positions["block0"], rtol=1e-6)
     np.testing.assert_allclose(features[3:], state.block_positions["block0"] - state.gripper_position, rtol=1e-5)
+
+
+@pytest.mark.integration
+def test_gripper_force_is_the_carried_blocks_weight_while_holding_it():
+    """The net contact force on the gripper while it holds a 2 kg block up is about its weight (~20 N, pointing
+    down on the gripper), and zero with nothing touched; the grasp's squeeze cancels between the fingers."""
+    from main import parse_args
+    from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy
+    from cam.experiments.environment_setup import setup_environment
+    from cam.skills.registry import build_skill
+
+    config = dict(parse_args(["--skills", "pickup", "--num-blocks", "2"]))
+    env = setup_environment(config, [build_skill("pickup", config)])
+    obs, info = env.reset(seed=0)
+    assert np.linalg.norm(info["environment_state"].gripper_force) == 0
+    policy = FetchScriptedPickupPolicy()
+    policy.reset()
+    for _ in range(40):  # past the success, lifting toward the policy's target
+        obs, *_, info = env.step(policy(obs, info, info["grounded_action_model"]))
+    force = info["environment_state"].gripper_force
+    env.close()
+    assert 15 < np.linalg.norm(force) < 30 and force[2] < 0
