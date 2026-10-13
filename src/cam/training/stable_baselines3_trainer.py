@@ -49,6 +49,39 @@ HYPERPARAMETERS = {
 HYPERPARAMETERS["mtsac"] = HYPERPARAMETERS["sac"]
 
 
+# After resuming an off-policy model without its replay buffer, the buffer starts empty, and Stable-Baselines3 updates
+# from the first new step on batches drawn from the few transitions collected since: the critic fits them and the
+# policy forgets the skills that are not among them. Instead the policy acts without updates for this many steps first.
+RESUME_WARMUP_STEPS = 5_000
+
+
+class ResumeWarmupCallback(BaseCallback):
+    """No gradient updates for the first `steps` environment steps of this training invocation (the policy still acts,
+    filling the replay buffer), then the model's usual gradient steps."""
+
+    def __init__(self, steps: int):
+        super().__init__()
+        self.steps = steps
+        self.gradient_steps: int | None = None  # the model's own, while the warm-up holds them at 0
+        self.start = 0
+
+    def _on_training_start(self) -> None:
+        self.gradient_steps, self.start = self.model.gradient_steps, self.model.num_timesteps
+        self.model.gradient_steps = 0
+
+    def _on_step(self) -> bool:
+        if self.model.num_timesteps - self.start >= self.steps:
+            self._end_warmup()
+        return True
+
+    def _on_training_end(self) -> None:
+        self._end_warmup()
+
+    def _end_warmup(self) -> None:
+        if self.gradient_steps is not None:
+            self.model.gradient_steps, self.gradient_steps = self.gradient_steps, None
+
+
 class SuccessRateCallback(BaseCallback):
     """Logs each skill's success rate over its last `window` episodes as success_rate/<skill>.
 
@@ -173,6 +206,7 @@ def train_stable_baselines3(
     on_save: list[Callable[[], None]] | None = None,
     policy_kwargs: dict | None = None,
     device: str = "auto",
+    resume_warmup_steps: int = RESUME_WARMUP_STEPS,
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
@@ -187,6 +221,9 @@ def train_stable_baselines3(
 
     policy_kwargs go to a new model's policy (e.g. a features extractor); a resumed model keeps its own.
     device is the torch device for the policy ("auto": a CUDA GPU if available, else cpu).
+
+    An off-policy model resumed without a saved replay buffer makes no gradient updates for its first
+    resume_warmup_steps steps (ResumeWarmupCallback), so it does not train on a nearly empty buffer.
     """
     run_directory.mkdir(parents=True, exist_ok=True)
     model_path = run_directory / "model.zip"
@@ -198,9 +235,16 @@ def train_stable_baselines3(
         model = ALGORITHMS[algorithm].load(
             model_path, env=monitored_env, tensorboard_log=str(run_directory / "tensorboard"), device=device
         )
-        if replay_buffer_path.exists() and hasattr(model, "load_replay_buffer"):
-            model.load_replay_buffer(replay_buffer_path)
-            logger.info("loaded replay buffer from %s", replay_buffer_path)
+        warmup = []
+        if hasattr(model, "replay_buffer"):
+            if model.gradient_steps == 0:  # saved during an interrupted warm-up
+                model.gradient_steps = HYPERPARAMETERS[algorithm]["gradient_steps"]
+            if replay_buffer_path.exists():
+                model.load_replay_buffer(replay_buffer_path)
+                logger.info("loaded replay buffer from %s", replay_buffer_path)
+            elif resume_warmup_steps > 0:
+                warmup = [ResumeWarmupCallback(resume_warmup_steps)]
+                logger.info("no saved replay buffer: no updates for the first %d steps", resume_warmup_steps)
         logger.info("resuming %s from step %d", algorithm, model.num_timesteps)
     else:
         model = ALGORITHMS[algorithm](
@@ -221,7 +265,7 @@ def train_stable_baselines3(
         for save_more in on_save or []:
             save_more()
 
-    all_callbacks = [SuccessRateCallback(), *(callbacks or [])]
+    all_callbacks = [SuccessRateCallback(), *(warmup if resume else []), *(callbacks or [])]
     if save_interval > 0:
         all_callbacks.append(PeriodicSaveCallback(save_interval, save))
     logger.info("training %s for %d steps on %s; outputs in %s", algorithm, total_timesteps, model.device, run_directory)
