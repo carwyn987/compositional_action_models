@@ -165,6 +165,22 @@ def test_motion_reward_penalizes_action_changes_block_acceleration_and_other_blo
     reward = FetchMotionReward()
     reward.reset(PICKUP_BLOCK0, {})
     steady = [reward(PICKUP_BLOCK0, np.zeros(4), info([0, 0, 0.5 + 0.01 * t], BASE), False)[1] for t in range(3)]
-    assert steady[-1] == {"smoothness": 0.0, "acceleration": pytest.approx(0.0), "disturbance": 0.0}
+    assert steady[-1] == {"smoothness": 0.0, "acceleration": pytest.approx(0.0), "disturbance": 0.0, "force": 0.0}
     slam = reward(PICKUP_BLOCK0, np.array([0, 0, 1.0, 0]), info([0, 0, 0.52], BASE + [0.01, 0, 0]), False)[1]
     assert slam["smoothness"] < 0 and slam["acceleration"] < 0 and slam["disturbance"] < 0
+
+
+@pytest.mark.unit
+def test_heavy_gripper_force_is_penalized_and_extreme_force_fails():
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import fetch_failure
+
+    def info(force):
+        state = FetchState(np.zeros(3), 0.05, {"block0": np.array([1.3, 0.7, 0.425])}, gripper_force=np.array(force))
+        return {"environment_state": state, "facts": frozenset()}
+
+    reward = FetchMotionReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 20.0]), False)[1]["force"] == 0  # holding a block
+    assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 300.0]), False)[1]["force"] == pytest.approx(-2.0)
+    assert fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 300.0])) is None
+    assert fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 600.0])).startswith("excessive force")

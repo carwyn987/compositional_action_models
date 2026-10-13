@@ -1,8 +1,9 @@
 """Gymnasium-Robotics Fetch environments annotated with a named state."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import gymnasium as gym
+import mujoco
 import numpy as np
 
 
@@ -12,6 +13,8 @@ class FetchState:
     finger_width: float  # sum of the two finger joint positions
     block_positions: dict[str, np.ndarray]  # block name -> (3,) x, y, z
     block_rotations: dict[str, np.ndarray] = field(default_factory=dict)  # block name -> (3,) Euler angles
+    # (3,) net contact force on the gripper (N, world frame): what the gripper pushes against or carries
+    gripper_force: np.ndarray = field(default_factory=lambda: np.zeros(3))
 
 
 class FetchEnvStateAnnotationWrapper(gym.Wrapper):
@@ -51,8 +54,33 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
         info = {**info, **self._annotations(obs)}
         return {"observation": obs["observation"]}, reward, terminated, truncated, info
 
+    GRIPPER_BODIES = ("robot0:gripper_link", "robot0:r_gripper_finger_link", "robot0:l_gripper_finger_link")
+
+    def gripper_force(self) -> np.ndarray:
+        """Net contact force on the gripper (N, world frame), from the MuJoCo simulation: the sum of every
+        contact force on the gripper and its fingers. A grasp's squeeze cancels out (the fingers push the block
+        with equal and opposite forces), so what remains is external load: pressing on a block or the table,
+        pushing, ramming, or a carried block's weight (~20 N). Zero when the environment is not MuJoCo."""
+        model, data = getattr(self.env.unwrapped, "model", None), getattr(self.env.unwrapped, "data", None)
+        if model is None or data is None:
+            return np.zeros(3)
+        if not hasattr(self, "_gripper_bodies"):
+            ids = {mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name) for name in self.GRIPPER_BODIES}
+            self._gripper_bodies = ids - {-1}
+        total, contact_force = np.zeros(3), np.zeros(6)
+        for index in range(data.ncon):
+            contact = data.contact[index]
+            on_first = model.geom_bodyid[contact.geom1] in self._gripper_bodies
+            on_second = model.geom_bodyid[contact.geom2] in self._gripper_bodies
+            if on_first == on_second:  # not the gripper's, or between its own parts
+                continue
+            mujoco.mj_contactForce(model, data, index, contact_force)
+            force = contact.frame.reshape(3, 3).T @ contact_force[:3]  # on geom2 from geom1, in world frame
+            total += force if on_second else -force
+        return total
+
     def _annotations(self, obs: dict) -> dict:
-        state = self.extract_state(obs)
+        state = replace(self.extract_state(obs), gripper_force=self.gripper_force())
         return {
             "environment_state": state,
             "objects": {name: "block" for name in state.block_positions},

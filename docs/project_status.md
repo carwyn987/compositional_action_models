@@ -87,12 +87,18 @@ geometric predicates change as side effects and are left out). So unstack(?o ?u)
 true: lifting both blocks is not an unstack.
 
 **Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
-over success. It is the same for every skill (`fetch_failure`): the moved block (first argument) was
-**dropped** (let go more than `DROP_HEIGHT`, 2 cm, above its support), or another block was **disturbed**
-(moved more than `DISTURB_DISTANCE`, 3 cm, from where it started: knocked or pushed aside).
+over success. It is the same for every skill (`fetch_failure`): an **extreme force** on the gripper (net
+contact force above `MAX_GRIPPER_FORCE`, 500 N), the moved block (first argument) was **dropped** (let go
+more than `DROP_HEIGHT`, 2 cm, above its support), or another block was **disturbed** (moved more than
+`DISTURB_DISTANCE`, 3 cm, from where it started: knocked or pushed aside).
 
 **Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`): action changes
-(smoothness), the moved block's acceleration, and any movement of the other blocks. Grasping skills therefore
+(smoothness), the moved block's acceleration, any movement of the other blocks, and the **gripper force**
+above `SAFE_GRIPPER_FORCE` (100 N). The gripper force is the net contact force on the gripper and fingers,
+read from MuJoCo (`FetchState.gripper_force`): a grasp's squeeze cancels out, so it measures pressing on a
+block or the table, pushing, ramming, and a carried block's weight (~20 N). Lifting and placing peak around
+55 N, steady pushing around 65 N, a full-speed ram around 650 N. This matters for moving to real robots,
+whose grippers such forces would damage. Grasping skills therefore
 succeed only once the block is lifted and held, and placing skills only once it is released, gently, without
 disturbing anything else.
 
@@ -203,6 +209,10 @@ Each addresses something that run showed:
   blocks).
 - **Gentle, careful motion for every skill:** acceleration and smoothness penalties, and knocking another
   block aside is a failure with a penalty (pushes had learned to throw blocks around).
+- **Gripper force limits:** net contact force on the gripper penalized above 100 N and a failure above
+  500 N (needed for real robots). The scripted push moves at 0.25 of full speed while pushing, which keeps
+  its contact peaks under 400 N; its diagonals need more than 100 steps, so the pre-flight check gives
+  scripted policies 150.
 - **Failure precedence:** a failure is never counted as success.
 - **Composition weight decay.**
 - **Repaired / added skills evaluated densely, then sparsely** (1k, 2k, 4k, … after being added).

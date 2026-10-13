@@ -176,6 +176,12 @@ FETCH_FRAME_PREDICATES = frozenset({"on-table", "on", "clear", "holding", "gripp
 # Failure: a state in which an episode ends unsuccessfully, whatever its effects; the same for every skill.
 DROP_HEIGHT = 0.02  # a block let go more than this above its support was dropped, not placed
 DISTURB_DISTANCE = 0.03  # another block moved further than this from its start was knocked or pushed aside
+# Net contact force on the gripper (FetchState.gripper_force). Holding a block is ~20 N, lifting or placing one
+# peaks ~55 N, pushing one ~65 N; ramming a block at full speed spikes to ~650 N. Above SAFE_GRIPPER_FORCE the
+# shaped reward penalizes the excess (FetchMotionReward); above MAX_GRIPPER_FORCE the episode fails: forces a
+# real robot's gripper should never see (pressing hard on a block or the table, ramming).
+SAFE_GRIPPER_FORCE = 100.0
+MAX_GRIPPER_FORCE = 500.0
 
 
 def dropped(grounded_action_model, start_info: dict, info: dict) -> bool:
@@ -203,7 +209,11 @@ def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None
 
 
 def fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
-    """Why the episode failed, or None: the moved block was dropped, or another block was disturbed."""
+    """Why the episode failed, or None: an extreme force on the gripper, the moved block dropped, or another
+    block disturbed."""
+    force = float(np.linalg.norm(info["environment_state"].gripper_force))
+    if force > MAX_GRIPPER_FORCE:
+        return f"excessive force on the gripper ({force:.0f} N)"
     if dropped(grounded_action_model, start_info, info):
         return f"dropped {grounded_action_model.arguments[0]}"
     other = disturbed(grounded_action_model, start_info, info)

@@ -39,6 +39,8 @@ CONFIG = {
 def run_scripted_episodes(skill_name: str, num_blocks: int, episodes: int) -> list:
     """(grounded action, success) of each episode, with the skill's scripted policy acting."""
     config = CONFIG | {"num_blocks": num_blocks, "skills": [skill_name]}
+    if skill_name.startswith("push"):  # the scripted push is slow on purpose (gentle contact): allow it more steps
+        config["max_steps_per_episode"] = 150
     env = setup_environment(config, [build_skill(skill_name, config)])
     policy = SCRIPTED_POLICIES[skill_name]()
     results = []

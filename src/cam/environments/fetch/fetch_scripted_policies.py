@@ -163,6 +163,7 @@ class FetchScriptedPushPolicy(Policy):
 
     BEHIND = BLOCK_HALF_SIZE + 0.03  # gripper centre this far behind the block centre while pushing
     HOVER = 0.08
+    PUSH_SPEED = 0.25  # action limit while pushing: at full speed the gripper rams the block (~650 N contact force)
     REACHED_TOLERANCE = 0.01
     LEG_DONE = 0.025  # block within this of a leg's goal along the leg (goals are mid-band, 4 cm inside their region)
 
@@ -214,6 +215,9 @@ class FetchScriptedPushPolicy(Policy):
                 self.phase, self.direction = "rise", heading
                 return servo(gripper, np.array([gripper[0], gripper[1], block[2] + self.HOVER]), CLOSE)
             target = np.array([*(block[:2] - self.BEHIND * heading + min(distance, 0.05) * heading), block[2]])
+            action = servo(gripper, target, CLOSE)
+            action[:3] = np.clip(action[:3], -self.PUSH_SPEED, self.PUSH_SPEED)
+            return action
         return servo(gripper, target, CLOSE)
 
     def start_leg(self) -> None:

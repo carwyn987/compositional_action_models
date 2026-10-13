@@ -322,7 +322,8 @@ def check_scripted_policies(skills: list[str]) -> None:
     failed = []
     for skill in skills:
         result = subprocess.run(
-            [PYTHON, "scripts/run_skill.py", "--skill", skill, "--num-blocks", "2", "--episodes", "3"],
+            # 150 steps: the scripted push moves slowly on purpose (gentle contact), so diagonals need >100
+            [PYTHON, "scripts/run_skill.py", "--skill", skill, "--num-blocks", "2", "--episodes", "3", "--max-steps", "150"],
             cwd=ROOT, capture_output=True, text=True,
         )
         if not re.search(r"success rate: [1-3]/3", result.stdout):
