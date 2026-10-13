@@ -71,8 +71,12 @@ Design rules the code keeps:
 - Setup acts through the normal `step` API, never by setting the simulator state, so every set-up state
   is physically reachable.
 
-Training is Stable-Baselines3 SAC (default) or PPO, with features extractors for the trainable and
-compositional embeddings. See `docs/operator_embeddings.md` for every embedding type, with worked
+Training is Stable-Baselines3 SAC (default), multi-task SAC (`--algorithm mtsac`, the overnight runner's
+default) or PPO, with features extractors for the trainable and compositional embeddings. Multi-task SAC
+keeps a separate entropy temperature per skill (`MultiTaskSAC`, as on Meta-World): with one temperature,
+the entropy target holds only on average over the skills, so learned skills and skills still being explored
+pull it in opposite directions. Each distinct operator embedding gets its own temperature, logged as
+`train/ent_coef/<skill>`; the policy's input is unchanged. See `docs/operator_embeddings.md` for every embedding type, with worked
 examples.
 
 ### Predicates (`fetch_predicate_evaluation_wrapper.py`)

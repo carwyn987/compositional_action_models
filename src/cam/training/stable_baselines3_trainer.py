@@ -29,10 +29,11 @@ from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
 from cam.training.checkpointing import PeriodicSaveCallback, atomic_save_model, atomic_save_replay_buffer
+from cam.training.multi_task_sac import MultiTaskSAC
 
 logger = logging.getLogger(__name__)
 
-ALGORITHMS = {"sac": SAC, "ppo": PPO}
+ALGORITHMS = {"sac": SAC, "mtsac": MultiTaskSAC, "ppo": PPO}
 HYPERPARAMETERS = {
     "sac": dict(
         learning_rate=3e-4,
@@ -45,6 +46,7 @@ HYPERPARAMETERS = {
     ),
     "ppo": dict(learning_rate=3e-4, n_steps=1024, batch_size=256, gamma=0.95),
 }
+HYPERPARAMETERS["mtsac"] = HYPERPARAMETERS["sac"]
 
 
 class SuccessRateCallback(BaseCallback):

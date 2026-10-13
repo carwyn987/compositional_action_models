@@ -11,7 +11,11 @@ from cam.training.stable_baselines3_trainer import train_stable_baselines3  # no
 @pytest.mark.integration
 @pytest.mark.parametrize(
     "algorithm, overrides",
-    [("sac", {"learning_starts": 50, "batch_size": 32}), ("ppo", {"n_steps": 64, "batch_size": 32})],
+    [
+        ("sac", {"learning_starts": 50, "batch_size": 32}),
+        ("mtsac", {"learning_starts": 50, "batch_size": 32}),
+        ("ppo", {"n_steps": 64, "batch_size": 32}),
+    ],
 )
 def test_short_training_run_saves_model_and_monitor(tmp_path, algorithm, overrides):
     """A few hundred steps on pickup + putdown train end to end and write model.zip and monitor.csv."""

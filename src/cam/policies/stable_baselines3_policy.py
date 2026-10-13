@@ -7,8 +7,9 @@ from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
 
 from cam.policies.policy import Policy
+from cam.training.multi_task_sac import MultiTaskSAC
 
-ALGORITHMS = {"sac": SAC, "ppo": PPO}
+ALGORITHMS = {"sac": SAC, "mtsac": MultiTaskSAC, "ppo": PPO}
 
 
 class StableBaselines3Policy(Policy):
