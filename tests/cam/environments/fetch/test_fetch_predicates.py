@@ -93,12 +93,12 @@ def test_dropped_means_let_go_in_the_air():
         return {"environment_state": state, "facts": FetchPredicateEvaluationWrapper.evaluate(state)}
 
     high = [1.2, 0.6, TABLE_REST_Z + 0.10]
-    assert dropped(putdown, info(FAR, OPEN, high))  # let go 10 cm up
-    assert not dropped(putdown, info(high, GRIPPING, high))  # still held
-    assert not dropped(putdown, info(FAR, OPEN, [1.2, 0.6, TABLE_REST_Z + 0.01]))  # released just above the table
-    assert not dropped(putdown, info(FAR, OPEN, ON_BLOCK1))  # resting on a block
-    assert not dropped(putdown, info(FAR, OPEN, ON_BLOCK1 + [0, 0, 0.015]))  # released 1.5 cm above a block
-    assert dropped(putdown, info(FAR, OPEN, ON_BLOCK1 + [0, 0, 0.05]))  # let go 5 cm above a block
+    assert dropped(putdown, {}, info(FAR, OPEN, high))  # let go 10 cm up
+    assert not dropped(putdown, {}, info(high, GRIPPING, high))  # still held
+    assert not dropped(putdown, {}, info(FAR, OPEN, [1.2, 0.6, TABLE_REST_Z + 0.01]))  # released just above the table
+    assert not dropped(putdown, {}, info(FAR, OPEN, ON_BLOCK1))  # resting on a block
+    assert not dropped(putdown, {}, info(FAR, OPEN, ON_BLOCK1 + [0, 0, 0.015]))  # released 1.5 cm above a block
+    assert dropped(putdown, {}, info(FAR, OPEN, ON_BLOCK1 + [0, 0, 0.05]))  # let go 5 cm above a block
 
 
 @pytest.mark.unit
@@ -119,3 +119,22 @@ def test_regions_are_global_areas_of_the_table_and_push_goals_lie_inside_them():
     goal = push_goal(state, diagonal)
     goal_state = FetchState(np.array(FAR), OPEN, {"block0": np.array([*goal, TABLE_REST_Z]), "block1": BLOCK1})
     assert diagonal.effects_hold(FetchPredicateEvaluationWrapper.evaluate(goal_state))
+
+
+@pytest.mark.unit
+def test_disturbed_names_another_block_moved_from_its_start():
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import disturbed, fetch_failure
+    from cam.skills.blocksworld_skills import PickupSkill
+
+    pickup = PickupSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+
+    def info(block0, block1):
+        state = FetchState(np.array(FAR), OPEN, {"block0": np.array(block0), "block1": np.array(block1)})
+        return {"environment_state": state, "facts": FetchPredicateEvaluationWrapper.evaluate(state)}
+
+    start = info([1.2, 0.6, TABLE_REST_Z], BLOCK1)
+    moved_block0 = info([1.2, 0.6, TABLE_REST_Z + 0.2], BLOCK1)  # the moved block may go anywhere
+    nudged = info([1.2, 0.6, TABLE_REST_Z], BLOCK1 + [0.02, 0, 0])
+    knocked = info([1.2, 0.6, TABLE_REST_Z], BLOCK1 + [0.06, 0, 0])
+    assert disturbed(pickup, start, moved_block0) is None and disturbed(pickup, start, nudged) is None
+    assert disturbed(pickup, start, knocked) == "block1" and fetch_failure(pickup, start, knocked) == "disturbed block1"

@@ -97,20 +97,22 @@ def test_success_needs_the_effects_to_hold_for_success_hold_steps_in_a_row():
 
 @pytest.mark.unit
 def test_failure_condition_ends_the_episode_unsuccessfully():
-    def released(grounded, info):
-        return Predicate("gripper-empty", ()) in info["facts"]
+    def released(grounded, start_info, info):
+        return "released" if Predicate("gripper-empty", ()) in info["facts"] else None
 
-    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], failure_conditions={"pickup": released})
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], failure_condition=released,
+                           failure_penalty=2.0)
     env.reset(seed=0)
-    _, _, terminated, _, info = env.step(WAIT)
-    assert terminated and info["failed"] and info["is_success"] == 0.0
+    _, reward, terminated, _, info = env.step(WAIT)
+    assert terminated and info["failed"] and info["failure"] == "released" and info["is_success"] == 0.0
+    assert reward == -2.0 and info["reward_components"]["failure"] == -2.0
 
 
 @pytest.mark.unit
 def test_a_failure_overrides_effects_that_hold():
     """If the failure condition holds on a step where the effects hold, the episode fails."""
     env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)],
-                           failure_conditions={"pickup": lambda grounded, info: True})
+                           failure_condition=lambda grounded, start_info, info: "always")
     _, info = env.reset(seed=0)
     _, _, terminated, _, info = env.step(grasp(info["grounded_action_model"].arguments[0]))
     assert terminated and info["failed"] and info["is_success"] == 0.0

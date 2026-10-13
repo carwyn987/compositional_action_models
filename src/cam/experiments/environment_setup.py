@@ -10,12 +10,12 @@ import gymnasium as gym
 from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
-    FETCH_FAILURE_CONDITIONS,
     FETCH_FRAME_PREDICATES,
     FETCH_PREDICATE_ARITIES,
     FetchPredicateEvaluationWrapper,
+    fetch_failure,
 )
-from cam.environments.fetch.fetch_rewards import FETCH_SHAPED_REWARDS
+from cam.environments.fetch.fetch_rewards import FAILURE_PENALTY, FETCH_SHAPED_REWARDS, FetchMotionReward
 from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPickupPolicy,
     FetchScriptedPickupRaisedPolicy,
@@ -157,8 +157,11 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 setup_policies,
                 reward_functions,
                 success_hold_steps=config.get("success_hold_steps", 1),  # configs saved before the option: 1
-                failure_conditions=FETCH_FAILURE_CONDITIONS,
+                failure_condition=fetch_failure,
                 frame_predicates=FETCH_FRAME_PREDICATES,
+                # shaped rewards: motion penalties for every skill, and a penalty on failure
+                shared_reward=FetchMotionReward() if config["reward"] == "shaped" else None,
+                failure_penalty=FAILURE_PENALTY if config["reward"] == "shaped" else 0.0,
             ),
             config["max_steps_per_episode"],
         ),

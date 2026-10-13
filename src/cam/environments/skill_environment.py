@@ -14,9 +14,10 @@ task over one or more skills. Each episode is one grounded action of one skill
            its goal state, not pass through it), with every fact over frame_predicates
            that the action does not mention unchanged since the episode started;
            the reward comes from the skill's reward function (SparseReward,
-           1.0 on success and 0.0 otherwise, unless another is given); the
-           episode also ends, unsuccessfully, if the skill's failure condition
-           holds (e.g. the block was dropped)
+           1.0 on success and 0.0 otherwise, unless another is given) plus the
+           shared reward terms for every skill (e.g. motion penalties); the
+           episode also ends, unsuccessfully and with failure_penalty, if the
+           failure condition holds (e.g. a block was dropped or knocked aside)
 
 Each setup skill is executed like an episode of its own: a random applicable
 grounding is chosen and its policy acts until that grounding's effects hold.
@@ -69,12 +70,18 @@ class SkillEnvironment(gym.Wrapper):
         max_steps_per_setup_skill: int = 100,
         max_setup_attempts: int = 10,
         success_hold_steps: int = 1,
-        failure_conditions: dict[str, Callable[[GroundedSymbolicActionModel, dict], bool]] | None = None,
+        failure_condition: Callable[[GroundedSymbolicActionModel, dict, dict], str | None] | None = None,
         frame_predicates: frozenset[str] = frozenset(),
+        shared_reward: RewardFunction | None = None,
+        failure_penalty: float = 0.0,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
-        self.failure_conditions = failure_conditions or {}
+        # (grounded action, info at the episode's start, info now) -> why the episode failed, or None
+        self.failure_condition = failure_condition
+        self.shared_reward = shared_reward  # reward terms added for every skill
+        self.failure_penalty = failure_penalty  # subtracted on the step a failure ends the episode
+        self.start_info: dict = {}
         self.frame_predicates = frame_predicates  # facts the action must not change unless it says so
         self.start_facts: frozenset = frozenset()
         self.steps_effects_held = 0
@@ -120,7 +127,9 @@ class SkillEnvironment(gym.Wrapper):
                 logger.warning("episode start: %s effects already hold", grounded)
             self.grounded_action_model = grounded
             self.steps_effects_held = 0
-            self.start_facts = info["facts"]
+            self.start_facts, self.start_info = info["facts"], info
+            if self.shared_reward is not None:
+                self.shared_reward.reset(grounded, info)
             self.reward_functions[self.skill.name].reset(grounded, info)
             return obs, {**self._annotate(info, success=False), "setup": setup}
         raise RuntimeError(f"could not set up {self.skill.name} in {self.max_setup_attempts} attempts")
@@ -129,8 +138,9 @@ class SkillEnvironment(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(action)
         # A failure takes precedence: a step where the failure condition holds never counts toward success,
         # even if the effects hold then (e.g. a dropped block that lands in place), and ends the episode.
-        failure = self.failure_conditions.get(self.skill.name)
-        failed = failure is not None and failure(self.grounded_action_model, info)
+        failure = (self.failure_condition(self.grounded_action_model, self.start_info, info)
+                   if self.failure_condition else None)
+        failed = failure is not None
         held = (
             self.grounded_action_model.effects_hold(info["facts"])
             and self.grounded_action_model.frame_holds(self.start_facts, info["facts"], self.frame_predicates)
@@ -140,7 +150,13 @@ class SkillEnvironment(gym.Wrapper):
         success = self.steps_effects_held >= self.success_hold_steps
         reward_function = self.reward_functions[self.skill.name]
         reward, components = reward_function(self.grounded_action_model, action, info, success)
-        info = {**self._annotate(info, success), "reward_components": components, "failed": failed}
+        if self.shared_reward is not None:
+            shared, shared_components = self.shared_reward(self.grounded_action_model, action, info, success)
+            reward, components = reward + shared, {**components, **shared_components}
+        if failed:
+            logger.info("episode failed: %s (%s)", self.grounded_action_model, failure)
+            reward, components = reward - self.failure_penalty, {**components, "failure": -self.failure_penalty}
+        info = {**self._annotate(info, success), "reward_components": components, "failed": failed, "failure": failure}
         return obs, reward, terminated or success or failed, truncated, info
 
     def _select_skill(self, skill_name: str | None) -> Skill:

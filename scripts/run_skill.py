@@ -185,7 +185,8 @@ def main() -> None:
                 if terminated or truncated:
                     break
             successes += int(info["is_success"])
-            print(f"    success={bool(info['is_success'])} steps={t + 1} return={episode_return:.2f}")
+            failure = f" failure={info['failure']}" if info.get("failure") else ""
+            print(f"    success={bool(info['is_success'])}{failure} steps={t + 1} return={episode_return:.2f}")
     finally:
         env.close()
     print(f"success rate: {successes}/{args.episodes}")

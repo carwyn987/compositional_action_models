@@ -173,14 +173,15 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
 # (a block picked up leaves its region), which the operators do not spell out.
 FETCH_FRAME_PREDICATES = frozenset({"on-table", "on", "clear", "holding", "gripper-empty"})
 
-# Failure conditions: a state in which a skill's episode ends unsuccessfully, whatever its effects.
+# Failure: a state in which an episode ends unsuccessfully, whatever its effects; the same for every skill.
 DROP_HEIGHT = 0.02  # a block let go more than this above its support was dropped, not placed
+DISTURB_DISTANCE = 0.03  # another block moved further than this from its start was knocked or pushed aside
 
 
-def dropped(grounded_action_model, info: dict) -> bool:
+def dropped(grounded_action_model, start_info: dict, info: dict) -> bool:
     """The moved block (first argument) is not gripped and its centre is more than DROP_HEIGHT above where it
     would rest on its support: the table, or the top of a block under it. It was let go in the air (it is
-    falling). A failure for the placing skills: putdown, stack, place-beside."""
+    falling), or pushed off the table."""
     state = info["environment_state"]
     block = grounded_action_model.arguments[0]
     position = state.block_positions[block]
@@ -191,8 +192,23 @@ def dropped(grounded_action_model, info: dict) -> bool:
     return not gripping(state, block) and position[2] - max(rest_heights) > DROP_HEIGHT
 
 
-# Failure condition per skill (SkillEnvironment ends the episode unsuccessfully when it holds).
-FETCH_FAILURE_CONDITIONS = {"putdown": dropped, "stack": dropped, "place-beside": dropped}
+def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None:
+    """A block other than the moved one (first argument) that is more than DISTURB_DISTANCE from where it was
+    when the episode started (knocked over or pushed aside), or None. Every skill here moves one block."""
+    moved = grounded_action_model.arguments[0]
+    start = start_info["environment_state"].block_positions
+    now = info["environment_state"].block_positions
+    return next((name for name in now if name != moved and np.linalg.norm(now[name] - start[name]) > DISTURB_DISTANCE),
+                None)
+
+
+def fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
+    """Why the episode failed, or None: the moved block was dropped, or another block was disturbed."""
+    if dropped(grounded_action_model, start_info, info):
+        return f"dropped {grounded_action_model.arguments[0]}"
+    other = disturbed(grounded_action_model, start_info, info)
+    return f"disturbed {other}" if other else None
+
 
 FETCH_PREDICATE_ARITIES: dict[str, int] = {
     name: len(inspect.signature(function).parameters) - 1 for name, function in FETCH_PREDICATES.items()

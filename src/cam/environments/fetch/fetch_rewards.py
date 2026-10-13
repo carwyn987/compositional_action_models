@@ -25,29 +25,60 @@ from cam.rewards.reward_function import RewardFunction
 
 
 
-class MotionPenalties:
-    """Penalties for abrupt motion, for the placing rewards:
-        smoothness  the change between consecutive actions, squared
-        jerk        the block's jerk (third difference of its position over steps), squared: high when the
-                    block is jolted, e.g. slammed down or knocked
+FAILURE_PENALTY = 10.0  # subtracted when an episode fails (a block dropped or knocked aside); success pays 15
+
+
+@dataclass(frozen=True)
+class FetchMotionRewardConfig:
+    smoothness_penalty: float = 0.005  # per unit squared of change between consecutive actions
+    acceleration_penalty: float = 500.0  # per (m/step^2)^2 of the moved block's acceleration
+    disturbance_penalty: float = 20.0  # per metre the other blocks move
+
+
+@dataclass
+class FetchMotionReward(RewardFunction):
+    """Reward terms added to every skill's reward (SkillEnvironment's shared_reward), against brutal motion:
+        smoothness    the change between consecutive actions, squared
+        acceleration  the moved block's (first argument) acceleration (second difference of its position over
+                      steps), squared: high when it is yanked, thrown or slammed
+        disturbance   how far the other blocks moved this step: any knock is penalized (moving one more than
+                      DISTURB_DISTANCE from its start also ends the episode as a failure)
+    A full-speed scripted episode costs about 0.05-1.3; throwing a block costs several points per step.
     """
 
-    def __init__(self):
-        self.reset()
+    config: FetchMotionRewardConfig = field(default_factory=FetchMotionRewardConfig)
 
-    def reset(self) -> None:
+    def __post_init__(self):
+        self.reset(None, {})
+
+    def reset(self, grounded_action_model, info) -> None:
         self.previous_action: np.ndarray | None = None
-        self.positions: deque = deque(maxlen=4)
+        self.moved_positions: deque = deque(maxlen=3)
+        self.previous_others: dict[str, np.ndarray] = {}
 
-    def __call__(self, action: np.ndarray, block_position: np.ndarray) -> tuple[float, float]:
-        """(smoothness, jerk), both >= 0."""
+    def __call__(self, grounded_action_model, action, info, success):
+        cfg = self.config
+        positions = info["environment_state"].block_positions
+        moved = grounded_action_model.arguments[0]
+        action = np.asarray(action, dtype=np.float64)
         smoothness = 0.0 if self.previous_action is None else float(np.sum((action - self.previous_action) ** 2))
         self.previous_action = action
-        self.positions.append(np.asarray(block_position, dtype=np.float64))
-        if len(self.positions) < 4:
-            return smoothness, 0.0
-        p0, p1, p2, p3 = self.positions
-        return smoothness, float(np.sum((p3 - 3 * p2 + 3 * p1 - p0) ** 2))
+        self.moved_positions.append(np.asarray(positions[moved], dtype=np.float64))
+        acceleration = 0.0
+        if len(self.moved_positions) == 3:
+            p0, p1, p2 = self.moved_positions
+            acceleration = float(np.sum((p2 - 2 * p1 + p0) ** 2))
+        others = {name: np.asarray(p, dtype=np.float64) for name, p in positions.items() if name != moved}
+        disturbance = sum(float(np.linalg.norm(others[name] - self.previous_others[name]))
+                          for name in others if name in self.previous_others)
+        self.previous_others = others
+        components = {
+            "smoothness": -cfg.smoothness_penalty * smoothness,
+            "acceleration": -cfg.acceleration_penalty * acceleration,
+            "disturbance": -cfg.disturbance_penalty * disturbance,
+        }
+        return sum(components.values()), components
+
 
 @dataclass(frozen=True)
 class FetchPickupRewardConfig:
@@ -258,9 +289,6 @@ class FetchStackRewardConfig:
     success_bonus: float = 15.0
 
     max_position_progress: float = 0.025
-    # Abrupt motion (MotionPenalties): action changes and block jerk
-    smoothness_penalty: float = 0.005
-    jerk_penalty: float = 50.0
 
 
 @dataclass
@@ -290,7 +318,6 @@ class FetchStackReward(RewardFunction):
         self.placed_earned = False
         self.release_earned = False
         self.success_earned = False
-        self.motion = MotionPenalties()
 
     def resting_z(self, block: np.ndarray, base: np.ndarray) -> float:
         """Height of the block's centre once placed: on top of the base."""
@@ -328,12 +355,9 @@ class FetchStackReward(RewardFunction):
         placed = self.placed(info["facts"], block_name, base_name)
         released = Predicate("gripper-empty", ()) in info["facts"]
 
-        smoothness, jerk = self.motion(action, block)
         components = {
             "time": -cfg.time_penalty,
             "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
-            "smoothness": -cfg.smoothness_penalty * smoothness,
-            "jerk": -cfg.jerk_penalty * jerk,
             "carry": 0.0,
             "align": 0.0,
             "descend": 0.0,
@@ -437,10 +461,6 @@ class FetchPutdownRewardConfig:
     # General costs
     time_penalty: float = 0.01
     action_l2_penalty: float = 0.001
-    # Smoothness: penalize the change between consecutive actions, a proxy for jerk (the rate of change
-    # of acceleration). The descent-speed cap below limits speed only, not abrupt changes.
-    smoothness_penalty: float = 0.005
-    jerk_penalty: float = 50.0  # the block's jerk (MotionPenalties): slamming it down jolts it
 
     # 1. Lower the block toward the table
     descend_progress_weight: float = 20.0
@@ -501,7 +521,6 @@ class FetchPutdownReward(RewardFunction):
         self.previous_height: float | None = None
         self.previous_squareness: float | None = None
         self.previous_gripper_width: float | None = None
-        self.motion = MotionPenalties()
         self.square_land_earned = False
         self.on_table_earned = False
         self.release_earned = False
@@ -521,8 +540,6 @@ class FetchPutdownReward(RewardFunction):
         components = {
             "time": -cfg.time_penalty,
             "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
-            "smoothness": 0.0,
-            "jerk": 0.0,
             "descend": 0.0,
             "gentle": 0.0,
             "square": 0.0,
@@ -532,9 +549,6 @@ class FetchPutdownReward(RewardFunction):
             "success": 0.0,
         }
 
-        smoothness, jerk = self.motion(action, state.block_positions[block])
-        components["smoothness"] = -cfg.smoothness_penalty * smoothness
-        components["jerk"] = -cfg.jerk_penalty * jerk
 
         # 1. Lower the block toward the table until it rests there.
         if not on_table:
