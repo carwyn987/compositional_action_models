@@ -190,6 +190,9 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
     runs as child processes logging to `<OUT>/logs/`;
   - **pre-flight (fail fast):** text backend usable, with every text embedded and cached (default
     `TEXT_BACKEND=openai`); device (`DEVICE=cuda` fails if unavailable); scripted policies; disk space;
+  - **`RQ1_STEPS=auto`:** each rq1 run's budget is 1.5 × the sum of the steps each skill needed alone to
+    reach the threshold in its learnability run (a skill that never did counts as `LEARN_STEPS`), so every
+    skill gets at least what it needs alone; the rq1 runs wait for the learnability runs;
   - Ctrl+C saves and stops every run, and the same command resumes;
   - **groups:** learnability (each skill alone), rq1 (one shared policy per condition and seed), repair
     (each `FROM:TO` in `REPAIRS`, in each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill

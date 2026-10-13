@@ -1,0 +1,59 @@
+"""scripts/overnight_runs.py: the RQ1 budget set from the learnability runs (RQ1_STEPS=auto)."""
+
+import json
+
+import pytest
+
+from scripts import overnight_runs
+
+
+@pytest.mark.unit
+def test_rq1_budget_is_the_margin_times_what_each_skill_needed_alone():
+    """pickup 100k + putdown 50k + unstack (solved at step 0: one evaluation interval, 50k) + stack (never: all of
+    its 150k) = 350k; x 1.5 = 525k, rounded up to whole 50k intervals: 550k."""
+    steps = {"pickup": 100_000, "putdown": 50_000, "unstack": 0, "stack": None}
+    assert overnight_runs.rq1_budget(steps, margin=1.5, learn_steps=150_000, interval=50_000) == 550_000
+
+
+@pytest.mark.unit
+def test_learnability_steps_read_each_skills_result_and_name_the_missing(tmp_path, monkeypatch):
+    """Steps to threshold come from each skill's learnability metrics.json; a skill without one is reported."""
+    monkeypatch.setattr(overnight_runs, "OUT", tmp_path)
+    for skill, steps in (("pickup", 100_000), ("stack", None)):
+        run = tmp_path / "learnability" / skill / f"{skill}_run"
+        run.mkdir(parents=True)
+        summary = {"deterministic": {skill: {"steps_to_threshold": steps}}}
+        (run / "metrics.json").write_text(json.dumps({"summary": summary}))
+    steps, missing = overnight_runs.learnability_steps(["pickup", "stack", "putdown"])
+    assert steps == {"pickup": 100_000, "stack": None, "putdown": None} and missing == ["putdown"]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("auto", [False, True])
+def test_rq1_runs_wait_for_the_learnability_runs_only_with_an_automatic_budget(monkeypatch, auto):
+    """Control: with a fixed RQ1_STEPS the rq1 runs start without waiting. With RQ1_STEPS=auto each rq1 run waits for
+    the learnability run of every base skill, whose results set its budget."""
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1"]), ("CONDITIONS", ["one-hot"]), ("SEEDS", [0]),
+                        ("BASE_SKILLS", ["pickup", "putdown"]), ("REPAIRS", []), ("REPAIRED", []), ("RQ1_AUTO", auto)):
+        monkeypatch.setattr(overnight_runs, name, value)
+    (rq1,) = [run for run in overnight_runs.build_plan() if run.group == "rq1"]
+    assert rq1.depends_on == (("learnability_pickup", "learnability_putdown") if auto else ())
+
+
+@pytest.mark.unit
+def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
+    """Once the learnability results exist, each rq1 run trains for the budget: its steps and --total-timesteps."""
+    monkeypatch.setattr(overnight_runs, "OUT", tmp_path)
+    monkeypatch.setattr(overnight_runs, "BASE_SKILLS", ["pickup", "putdown"])
+    for skill, steps in (("pickup", 100_000), ("putdown", 50_000)):
+        run = tmp_path / "learnability" / skill / "run"
+        run.mkdir(parents=True)
+        (run / "metrics.json").write_text(json.dumps({"summary": {"deterministic": {skill: {"steps_to_threshold": steps}}}}))
+    runs = [overnight_runs.Run(f"rq1_{condition}", "rq1", "", "", "", 1, condition, tmp_path,
+                               ["main.py", "--total-timesteps", "1"]) for condition in ("one-hot", "random")]
+    runner = overnight_runs.Runner(runs)
+    for run in runs:
+        runner.set_rq1_budget(run)
+    expected = overnight_runs.rq1_budget({"pickup": 100_000, "putdown": 50_000}, overnight_runs.RQ1_BUDGET_MARGIN,
+                                         overnight_runs.LEARN_STEPS, overnight_runs.EVAL_INTERVAL)
+    assert [(run.steps, run.command[-1]) for run in runs] == [(expected, str(expected))] * 2
