@@ -29,7 +29,12 @@ Groups
   repair        RQ2 / RQ3: for each FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by its
                 repaired version TO: TO's zero-shot success at the resume step, then the steps it needs to
                 reach the success threshold (TO evaluated alone 1k, 2k, 4k, ... steps after it is added,
-                then every EVAL_INTERVAL). Two variants:
+                then every REPAIR_EVAL_INTERVAL), at most REPAIR_STEPS. Each REPAIR_MODES (main.py
+                --repair-mode), and each of two variants:
+                  isolated        trains only TO; the other skills are evaluated, not trained, which shows
+                                  what they forget; stops once TO is at the threshold
+                  retain          trains every skill, as the rq1 run did; stops once TO is at the threshold
+                                  and every other skill is back at its level before the repair
                   repair-visible  the repaired operator is encoded on its own: content-based embeddings
                                   (multi-hot, text, compositional) show the changed literals; one-hot and
                                   random give it a code no training has used
@@ -56,7 +61,8 @@ Settings (environment variables, defaults in brackets)
                push-right-front push-left-back push-right-back push-beside]
   REPAIRS ["unstack:unstack-raised stack:place-beside push-left:push-left-front"] (FROM:TO pairs; every
           literal of each TO appears in some base skill, so a policy reading the operator can use it)
-  LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000]
+  REPAIR_MODES ["isolated retain"]  REPAIR_EVAL_INTERVAL [10000] (how often a repair run evaluates every skill)
+  LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000] (a repair run's most steps)
   EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]
 """
 
@@ -99,6 +105,8 @@ BASE_SKILLS = setting(  # the training skills; held-out operators (REPAIRS' TO) 
 REPAIRS = [tuple(pair.split(":")) for pair in
            setting("REPAIRS", "unstack:unstack-raised stack:place-beside push-left:push-left-front").split()]
 REPAIRED = [to for _, to in REPAIRS]
+REPAIR_MODES = setting("REPAIR_MODES", "isolated retain").split()
+REPAIR_EVAL_INTERVAL = int(setting("REPAIR_EVAL_INTERVAL", "10000"))
 LEARN_STEPS = int(setting("LEARN_STEPS", "150000"))
 RQ1_STEPS = int(setting("RQ1_STEPS", "500000"))
 REPAIR_STEPS = int(setting("REPAIR_STEPS", "150000"))
@@ -228,19 +236,24 @@ def build_plan() -> list[Run]:
                 ))
             if "repair" not in RUN_GROUPS:
                 continue
-            for repair_from, repair_to in REPAIRS:
+            for (repair_from, repair_to), mode in ((pair, mode) for pair in REPAIRS for mode in REPAIR_MODES):
                 difference = repair_difference(repair_from, repair_to)
                 skills = [repair_to if skill == repair_from else skill for skill in BASE_SKILLS]
                 variants = ["repair-visible"] + (["repair-hidden"] if condition in ALIAS_CONDITIONS else [])
+                trains = (f"trains only {repair_to} until it reaches the success threshold (the other skills are "
+                          "evaluated, not trained)" if mode == "isolated" else
+                          f"trains every skill, as the RQ1 run did, until {repair_to} reaches the success threshold "
+                          "and every other skill is back at its level before the repair")
                 for variant in variants:
-                    run_directory = OUT / "repair" / repair_to / f"{condition}_{variant}_seed{seed}"
+                    run_directory = OUT / "repair" / repair_to / f"{condition}_{variant}_{mode}_seed{seed}"
                     hidden = variant == "repair-hidden"
                     runs.append(Run(
-                        label=f"repair_{repair_to}_{condition}_{variant}_seed{seed}", group="repair",
-                        title=f"Repair (RQ3) · {repair_from} -> {repair_to} · {condition} · {variant} · seed {seed}",
+                        label=f"repair_{repair_to}_{condition}_{variant}_{mode}_seed{seed}", group="repair",
+                        title=(f"Repair (RQ3) · {repair_from} -> {repair_to} · {condition} · {variant} · {mode} · "
+                               f"seed {seed}"),
                         what=(f"continues the RQ1 {condition} policy with {repair_from} replaced by {repair_to} "
-                              f"({difference}): evaluates {repair_to} zero-shot, then trains until it reaches the "
-                              f"success threshold (at most {REPAIR_STEPS:,} steps)"),
+                              f"({difference}): evaluates {repair_to} zero-shot, then {trains} (at most "
+                              f"{REPAIR_STEPS:,} steps)"),
                         why=(f"control: {repair_to} gets exactly {repair_from}'s embedding, so the policy cannot see "
                              "the repair. If this succeeds zero-shot, the repair needs no new behaviour and the "
                              "repair test is invalid." if hidden else
@@ -249,7 +262,8 @@ def build_plan() -> list[Run]:
                         steps=REPAIR_STEPS, condition=condition, output=run_directory, copy_from=rq1_output,
                         depends_on=rq1_label if "rq1" in RUN_GROUPS else None, repaired=repair_to,
                         command=["main.py", "--run-directory", str(run_directory), "--skills", *skills,
-                                 "--stop-skills", repair_to, "--total-timesteps", str(REPAIR_STEPS),
+                                 "--stop-skills", repair_to, "--repair-mode", mode,
+                                 "--total-timesteps", str(REPAIR_STEPS), "--eval-interval", str(REPAIR_EVAL_INTERVAL),
                                  "--device", DEVICE,
                                  *(["--operator-identity-aliases", f"{repair_to}={repair_from}"] if hidden else [])],
                     ))
@@ -291,6 +305,12 @@ def preflight(runs: list[Run]) -> None:
     check_scripted_policies(skills)
     free = shutil.disk_usage(OUT if OUT.exists() else ROOT).free / 1e9
     say(f"  ✓ free disk space: {free:.0f} GB" + ("  (low: runs save models and logs)" if free < 10 else ""))
+
+
+def check_repair_modes() -> None:
+    unknown = [mode for mode in REPAIR_MODES if mode not in ("isolated", "retain")]
+    if unknown:
+        sys.exit(f"unknown REPAIR_MODES {unknown}; known: isolated, retain")
 
 
 def check_text_backend(skills: list[str]) -> None:
@@ -551,6 +571,14 @@ class Runner:
             say(f"   result: {run.repaired} zero-shot {values.get('zero_shot_success_rate')}, "
                 f"steps to threshold {values.get('steps_to_threshold')}"
                 + (f"; stopped: {metrics['stop_reason']}" if metrics.get("stop_reason") else ""))
+            retention = metrics.get("retention") or {}
+            others = retention.get("skills") or {}
+            if others:
+                mean = lambda key: sum(entry[key] or 0 for entry in others.values()) / len(others)  # noqa: E731
+                back = retention.get("all_recovered_at")
+                say(f"   other skills (mean): {mean('level_before'):.2f} before -> lowest {mean('lowest_after'):.2f} "
+                    f"-> {mean('final'):.2f} at the end; "
+                    + (f"all back after {back - retention['added_at']:,} steps" if back is not None else "not all back"))
             return
         cells = [f"{skill} {values.get('final_success_rate')}"
                  + (f" (95% at {values['steps_to_threshold'] // 1000}k)" if values.get("steps_to_threshold") is not None else "")
@@ -594,6 +622,7 @@ def main() -> None:
     sys.path.insert(0, str(ROOT))
     for condition in CONDITIONS:
         condition_options(condition)
+    check_repair_modes()
     runs = build_plan()
     if not runs:
         sys.exit(f"nothing to run for RUN_GROUPS={' '.join(RUN_GROUPS)}")

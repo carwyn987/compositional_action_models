@@ -154,6 +154,17 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
 - **AUC:** the *average* success rate over the run (area under the curve divided by the steps). It stays
   low if early success is low, even when the run ends at 100%. Compare AUC only between runs with the same
   budget.
+- **retention** (after a skill is added): for every other skill, its level before (the mean of its last 2
+  evaluations), its lowest and last success after, and when it recovered (back within 0.1 of its level on 2
+  evaluations in a row, counting only evaluations after the addition): how much the new skill made the
+  policy forget (`"retention"` in `metrics.json`).
+
+**Repair modes** (`--repair-mode`, resuming with the repaired skill in `--stop-skills`):
+- **isolated:** only the repaired skill trains; the others are evaluated, not trained. Stops once it is at
+  the threshold on 2 evaluations in a row. Its steps compare directly with learning the skill from scratch.
+- **retain:** every skill trains, each episode's skill chosen as in the run it continues. Stops once the
+  repaired skill is at the threshold and every other skill has recovered: the cost of a repair without
+  forgetting.
 
 ### Scripts
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
@@ -167,7 +178,8 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
     `TEXT_BACKEND=openai`); device (`DEVICE=cuda` fails if unavailable); scripted policies; disk space;
   - Ctrl+C saves and stops every run, and the same command resumes;
   - **groups:** learnability (each skill alone), rq1 (one shared policy per condition and seed), repair
-    (each `FROM:TO` in `REPAIRS`, repair-visible and repair-hidden).
+    (each `FROM:TO` in `REPAIRS`, in each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill
+    evaluated every `REPAIR_EVAL_INTERVAL` (10k) steps).
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training
   statistics including embedding magnitudes, added and repaired skills (with an **invalid repair** flag when
   repair-hidden succeeds zero-shot), and learned embedding geometry.
