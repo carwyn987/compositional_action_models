@@ -70,6 +70,65 @@ def test_stops_after_patience_evaluations_without_improvement():
         assert (callback.stop_reason is None) == (step < 3)
 
 
+def callback_with_points(points, **kwargs):
+    """A MetricsCallback over skills a and b whose deterministic curve holds the given (step, rates) points."""
+    callback = MetricsCallback(None, ["a", "b"], 100, 1, "unused", **kwargs)
+    for step, rates in points:
+        callback.curves["deterministic"].add(step, result(**rates))
+        callback._check_stop()
+    return callback
+
+
+# b is added at step 100 (its zero-shot point) and learned quickly, while a, at 0.95 before, is forgotten and
+# relearned: back within 0.1 of its level only from step 500
+FORGET_THEN_RECOVER = [
+    (0, {"a": 1.0}), (100, {"a": 0.9, "b": 0.0}), (200, {"a": 0.5, "b": 1.0}), (300, {"a": 0.6, "b": 1.0}),
+    (400, {"a": 0.9, "b": 1.0}), (500, {"a": 0.9, "b": 0.96}),
+]
+
+
+@pytest.mark.unit
+def test_recover_others_waits_until_the_other_skills_are_back_at_their_earlier_level():
+    """Control: stopping on the added skill alone stops at step 300, with a forgotten (0.6). With recover_others,
+    training goes on until a is within 0.1 of its earlier level (0.95) on 2 evaluations in a row (step 500)."""
+    alone = callback_with_points(FORGET_THEN_RECOVER[:4], stop_skills=["b"], stop_consecutive=2)
+    assert alone.stop_reason is not None
+    for end in range(4, 6):
+        retain = callback_with_points(FORGET_THEN_RECOVER[:end], stop_skills=["b"], stop_consecutive=2,
+                                      recover_others=True)
+        assert retain.stop_reason is None
+    retain = callback_with_points(FORGET_THEN_RECOVER, stop_skills=["b"], stop_consecutive=2, recover_others=True)
+    assert "every other skill is back" in retain.stop_reason
+
+
+@pytest.mark.unit
+def test_recovery_counts_only_evaluations_after_the_addition():
+    """Right after b is added, only b is evaluated (densely). a's evaluations before the addition are at its level,
+    so a check over all of a's evaluations would call it recovered (the control); it is not, until a has been
+    evaluated again twice."""
+    from cam.evaluation.metrics_callback import holds
+
+    points = [(0, {"a": 1.0}), (100, {"a": 1.0, "b": 0.0}), (110, {"b": 1.0}), (120, {"b": 1.0})]
+    callback = callback_with_points(points, stop_skills=["b"], stop_consecutive=2, recover_others=True)
+    all_of_a = [e.success_rate for _, e in callback.curves["deterministic"].evaluations("a")]
+    assert holds(all_of_a, 0.9, 2)
+    assert callback.stop_reason is None and callback.retention()["skills"]["a"]["recovered"] is False
+
+
+@pytest.mark.unit
+def test_retention_records_each_skills_level_drop_and_recovery():
+    """a: level 0.95 before b was added at step 100, lowest 0.5 after, last 0.9, recovered (2 in a row within
+    0.1) at step 500, which is also when all skills were."""
+    callback = callback_with_points(FORGET_THEN_RECOVER, stop_skills=["b"], stop_consecutive=2)
+    retention = callback.retention()
+    assert retention["added_at"] == 100 and set(retention["skills"]) == {"a"}
+    assert retention["skills"]["a"] == {
+        "level_before": pytest.approx(0.95), "lowest_after": 0.5, "final": 0.9, "recovered_at": 500, "recovered": True,
+    }
+    assert retention["all_recovered_at"] == 500
+    assert callback_with_points(FORGET_THEN_RECOVER[:1]).retention() is None  # nothing added
+
+
 @pytest.mark.unit
 def test_step_returns_false_once_stopping():
     """_on_step tells Stable-Baselines3 to stop (returns False) once a stop reason is set."""
