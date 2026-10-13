@@ -1,6 +1,6 @@
 # Project status
 
-State of the code, what the experiments so far show, what is still open, and what to change next.
+State of the code and what the experiments so far show. What to do next is in `docs/next_steps.md`.
 
 ## 1. Compositional embedding magnitude growth
 
@@ -220,53 +220,11 @@ Each addresses something that run showed:
   push-beside, so every literal of every held-out operator is seen in training.
 - **Runner:** a list of repair pairs; several runs at once.
 
-## 5. Open issues and proposals
-1. **Runtime.** The default plan is 50 runs: 13 learnability; 7 RQ1 on 13 skills; 27 repair (3 pairs × 7
-   conditions, plus 2 repair-hidden per pair). With 2 jobs the first estimate is about two days at typical CPU
-   speeds; the runner refines it after the first runs. Trim with `RUN_GROUPS`, `CONDITIONS` or `*_STEPS`,
-   or raise `JOBS`.
-2. **RQ1 budget.** 500k steps for 13 skills is about 40k per skill, and single skills need 50–150k, so
-   expect partial learning. Consider `RQ1_STEPS=1000000` once runtime allows.
-3. **One seed.** Use 3+ seeds before ranking conditions.
-4. **`stack` → `place-beside` is a larger edit** than the other repairs (a parameter's role, the
-   preconditions and several effects change). Read it as a new-skill test more than a one-literal repair.
-5. **Resumed SAC runs start with an empty replay buffer** (it isn't saved by default; about 1 GB per run),
-   the same for every condition.
-6. **Old runs don't resume:** the predicate set and the embedding size (256) changed.
-7. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). The runner reads progress from
-   them.
+## 5. Next steps
+Open issues, feature additions and the direction for each research question are in `docs/next_steps.md`, the
+project's single backlog.
 
-## 6. Future work
-- **Rotation skills.** For example `rotate-90(?o)` and `rotate-180(?o)`, with a held-out in-between angle
-  (`rotate-45`) or a chain (rotate, then place offset) to test generalization. This needs two things the
-  setup lacks:
-  - **a way to rotate:** Fetch's action is (dx, dy, dz, gripper) with a fixed downward wrist, so the robot
-    can only turn a block by pushing it off-centre. That calls for an environment variant with wrist yaw
-    control (a 5-D action);
-  - **orientation predicates:** global yaw bands from the block's orientation (e.g. `yaw-0`, `yaw-45`,
-    `yaw-90`), like the regions. A cube looks the same every 90°, but the simulator tracks its body yaw, so
-    the predicates can use it.
-- **A drop skill** (`drop(?o)`: holding → on-table, released from height). Its effects would match
-  putdown's, so it can only be told apart from putdown by its name, plus a literal such as a `(dropped ?o)`
-  marker. Use: a control for operators that are structurally identical but behave differently (where
-  structure-based embeddings *should* fail), and a contrast that makes "lower first" depend on the operator.
-- **RQ2 (new skills):** the protocol from `docs/research_focus.md`: add skills one at a time to a
-  growing training set, measure steps to threshold for each new skill, and shuffle the order across seeds.
-  Resume-with-added-skills already supports it.
-- **RQ4 (hypernetworks):** first FiLM conditioning (the embedding scales and shifts the state features),
-  then a real hypernetwork: a custom SB3 SAC actor whose action head weights come from the operator
-  embedding (low-rank: W(e) = U·diag(h(e))·V). The learnability runs are the "individually trained
-  policies" baseline.
-- **RQ5 (does the embedding encode structure?):** linear probes from each learned embedding to its
-  literals (multi-hot as the target). A 2-D PCA plot of embeddings moving during training would help; one
-  existed in the original implementation (`plot_embeddings.py`, git commit 59054395).
-- **RQ6 (behavioural sensitivity):** remove one literal at a time and compare behaviour.
-- **From the original implementation** (git commit 59054395): behaviour-cloning warm starts from the
-  scripted policies (`fetch_blockworld/teacher.py`), keyboard teleoperation with live facts
-  (`experimental/manual_fetch.py`), and a penalty on rotating the block in the push reward.
-- **Statistics:** 3–5 seeds per condition, mean ± std or bootstrap intervals in `review_runs.py`.
-
-## 7. How to run
+## 6. How to run
 ```bash
 ./scripts/start_overnight.sh                       # plan, checks, then 2 runs at a time, each explained
 DEVICE=cuda ./scripts/start_overnight.sh           # on a GPU
