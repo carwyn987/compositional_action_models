@@ -208,11 +208,11 @@ def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None
                 None)
 
 
-def fetch_failure_reason(grounded_action_model, start_info: dict, info: dict) -> str | None:
-    """The reason the episode has failed in this step, or None if it has not failed. Called on every step by
-    SkillEnvironment (its failure_reason); any returned reason makes the step a failure, which ends the episode.
-    The failures, checked in this order: an extreme force on the gripper, the moved block dropped, another
-    block disturbed."""
+def check_fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
+    """Checks whether the episode has failed in this step: returns the reason if it has, None if it has not.
+    Called on every step by SkillEnvironment (its check_failure); a returned reason makes the step a failure,
+    which ends the episode. The failures, checked in this order: an extreme force on the gripper, the moved
+    block dropped, another block disturbed."""
     force = float(np.linalg.norm(info["environment_state"].gripper_force))
     if force > MAX_GRIPPER_FORCE:
         return f"excessive force on the gripper ({force:.0f} N)"

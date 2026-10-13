@@ -123,7 +123,7 @@ def test_regions_are_global_areas_of_the_table_and_push_goals_lie_inside_them():
 
 @pytest.mark.unit
 def test_disturbed_names_another_block_moved_from_its_start():
-    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import disturbed, fetch_failure_reason
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import disturbed, check_fetch_failure
     from cam.skills.blocksworld_skills import PickupSkill
 
     pickup = PickupSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
@@ -137,4 +137,5 @@ def test_disturbed_names_another_block_moved_from_its_start():
     nudged = info([1.2, 0.6, TABLE_REST_Z], BLOCK1 + [0.02, 0, 0])
     knocked = info([1.2, 0.6, TABLE_REST_Z], BLOCK1 + [0.06, 0, 0])
     assert disturbed(pickup, start, moved_block0) is None and disturbed(pickup, start, nudged) is None
-    assert disturbed(pickup, start, knocked) == "block1" and fetch_failure_reason(pickup, start, knocked) == "disturbed block1"
+    assert disturbed(pickup, start, knocked) == "block1"
+    assert check_fetch_failure(pickup, start, knocked) == "disturbed block1"

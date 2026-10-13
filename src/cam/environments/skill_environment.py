@@ -17,7 +17,7 @@ task over one or more skills. Each episode is one grounded action of one skill
            1.0 on success and 0.0 otherwise, unless another is given) plus the
            shared reward terms for every skill (e.g. motion penalties); the
            episode also ends, unsuccessfully and with failure_penalty, as soon as
-           failure_reason returns a reason (e.g. a block was dropped or knocked aside)
+           check_failure returns a reason (e.g. a block was dropped or knocked aside)
 
 Each setup skill is executed like an episode of its own: a random applicable
 grounding is chosen and its policy acts until that grounding's effects hold.
@@ -70,16 +70,16 @@ class SkillEnvironment(gym.Wrapper):
         max_steps_per_setup_skill: int = 100,
         max_setup_attempts: int = 10,
         success_hold_steps: int = 1,
-        failure_reason: Callable[[GroundedSymbolicActionModel, dict, dict], str | None] | None = None,
+        check_failure: Callable[[GroundedSymbolicActionModel, dict, dict], str | None] | None = None,
         frame_predicates: frozenset[str] = frozenset(),
         shared_reward: RewardFunction | None = None,
         failure_penalty: float = 0.0,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
-        # Called every step: (grounded action, info at the episode's start, info now) -> the reason the episode
-        # has failed, or None if it has not. A reason makes the step a failure (episode ends, no success).
-        self.failure_reason = failure_reason
+        # Checks every step whether the episode has failed: (grounded action, info at the episode's start, info
+        # now) -> the reason if it has, None if it has not. A reason makes the step a failure (episode ends).
+        self.check_failure = check_failure
         self.shared_reward = shared_reward  # reward terms added for every skill
         self.failure_penalty = failure_penalty  # subtracted on the step a failure ends the episode
         self.start_info: dict = {}
@@ -139,8 +139,8 @@ class SkillEnvironment(gym.Wrapper):
         obs, _, terminated, truncated, info = self.env.step(action)
         # A failure takes precedence: a step where the failure condition holds never counts toward success,
         # even if the effects hold then (e.g. a dropped block that lands in place), and ends the episode.
-        failure = (self.failure_reason(self.grounded_action_model, self.start_info, info)
-                   if self.failure_reason else None)
+        failure = (self.check_failure(self.grounded_action_model, self.start_info, info)
+                   if self.check_failure else None)
         failed = failure is not None
         held = (
             self.grounded_action_model.effects_hold(info["facts"])

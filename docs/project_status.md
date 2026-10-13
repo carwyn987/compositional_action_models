@@ -87,7 +87,7 @@ geometric predicates change as side effects and are left out). So unstack(?o ?u)
 true: lifting both blocks is not an unstack.
 
 **Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
-over success. It is the same for every skill (`fetch_failure_reason`): an **extreme force** on the gripper (net
+over success. It is the same for every skill (`check_fetch_failure`): an **extreme force** on the gripper (net
 contact force above `MAX_GRIPPER_FORCE`, 500 N), the moved block (first argument) was **dropped** (let go
 more than `DROP_HEIGHT`, 2 cm, above its support), or another block was **disturbed** (moved more than
 `DISTURB_DISTANCE`, 3 cm, from where it started: knocked or pushed aside).
