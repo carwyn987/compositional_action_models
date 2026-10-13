@@ -13,7 +13,7 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     FETCH_FRAME_PREDICATES,
     FETCH_PREDICATE_ARITIES,
     FetchPredicateEvaluationWrapper,
-    fetch_failure,
+    fetch_failure_reason,
 )
 from cam.environments.fetch.fetch_rewards import FAILURE_PENALTY, FETCH_SHAPED_REWARDS, FetchMotionReward
 from cam.environments.fetch.fetch_scripted_policies import (
@@ -157,7 +157,7 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 setup_policies,
                 reward_functions,
                 success_hold_steps=config.get("success_hold_steps", 1),  # configs saved before the option: 1
-                failure_condition=fetch_failure,
+                failure_reason=fetch_failure_reason,
                 frame_predicates=FETCH_FRAME_PREDICATES,
                 # shaped rewards: motion penalties for every skill, and a penalty on failure
                 shared_reward=FetchMotionReward() if config["reward"] == "shaped" else None,

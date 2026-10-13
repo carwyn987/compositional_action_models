@@ -172,7 +172,7 @@ def test_motion_reward_penalizes_action_changes_block_acceleration_and_other_blo
 
 @pytest.mark.unit
 def test_heavy_gripper_force_is_penalized_and_extreme_force_fails():
-    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import fetch_failure
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import fetch_failure_reason
 
     def info(force):
         state = FetchState(np.zeros(3), 0.05, {"block0": np.array([1.3, 0.7, 0.425])}, gripper_force=np.array(force))
@@ -182,5 +182,5 @@ def test_heavy_gripper_force_is_penalized_and_extreme_force_fails():
     reward.reset(PICKUP_BLOCK0, {})
     assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 20.0]), False)[1]["force"] == 0  # holding a block
     assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 300.0]), False)[1]["force"] == pytest.approx(-2.0)
-    assert fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 300.0])) is None
-    assert fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 600.0])).startswith("excessive force")
+    assert fetch_failure_reason(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 300.0])) is None
+    assert fetch_failure_reason(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 600.0])).startswith("excessive force")
