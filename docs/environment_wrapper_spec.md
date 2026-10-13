@@ -98,6 +98,9 @@ A block is *gripped* when the gripper is within `GRASP_DISTANCE` of it with the 
 So grasping skills (pickup, unstack) succeed only once the block is lifted, and placing skills
 (putdown, stack) only once it is released.
 
+Success also requires the frame (unmentioned facts over `FETCH_FRAME_PREDICATES` unchanged), and every
+skill fails if a block is dropped or another block is disturbed (`fetch_failure`).
+
 `table_rest_z` is a property of the Fetch table (block centre at rest ≈ 0.425),
 not a value recorded at reset.
 
