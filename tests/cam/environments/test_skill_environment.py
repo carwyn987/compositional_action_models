@@ -129,6 +129,39 @@ def test_each_episode_uses_one_of_the_skills_setup_chains():
     assert chains == {1, 3}
 
 
+class LiftBothEnv(TwoBlockFactsEnv):
+    """TwoBlockFactsEnv plus action [9]: grasp block0 and lift block1 with it, so block1 leaves the table."""
+
+    def step(self, action):
+        self.both = action[0] == 9 or (getattr(self, "both", False) and action[0] >= 0)
+        return super().step(np.array([1.0]) if action[0] == 9 else action)
+
+    def _info(self):
+        info = super()._info()
+        if getattr(self, "both", False):
+            info["facts"] = info["facts"] - {Predicate("on-table", ("block1",))}
+        return info
+
+
+@pytest.mark.unit
+def test_effects_reached_by_breaking_the_frame_never_succeed():
+    """pickup(block0) by lifting both blocks reaches pickup's effects but takes block1 off the table, which
+    pickup does not mention: no success however long it is held. Released and picked up cleanly, it succeeds:
+    the frame is compared with the episode's start, so a past violation does not stick."""
+    def pickup_block0(frame):
+        env = SkillEnvironment(LiftBothEnv(), [PickupSkill(PDDL_CONFIG)], success_hold_steps=2, frame_predicates=frame)
+        _, info = env.reset(seed=0)
+        while info["grounded_action_model"].arguments[0] != "block0":  # this test lifts block0
+            _, info = env.reset()
+        return env
+
+    env = pickup_block0(frozenset())  # without a frame, lifting both blocks counts (the exploit is real)
+    assert [env.step(action)[2] for action in [np.array([9.0]), WAIT]] == [False, True]
+    env = pickup_block0(frozenset({"on-table", "clear", "holding", "gripper-empty"}))
+    assert [env.step(action)[2] for action in [np.array([9.0]), WAIT, WAIT, WAIT]] == [False, False, False, False]
+    assert [env.step(action)[2] for action in [RELEASE, grasp("block0"), WAIT]] == [False, False, True]
+
+
 @pytest.mark.unit
 def test_setup_chain_runs_declared_skills():
     """putdown set up by pickup: reset runs pickup, so putdown targets the held block."""

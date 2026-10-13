@@ -123,3 +123,20 @@ def test_frame_holds_only_if_unmentioned_facts_are_unchanged():
     assert grounded.effects_hold(after) and grounded.frame_holds(before, after, frame)  # at-left is not in the frame
     both_lifted = after - {Predicate("on-table", ("b1",))}
     assert grounded.effects_hold(both_lifted) and not grounded.frame_holds(before, both_lifted, frame)
+
+
+
+@pytest.mark.unit
+def test_frame_breaks_when_an_unmentioned_fact_becomes_true():
+    """Not only facts lost: a fact the action does not mention appearing (e.g. a second block now held) breaks
+    the frame too."""
+    pickup = parse_operator("""(:action pickup :parameters (?o - block)
+        :precondition (and (on-table ?o) (clear ?o) (gripper-empty))
+        :effect (and (holding ?o) (not (on-table ?o)) (not (clear ?o)) (not (gripper-empty))))""")
+    grounded = ground(pickup, {"?o": "b0"})
+    frame = frozenset({"on-table", "clear", "holding", "gripper-empty"})
+    before = frozenset({Predicate("on-table", ("b0",)), Predicate("clear", ("b0",)), Predicate("gripper-empty", ()),
+                        Predicate("on-table", ("b1",)), Predicate("clear", ("b1",))})
+    after = frozenset({Predicate("holding", ("b0",)), Predicate("on-table", ("b1",)), Predicate("clear", ("b1",))})
+    assert grounded.frame_holds(before, after, frame)
+    assert not grounded.frame_holds(before, after | {Predicate("holding", ("b1",))}, frame)
