@@ -54,6 +54,8 @@ View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 Settings (environment variables, defaults in brackets)
   OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  SEEDS ["0"]
   ALGORITHM [mtsac] (main.py --algorithm: sac; mtsac, SAC with a separate entropy temperature per skill; ppo)
+  SKILL_SAMPLING [competence] (main.py --skill-sampling: round-robin, or competence: skills with low recent
+                 success get more of the training episodes; the same rule for every condition)
   JOBS [2] runs at once   DEVICE [auto]   THREADS [cores / JOBS] torch threads per run   DRY_RUN [0]
   CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
               compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
@@ -91,6 +93,7 @@ def setting(name: str, default: str) -> str:
 OUT = Path(setting("OUT", f"outputs/overnight_{date.today():%Y%m%d}"))
 RUN_GROUPS = setting("RUN_GROUPS", "learnability rq1 repair").split()
 ALGORITHM = setting("ALGORITHM", "mtsac")
+SKILL_SAMPLING = setting("SKILL_SAMPLING", "competence")
 SEEDS = [int(seed) for seed in setting("SEEDS", "0").split()]
 CONDITIONS = setting(
     "CONDITIONS",
@@ -146,6 +149,7 @@ EXPECTED_RATE = {"compositional-tree": 24, "compositional-slots": 23, "compositi
 DEFAULT_RATE = 40
 COMMON = [
     "--algorithm", ALGORITHM, "--reward", "shaped", "--num-blocks", "2", "--device", DEVICE,
+    "--skill-sampling", SKILL_SAMPLING,
     "--eval-interval", str(EVAL_INTERVAL), "--eval-episodes", str(EVAL_EPISODES),
     "--save-interval", str(SAVE_INTERVAL), "--text-backend", TEXT_BACKEND,
 ]

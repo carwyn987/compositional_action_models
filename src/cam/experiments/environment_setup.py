@@ -163,6 +163,8 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 # shaped rewards: motion penalties for every skill, and a penalty on failure
                 shared_reward=FetchMotionReward() if config["reward"] == "shaped" else None,
                 failure_penalty=FAILURE_PENALTY if config["reward"] == "shaped" else 0.0,
+                # configs saved before the option: round-robin
+                competence_sampling=config.get("skill_sampling", "round-robin") == "competence",
             ),
             config["max_steps_per_episode"],
         ),

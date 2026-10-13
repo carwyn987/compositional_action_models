@@ -72,6 +72,21 @@ def test_repair_mode_needs_stop_skills():
         parse_args(["--skills", "pickup", "putdown", "--repair-mode", "isolated"])
 
 
+@pytest.mark.integration
+def test_skill_sampling_option_reaches_the_skill_environment():
+    """--skill-sampling competence turns on SkillEnvironment's competence sampling; the default takes turns."""
+    from cam.experiments.environment_setup import setup_environment
+    from cam.skills.registry import build_skill
+
+    for option, competence in (([], False), (["--skill-sampling", "competence"], True)):
+        config = parse_args(["--skills", "pickup", "putdown", *FAST, *option])
+        env = setup_environment(config, [build_skill(name, config) for name in config["skills"]])
+        try:
+            assert env.get_wrapper_attr("competence_sampling") is competence
+        finally:
+            env.close()
+
+
 @pytest.mark.unit
 def test_resume_rejects_options_that_change_the_observation(tmp_path):
     """Options defining the observation or algorithm (e.g. --operator-encoder) cannot change on resume."""

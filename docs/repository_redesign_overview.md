@@ -25,7 +25,7 @@ This document is the target architecture. What the code has of it (`docs/project
 | `Trainer`, `TrainingBudget` | differs | `train_stable_baselines3` and `main.py` options (`--total-timesteps`, `--stop-skills`, `--patience`) |
 | SAC, PPO adapters | built | `stable_baselines3_trainer.py` |
 | behaviour cloning | not built | |
-| `SkillSampler` | not built | `SkillEnvironment` rotates through the skills |
+| `SkillSampler` | differs | inside `SkillEnvironment`: round-robin or competence sampling (`--skill-sampling`) |
 | `RolloutRunner` | not built | `evaluation.evaluate` and `scripts/run_skill.py` run their own episodes |
 | `EvaluationHarness` | differs | `MetricsCallback` during training, `--mode evaluate` after |
 | zero-shot, steps to threshold, AUC, final success | built | `cam.evaluation` |

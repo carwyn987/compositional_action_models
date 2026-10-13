@@ -92,19 +92,16 @@ In rough priority order.
    successful `push-front` episode. Store it again under that operator's embedding. This gives every
    operator more successes and directly trains the policy to read the operator. It's easiest with sparse
    rewards; with shaped rewards the relabeled transitions need their rewards recomputed.
-3. **Competence-based skill sampling.** Episodes rotate through the skills regardless of how well each is
-   learned. Sample skills more often when their recent success is low (the `SkillSampler` planned in the
-   redesign doc).
-4. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
+3. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
    update per step (2–4). Both are cheap on a GPU but change the baseline, so apply them to every condition.
-5. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; the diagonal pushes take ~70
+4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; the diagonal pushes take ~70
    steps. Try 0.98.
-6. **Run specs as files.** Replace the overnight runner's environment variables with spec files
+5. **Run specs as files.** Replace the overnight runner's environment variables with spec files
    (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, budgets), so every
    experiment is reproducible from one file.
-7. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
+6. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
    scripted ones, so training links skills into chains.
-8. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
+7. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
    with scripted episodes. It's still RL, but usually much faster.
 
 ## 5. Research direction, per question
