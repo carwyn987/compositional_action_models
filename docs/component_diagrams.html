@@ -1,25 +1,24 @@
 <!doctype html><html><head><meta charset="utf-8"><title>Component diagrams</title>
 <style>body{font-family:sans-serif;margin:2rem;}</style></head><body>
 <h1>Component diagrams</h1>
-<p>Three views of the code as implemented: the component map (packages, entry</p>
-<p>points, and how they connect), the data flow of one training episode, and a</p>
-<p>class diagram. Solid boxes are implemented; dashed grey boxes are planned.</p>
-<p>Arrows point from a component to what it uses, wraps or produces.</p>
-<p>`docs/component_diagrams.html` renders the same diagrams in a browser.</p>
+<p>Three views of the code as implemented: the component map (packages, entry points, and how they connect), the data flow of one training episode, and a class diagram. Solid boxes are implemented; dashed grey boxes are planned. Arrows point from a component to what it uses, wraps or produces. <code>docs/component_diagrams.html</code> renders the same diagrams in a browser.</p>
 <h2>Component map</h2>
 <pre class="mermaid">
 flowchart LR
     %% ---------------- entry points ----------------
     subgraph entry[&quot;Entry points (repo root / scripts)&quot;]
-        main[&quot;main.py&lt;br/&gt;parse_args · setup_environment&lt;br/&gt;train · run_random_actions&quot;]
-        runskill[&quot;scripts/run_skill.py&lt;br/&gt;one skill, scripted / random policy&quot;]
+        main[&quot;main.py&lt;br/&gt;parse_args · train · evaluate&lt;br/&gt;new run, resume, added skills&quot;]
+        overnight[&quot;scripts/start_overnight.sh → overnight_runs.py&lt;br/&gt;plan of runs: learnability · rq1 · repair&quot;]
+        review[&quot;scripts/review_runs.py&lt;br/&gt;report over a folder of runs&quot;]
+        runskill[&quot;scripts/run_skill.py&lt;br/&gt;one skill: scripted / random / trained policy&quot;]
+        watch[&quot;scripts/watch_best_policies.py&lt;br/&gt;best trained policy per skill&quot;]
         viz[&quot;scripts/visualize_environment.py&lt;br/&gt;render Fetch + scripted pickup&quot;]
         tb[&quot;scripts/start_tensorboard.sh&quot;]
         tests[&quot;run_tests.py&lt;br/&gt;pytest: unit / integration&quot;]
     end
 
     %% ---------------- domain ----------------
-    subgraph domain[&quot;cam.domain (no simulator, no torch)&quot;]
+    subgraph domain[&quot;cam.domain (no simulator, no numpy, no torch)&quot;]
         direction TB
         symbols[&quot;symbols.py&lt;br/&gt;Predicate · TypedParameter · format_facts&quot;]
         iface[&quot;symbolic_action_model.py&lt;br/&gt;SymbolicActionModel · GroundedSymbolicActionModel&lt;br/&gt;groundings · applicable_groundings&quot;]
@@ -28,14 +27,14 @@ flowchart LR
         parser[&quot;pddl/pddl_parser.py&lt;br/&gt;parse_operator&quot;]
         writer[&quot;pddl/pddl_writer.py&lt;br/&gt;to_pddl&quot;]
         loader[&quot;action_model_library/loader.py&lt;br/&gt;load_symbolic_action_model&quot;]
-        files[(&quot;action_model_library/pddl/&lt;br/&gt;pickup · putdown · stack · unstack<br/>raised variants · place-beside · push-* .pddl&quot;)]
+        files[(&quot;action_model_library/pddl/&lt;br/&gt;pickup · putdown · stack · unstack&lt;br/&gt;raised variants · place-beside · push-* .pddl&quot;)]
     end
 
     %% ---------------- skills ----------------
     subgraph skills[&quot;cam.skills&quot;]
         direction TB
         skill[&quot;skill.py: Skill&lt;br/&gt;symbolic_action_model · setup_skills&lt;br/&gt;ground · applicable_groundings&quot;]
-        concrete[&quot;PickupSkill · PutdownSkill&lt;br/&gt;(putdown setup_skills = (pickup), (pickup-raised))&quot;]
+        concrete[&quot;blocksworld_skills.py: pickup · putdown · stack · unstack&lt;br/&gt;+ raised variants · place-beside · pushes (4 sides, 4 diagonals, beside)&quot;]
         registry[&quot;registry.py&lt;br/&gt;SKILL_REGISTRY · build_skill&quot;]
     end
 
@@ -44,43 +43,59 @@ flowchart LR
         direction TB
         gymfetch[&quot;Gymnasium-Robotics Fetch&quot;]
         multiblock[&quot;fetch/fetch_multiblock_environment.py&lt;br/&gt;FetchMultiBlock-v0 (1-5 blocks)&quot;]
-        annot[&quot;fetch/fetch_env_state_annotation_wrapper.py&lt;br/&gt;drops goal keys; info: environment_state,&lt;br/&gt;objects, object_features&quot;]
-        preds[&quot;fetch/fetch_predicate_evaluation_wrapper.py&lt;br/&gt;FETCH_PREDICATES → info: facts&quot;]
-        skillenv[&quot;skill_environment.py: SkillEnvironment&lt;br/&gt;skill per reset · setup chain · grounding&lt;br/&gt;success · reward&quot;]
+        annot[&quot;fetch/fetch_env_state_annotation_wrapper.py&lt;br/&gt;drops goal keys; info: environment_state (FetchState),&lt;br/&gt;objects, object_features&quot;]
+        preds[&quot;fetch/fetch_predicate_evaluation_wrapper.py&lt;br/&gt;FETCH_PREDICATES → info: facts&lt;br/&gt;check_fetch_failure · FETCH_FRAME_PREDICATES&quot;]
+        skillenv[&quot;skill_environment.py: SkillEnvironment&lt;br/&gt;skill per reset · setup chain · grounding&lt;br/&gt;settled success · frame · failure · reward&quot;]
         scripted[&quot;fetch/fetch_scripted_policies.py&lt;br/&gt;scripted pickup / putdown / stack / place-beside / push&quot;]
-        fetchrewards[&quot;fetch/fetch_rewards.py&lt;br/&gt;staged rewards for every skill (shaped)&quot;]
+        fetchrewards[&quot;fetch/fetch_rewards.py&lt;br/&gt;staged rewards per skill (shaped)&lt;br/&gt;FetchMotionReward (every skill)&quot;]
     end
 
     %% ---------------- policies, rewards ----------------
     subgraph policies[&quot;cam.policies / cam.rewards&quot;]
         direction TB
         policy[&quot;policies/policy.py&lt;br/&gt;Policy · RandomPolicy&quot;]
+        sb3policy[&quot;policies/stable_baselines3_policy.py&lt;br/&gt;StableBaselines3Policy (a trained model)&quot;]
+        extractors[&quot;policies/feature_extractors.py&lt;br/&gt;TrainableOperatorEmbeddingExtractor&quot;]
         reward[&quot;rewards/reward_function.py&lt;br/&gt;RewardFunction · SparseReward&quot;]
     end
 
     %% ---------------- representations ----------------
-    subgraph reps[&quot;cam.representations (numpy)&quot;]
+    subgraph reps[&quot;cam.representations&quot;]
         direction TB
         openc[&quot;operator_encoder.py: OperatorEncoder&quot;]
         multihot[&quot;pddl_multi_hot_operator_encoder.py&lt;br/&gt;positional + name-only literal features&quot;]
-        onehot[&quot;one_hot_operator_encoder.py&lt;br/&gt;baseline&quot;]
+        onehot[&quot;one_hot_operator_encoder.py&lt;br/&gt;registry order, identity aliases&quot;]
+        randomenc[&quot;random_operator_encoder.py&lt;br/&gt;fixed random vector per name&quot;]
+        padded[&quot;padded_operator_encoder.py&lt;br/&gt;zero-pads to --operator-embedding-dim&quot;]
+        textenc[&quot;text_operator_encoder.py + text_backends.py&lt;br/&gt;PDDL or paragraph → mock / OpenAI, disk cache&quot;]
+        structure[&quot;compositional/structure.py&lt;br/&gt;StructuredOperatorEncoder · OperatorLayout&quot;]
+        compose[&quot;compositional/ tree · slots · geometric&lt;br/&gt;extractor.py: CompositionalPolicyFeaturesExtractor&quot;]
         groundenc[&quot;grounding_encoder.py&lt;br/&gt;per-parameter slots&quot;]
     end
 
-    %% ---------------- training ----------------
+    %% ---------------- training, evaluation, experiments ----------------
     subgraph training[&quot;cam.training&quot;]
         direction TB
         policyobs[&quot;policy_observation_wrapper.py&lt;br/&gt;observation · operator_embedding · grounding&quot;]
-        sb3[&quot;stable_baselines3_trainer.py&lt;br/&gt;SAC / PPO · SuccessRateCallback&quot;]
+        sb3[&quot;stable_baselines3_trainer.py&lt;br/&gt;SAC / PPO · success-rate, embedding-magnitude&lt;br/&gt;and composition weight decay callbacks&quot;]
+        checkpoint[&quot;checkpointing.py&lt;br/&gt;atomic saves · PeriodicSaveCallback&quot;]
     end
 
+    subgraph evaluation[&quot;cam.evaluation&quot;]
+        direction TB
+        evaluate[&quot;evaluation.py&lt;br/&gt;evaluate: success, return, length per skill&quot;]
+        curve[&quot;learning_curve.py&lt;br/&gt;steps to threshold · AUC · final success&quot;]
+        metricscb[&quot;metrics_callback.py: MetricsCallback&lt;br/&gt;zero-shot, periodic, added-skill evaluations&lt;br/&gt;stop skills · patience · metrics.json&quot;]
+    end
+
+    envsetup[&quot;cam/experiments/environment_setup.py&lt;br/&gt;setup_environment · OPERATOR_ENCODERS&quot;]
     logcfg[&quot;cam/logging_config.py&lt;br/&gt;configure_logging&quot;]
 
     %% ---------------- planned ----------------
     subgraph planned[&quot;Planned&quot;]
         direction TB
-        learnedenc[&quot;Learned / aggregating operator encoders&quot;]
-        evalh[&quot;Evaluation harness (zero-shot, fine-tuning metrics)&quot;]
+        provider[&quot;PolicyProvider: FiLM / hypernetwork&quot;]
+        sampler[&quot;SkillSampler (competence-based)&quot;]
         learnedsetup[&quot;Setup by learned skill policies&quot;]
     end
 
@@ -111,27 +126,50 @@ flowchart LR
     skillenv -- setup chain runs --&gt; policy
     skillenv -- reward from --&gt; reward
     scripted -- implements --&gt; policy
+    sb3policy -- implements --&gt; policy
     fetchrewards -- implements --&gt; reward
 
     %% representations
     multihot -- implements --&gt; openc
     onehot -- implements --&gt; openc
+    randomenc -- implements --&gt; openc
+    padded -- implements --&gt; openc
+    textenc -- implements --&gt; openc
+    structure -- implements --&gt; openc
+    padded --&gt; multihot
+    padded --&gt; onehot
+    textenc --&gt; writer
+    compose --&gt; structure
     multihot --&gt; pddl
     groundenc --&gt; iface
 
-    %% training
+    %% training and evaluation
     policyobs -- wraps --&gt; skillenv
     policyobs --&gt; openc
     policyobs --&gt; groundenc
     sb3 -- trains on --&gt; policyobs
+    sb3 --&gt; checkpoint
+    metricscb --&gt; evaluate
+    metricscb --&gt; curve
+    metricscb --&gt; sb3policy
+    evaluate --&gt; policy
+    envsetup -- builds --&gt; policyobs
+    envsetup --&gt; scripted
+    envsetup --&gt; fetchrewards
 
     %% entry points
     main --&gt; registry
-    main -- builds --&gt; policyobs
+    main --&gt; envsetup
     main --&gt; sb3
+    main -- features extractor --&gt; extractors
+    main -- features extractor --&gt; compose
+    main --&gt; metricscb
     main --&gt; logcfg
-    runskill -- builds --&gt; skillenv
-    runskill --&gt; scripted
+    overnight -- runs --&gt; main
+    review -.-&gt;|reads metrics.json, TensorBoard of| metricscb
+    runskill --&gt; envsetup
+    runskill --&gt; sb3policy
+    watch -- runs --&gt; runskill
     viz -- builds --&gt; preds
     viz --&gt; scripted
     tb -.-&gt;|reads logs of| sb3
@@ -140,14 +178,15 @@ flowchart LR
     tests -.-&gt; envs
     tests -.-&gt; reps
     tests -.-&gt; training
+    tests -.-&gt; evaluation
 
     %% planned wiring
-    learnedenc -.-&gt; openc
-    evalh -.-&gt; skillenv
+    provider -.-&gt; sb3
+    sampler -.-&gt; skillenv
     learnedsetup -.-&gt; skillenv
 
     classDef plannedStyle fill:#eeeeee,stroke:#999999,stroke-dasharray:5 5,color:#666666
-    class learnedenc,evalh,learnedsetup plannedStyle
+    class provider,sampler,learnedsetup plannedStyle
 </pre>
 <h2>One training episode</h2>
 <pre class="mermaid">
@@ -160,7 +199,7 @@ sequenceDiagram
 
     A-&gt;&gt;O: reset()
     O-&gt;&gt;S: reset()
-    S-&gt;&gt;S: choose skill (option or next in turn)
+    S-&gt;&gt;S: choose skill (option or next in turn), and one of its setup chains
     S-&gt;&gt;F: reset()
     F--&gt;&gt;S: obs, info{environment_state, objects, object_features, facts}
     loop each setup skill (e.g. pickup before putdown)
@@ -171,7 +210,7 @@ sequenceDiagram
             F--&gt;&gt;S: obs, info{facts, ...}
         end
     end
-    S-&gt;&gt;S: choose applicable grounding of the episode skill
+    S-&gt;&gt;S: choose applicable grounding of the episode skill, record the start facts
     S--&gt;&gt;O: obs, info{skill, grounded_action_model, setup, ...}
     O--&gt;&gt;A: {observation, operator_embedding, grounding}
     loop each step (≤ max_steps_per_episode)
@@ -179,15 +218,15 @@ sequenceDiagram
         O-&gt;&gt;S: step(action)
         S-&gt;&gt;F: step(action)
         F--&gt;&gt;S: obs, info{facts, ...}
-        S-&gt;&gt;S: success = effects_hold(facts), reward = RewardFunction(...)
-        S--&gt;&gt;O: obs, reward, terminated=success, truncated, info
+        S-&gt;&gt;S: failure = check_failure (force, dropped, disturbed)
+        S-&gt;&gt;S: success = effects held success_hold_steps steps, frame facts unchanged, no failure
+        S-&gt;&gt;S: reward = skill reward + motion terms (− failure penalty)
+        S--&gt;&gt;O: obs, reward, terminated = success or failure, truncated, info
         O--&gt;&gt;A: policy observation, reward, terminated, truncated, info{is_success, skill, ...}
     end
 </pre>
 <h2>Class diagram</h2>
-<p>Classes and modules as implemented, grouped by package (see `%%` comments).</p>
-<p>`&lt;&lt;abstract&gt;&gt;` marks interfaces, `&lt;&lt;module&gt;&gt;` groups module-level functions and</p>
-<p>constants, `&lt;&lt;external&gt;&gt;` marks library classes. Methods ending in `*` are abstract.</p>
+<p>Classes and modules as implemented, grouped by package (see <code>%%</code> comments). <code>&lt;&lt;abstract&gt;&gt;</code> marks interfaces, <code>&lt;&lt;module&gt;&gt;</code> groups module-level functions and constants, <code>&lt;&lt;external&gt;&gt;</code> marks library classes. Methods ending in <code>*</code> are abstract. Skills, scripted policies and rewards show one or two examples each.</p>
 <pre class="mermaid">
 classDiagram
     direction TB
@@ -280,6 +319,11 @@ classDiagram
         +__call__(obs, info, grounded) ndarray*
     }
     class RandomPolicy
+    class StableBaselines3Policy {
+        +model: BaseAlgorithm
+        +deterministic: bool
+        +load(model_path, algorithm)$
+    }
     class RewardFunction {
         &lt;&lt;abstract&gt;&gt;
         +reset(grounded, info)
@@ -301,9 +345,10 @@ classDiagram
         +gripper_position: ndarray
         +finger_width: float
         +block_positions: dict
+        +block_rotations: dict
+        +gripper_force: ndarray
     }
     class FetchEnvStateAnnotationWrapper {
-        +num_blocks: int
         +extract_state(obs) FetchState
     }
     class FetchPredicateEvaluationWrapper {
@@ -313,20 +358,25 @@ classDiagram
         &lt;&lt;module&gt;&gt;
         +FETCH_PREDICATES: dict
         +FETCH_PREDICATE_ARITIES: dict
+        +FETCH_FRAME_PREDICATES: frozenset
+        +check_fetch_failure(grounded, start_info, info) str
     }
     class SkillEnvironment {
         +skills: dict
+        +setup_chains: dict
         +setup_policies: dict
         +reward_functions: dict
-        +grounded_action_model: GroundedSymbolicActionModel
+        +shared_reward: RewardFunction
+        +check_failure: callable
+        +frame_predicates: frozenset
+        +success_hold_steps: int
         +reset(seed, options) tuple
         +step(action) tuple
     }
     class FetchScriptedPickupPolicy
-    class FetchScriptedPutdownPolicy
-    class FetchPickupReward {
-        +config: FetchPickupRewardConfig
-    }
+    class FetchScriptedPushPolicy
+    class FetchPickupReward
+    class FetchMotionReward
 
     %% ---- representations ----
     class OperatorEncoder {
@@ -338,23 +388,80 @@ classDiagram
         +features: list
         +max_arity: int
     }
-    class OneHotOperatorEncoder
+    class OneHotOperatorEncoder {
+        +index: dict
+        +aliases: dict
+    }
+    class RandomOperatorEncoder {
+        +seed: int
+        +aliases: dict
+    }
+    class PaddedOperatorEncoder {
+        +encoder: OperatorEncoder
+    }
+    class TextOperatorEncoder
+    class TextEmbeddingBackend {
+        &lt;&lt;abstract&gt;&gt;
+    }
+    class MockTextBackend
+    class OpenAIBackend
+    class CachedTextBackend
+    class StructuredOperatorEncoder {
+        +layout: OperatorLayout
+    }
+    class OperatorLayout
     class GroundingEncoder {
         +max_arity: int
         +max_objects: int
         +encode(grounded, objects, object_features) ndarray
     }
 
+    %% ---- policy features extractors (trained with the policy) ----
+    class BaseFeaturesExtractor {
+        &lt;&lt;external&gt;&gt;
+    }
+    class TrainableOperatorEmbeddingExtractor {
+        +operator_embedding: Linear
+    }
+    class CompositionalPolicyFeaturesExtractor {
+        +composition: Module
+    }
+    class TreeComposition
+    class SlotComposition
+    class GeometricComposition
+
     %% ---- training ----
     class PolicyObservationWrapper {
         +operator_encoder: OperatorEncoder
         +grounding_encoder: GroundingEncoder
     }
+    class main {
+        &lt;&lt;module&gt;&gt;
+        +train(config, env, skills, run_directory, resume)
+    }
     class stable_baselines3_trainer {
         &lt;&lt;module&gt;&gt;
-        +train_stable_baselines3(env, algorithm, total_timesteps, run_directory) model
+        +train_stable_baselines3(env, algorithm, ...) model
+    }
+    class BaseCallback {
+        &lt;&lt;external&gt;&gt;
     }
     class SuccessRateCallback
+    class OperatorEmbeddingMagnitudeCallback
+    class CompositionWeightDecayCallback
+    class PeriodicSaveCallback
+
+    %% ---- evaluation ----
+    class MetricsCallback {
+        +skill_names: list
+        +eval_interval: int
+        +stop_skills: list
+    }
+    class evaluation {
+        &lt;&lt;module&gt;&gt;
+        +evaluate(env, policy, skills, episodes) EvaluationResult
+    }
+    class LearningCurve
 
     %% inheritance
     SymbolicActionModel &lt;|-- PDDLOperator
@@ -362,10 +469,12 @@ classDiagram
     Skill &lt;|-- PickupSkill
     Skill &lt;|-- PutdownSkill
     Policy &lt;|-- RandomPolicy
+    Policy &lt;|-- StableBaselines3Policy
     Policy &lt;|-- FetchScriptedPickupPolicy
-    Policy &lt;|-- FetchScriptedPutdownPolicy
+    Policy &lt;|-- FetchScriptedPushPolicy
     RewardFunction &lt;|-- SparseReward
     RewardFunction &lt;|-- FetchPickupReward
+    RewardFunction &lt;|-- FetchMotionReward
     MujocoFetchEnv &lt;|-- FetchMultiBlockEnv
     GymWrapper &lt;|-- FetchEnvStateAnnotationWrapper
     GymWrapper &lt;|-- FetchPredicateEvaluationWrapper
@@ -373,6 +482,20 @@ classDiagram
     GymWrapper &lt;|-- PolicyObservationWrapper
     OperatorEncoder &lt;|-- PDDLMultiHotOperatorEncoder
     OperatorEncoder &lt;|-- OneHotOperatorEncoder
+    OperatorEncoder &lt;|-- RandomOperatorEncoder
+    OperatorEncoder &lt;|-- PaddedOperatorEncoder
+    OperatorEncoder &lt;|-- TextOperatorEncoder
+    OperatorEncoder &lt;|-- StructuredOperatorEncoder
+    TextEmbeddingBackend &lt;|-- MockTextBackend
+    TextEmbeddingBackend &lt;|-- OpenAIBackend
+    TextEmbeddingBackend &lt;|-- CachedTextBackend
+    BaseFeaturesExtractor &lt;|-- TrainableOperatorEmbeddingExtractor
+    BaseFeaturesExtractor &lt;|-- CompositionalPolicyFeaturesExtractor
+    BaseCallback &lt;|-- SuccessRateCallback
+    BaseCallback &lt;|-- OperatorEmbeddingMagnitudeCallback
+    BaseCallback &lt;|-- CompositionWeightDecayCallback
+    BaseCallback &lt;|-- PeriodicSaveCallback
+    BaseCallback &lt;|-- MetricsCallback
 
     %% composition / aggregation
     SymbolicActionModel *-- TypedParameter
@@ -391,6 +514,14 @@ classDiagram
     PolicyObservationWrapper o-- SkillEnvironment : wraps
     PolicyObservationWrapper o-- OperatorEncoder
     PolicyObservationWrapper o-- GroundingEncoder
+    PaddedOperatorEncoder o-- OperatorEncoder
+    TextOperatorEncoder o-- TextEmbeddingBackend
+    CachedTextBackend o-- TextEmbeddingBackend
+    StructuredOperatorEncoder o-- OperatorLayout
+    CompositionalPolicyFeaturesExtractor o-- TreeComposition
+    CompositionalPolicyFeaturesExtractor o-- SlotComposition
+    CompositionalPolicyFeaturesExtractor o-- GeometricComposition
+    MetricsCallback o-- LearningCurve
 
     %% dependencies
     SymbolicActionModel ..&gt; GroundedSymbolicActionModel : ground()
@@ -405,10 +536,24 @@ classDiagram
     FetchEnvStateAnnotationWrapper ..&gt; FetchState : creates
     FetchPredicateEvaluationWrapper ..&gt; fetch_predicates
     FetchPredicateEvaluationWrapper ..&gt; Predicate : creates
+    SkillEnvironment ..&gt; fetch_predicates : failure, frame
     PDDLMultiHotOperatorEncoder ..&gt; PDDLOperator : encodes
+    TextOperatorEncoder ..&gt; pddl_writer
+    StructuredOperatorEncoder ..&gt; PDDLOperator : encodes
+    CompositionalPolicyFeaturesExtractor ..&gt; OperatorLayout : unpacks
     GroundingEncoder ..&gt; GroundedSymbolicActionModel : encodes
     stable_baselines3_trainer ..&gt; PolicyObservationWrapper : trains on
     stable_baselines3_trainer ..&gt; SuccessRateCallback
+    stable_baselines3_trainer ..&gt; PeriodicSaveCallback
+    main ..&gt; stable_baselines3_trainer
+    main ..&gt; TrainableOperatorEmbeddingExtractor : policy_kwargs
+    main ..&gt; CompositionalPolicyFeaturesExtractor : policy_kwargs
+    main ..&gt; OperatorEmbeddingMagnitudeCallback
+    main ..&gt; CompositionWeightDecayCallback
+    main ..&gt; MetricsCallback
+    MetricsCallback ..&gt; evaluation
+    MetricsCallback ..&gt; StableBaselines3Policy
+    evaluation ..&gt; Policy
 </pre>
 <script type="module">import mermaid from "https://cdn.jsdelivr.net/npm/mermaid@11/dist/mermaid.esm.min.mjs"; mermaid.initialize({startOnLoad: true});</script>
 </body></html>
