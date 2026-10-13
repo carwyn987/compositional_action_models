@@ -7,7 +7,7 @@ dictionary of three fixed-size vectors:
 | Key | Contents | Changes when | Built by |
 |---|---|---|---|
 | `observation` | the environment's state vector (Fetch: gripper, fingers, every block) | every step | the environment (Fetch goal keys are dropped by `FetchEnvStateAnnotationWrapper`) |
-| `operator_embedding` | the **lifted** action model's structure | the skill changes | an `OperatorEncoder` (`cam.representations`) |
+| `operator_embedding` | the **lifted** action model, encoded by `--operator-encoder` | the skill changes | an `OperatorEncoder` (`cam.representations`) |
 | `grounding` | which object fills each of the action model's parameters | the episode's grounding changes | `GroundingEncoder` (`cam.representations`) |
 
 The operator embedding says *what kind* of action this is (pickup vs putdown);
@@ -17,9 +17,12 @@ grounding slot 0, parameter 1 is slot 1, and so on.
 
 ## Operator embedding (positional multi-hot)
 
-`PDDLMultiHotOperatorEncoder` lists every feature appearing in the training
-operators and gives each operator a vector with 1 where it has the feature and
-0 where it does not. A feature is a literal of one section, described two ways:
+This section describes multi-hot, the default `--operator-encoder`. Every encoder (one-hot, random, text,
+multi-hot, trainable, compositional) is in `docs/operator_embeddings.md`, with worked examples.
+
+`PDDLMultiHotOperatorEncoder` gives each operator a vector over a fixed
+vocabulary of literal features, with 1 where it has the feature and 0 where it
+does not. A feature is a literal of one section, described two ways:
 
 - **positional**: `(section, predicate, parameter positions)`, e.g.
   `("add", "on", (0, 1))` = "the object in parameter 0 ends up on the object in
@@ -46,6 +49,7 @@ Example over pickup and putdown, showing only the features they set
 | delete `clear`(0) | 1 | 0 |
 | delete `gripper-empty`() | 1 | 0 |
 | delete `holding`(0) | 0 | 1 |
+| delete `raised`(0) | 1 | 0 |
 
 The vocabulary does **not** depend on the training operators. It is every
 feature any operator could have, given the predicates the environment can
@@ -54,7 +58,9 @@ evaluate (Fetch: `FETCH_PREDICATE_ARITIES`) and a maximum operator arity
 
     size = 4 sections x sum over predicates of (1 + max_arity! / (max_arity - arity)!)
 
-For Fetch that is 36 / 56 / 84 features for a maximum arity of 1 / 2 / 3. So
+For Fetch (11 predicates) that is 80 / 128 / 192 features for a maximum arity
+of 1 / 2 / 3. `PaddedOperatorEncoder` appends zeros up to
+`--operator-embedding-dim` (default 256), the size every encoder shares. So
 training on n operators and testing on an (n+1)-th uses the same indices, and
 an operator repaired by adding or removing preconditions or effects is simply
 re-encoded: only the features of the changed literals move.
@@ -66,10 +72,13 @@ rather than partially encoded: more parameters than the maximum arity, a
 predicate the environment cannot evaluate, a constant argument, or a repeated
 parameter such as `(on ?x ?x)`.
 
-`OneHotOperatorEncoder` is the baseline: one entry per training skill, no
-structure. An operator it was not built with (e.g. a held-out one) raises
-`ValueError`. Operators are identified by name, so a repaired operator that keeps
-its name gets the same encoding as before.
+`OneHotOperatorEncoder` is the baseline: one entry per operator, no structure.
+It indexes every registered skill's operator in registry order (`SKILL_REGISTRY`),
+so an operator keeps its index whatever the training skills, and a held-out
+skill has an index no training run has used. Operators are identified by name.
+`--operator-identity-aliases NEW=OLD` encodes NEW exactly as OLD (one-hot and
+random only), so a repaired operator is indistinguishable from the original:
+the repair-hidden control.
 
 ## Grounding (dereferenced parameter slots)
 
@@ -97,7 +106,7 @@ grounding = slot_0 + slot_1 + ... + slot_{max_arity-1}
   `info["object_features"]` (Fetch blocks: position and position relative to the
   gripper). This is the object's *current* state, not a target.
 
-Example with three blocks, `pickup(block2)`, `max_arity = 1`:
+Example with three blocks, `pickup(block2)`, `max_arity = 1`, `max_objects = 3`:
 
 ```text
 [ 1 | 1 | 0, 0, 1 | x, y, z, dx, dy, dz ]
