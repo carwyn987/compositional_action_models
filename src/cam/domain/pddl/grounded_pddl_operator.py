@@ -56,6 +56,12 @@ class GroundedPDDLOperator(GroundedSymbolicActionModel):
         facts and every delete effect is not."""
         return all((e.predicate in facts) != e.delete for e in self.effects)
 
+    def frame_holds(self, before: frozenset[Predicate], after: frozenset[Predicate], predicates: frozenset[str]) -> bool:
+        """Every fact over `predicates` that no effect mentions is unchanged from before to after: e.g.
+        unstack(block0, block1) must leave (on-table block1) true, so lifting both blocks is not an unstack."""
+        mentioned = {effect.predicate for effect in self.effects}
+        return not any(fact.name in predicates and fact not in mentioned for fact in before ^ after)
+
     def _substitute(self, predicate: Predicate) -> Predicate:
         binding = self.binding
         return Predicate(predicate.name, tuple(binding.get(arg, arg) for arg in predicate.args))

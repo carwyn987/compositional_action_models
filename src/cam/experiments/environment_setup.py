@@ -11,6 +11,7 @@ from cam.environments.fetch import fetch_multiblock_environment
 from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     FETCH_FAILURE_CONDITIONS,
+    FETCH_FRAME_PREDICATES,
     FETCH_PREDICATE_ARITIES,
     FetchPredicateEvaluationWrapper,
 )
@@ -157,6 +158,7 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 reward_functions,
                 success_hold_steps=config.get("success_hold_steps", 1),  # configs saved before the option: 1
                 failure_conditions=FETCH_FAILURE_CONDITIONS,
+                frame_predicates=FETCH_FRAME_PREDICATES,
             ),
             config["max_steps_per_episode"],
         ),

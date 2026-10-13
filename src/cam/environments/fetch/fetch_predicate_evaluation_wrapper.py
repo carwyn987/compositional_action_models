@@ -168,6 +168,11 @@ FETCH_PREDICATES: dict[str, Callable[..., bool]] = {
     "at-back": at_back,
 }
 
+# The frame: predicates whose facts an action must leave unchanged unless its effects mention them. The
+# geometric predicates (raised, beside, at-*) are left out: they change as side effects of the ones listed
+# (a block picked up leaves its region), which the operators do not spell out.
+FETCH_FRAME_PREDICATES = frozenset({"on-table", "on", "clear", "holding", "gripper-empty"})
+
 # Failure conditions: a state in which a skill's episode ends unsuccessfully, whatever its effects.
 DROP_HEIGHT = 0.02  # a block let go more than this above its support was dropped, not placed
 

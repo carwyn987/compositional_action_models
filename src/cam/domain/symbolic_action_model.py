@@ -27,6 +27,12 @@ class GroundedSymbolicActionModel(ABC):
     def effects_hold(self, facts: frozenset[Predicate]) -> bool:
         """True when this action's outcome is reached in facts."""
 
+    def frame_holds(self, before: frozenset[Predicate], after: frozenset[Predicate], predicates: frozenset[str]) -> bool:
+        """True when every fact over `predicates` that this action does not mention has the same truth value in
+        before and after (the frame assumption: an action changes only what it says it changes). A model
+        without a notion of frame imposes none."""
+        return True
+
 
 class SymbolicActionModel(ABC):
     name: str

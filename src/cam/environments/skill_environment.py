@@ -11,7 +11,8 @@ task over one or more skills. Each episode is one grounded action of one skill
            preconditions hold
     step   the episode ends (terminated) once the grounding's effects have held for
            success_hold_steps consecutive steps (settled success: the skill must stop in
-           its goal state, not pass through it);
+           its goal state, not pass through it), with every fact over frame_predicates
+           that the action does not mention unchanged since the episode started;
            the reward comes from the skill's reward function (SparseReward,
            1.0 on success and 0.0 otherwise, unless another is given); the
            episode also ends, unsuccessfully, if the skill's failure condition
@@ -69,10 +70,13 @@ class SkillEnvironment(gym.Wrapper):
         max_setup_attempts: int = 10,
         success_hold_steps: int = 1,
         failure_conditions: dict[str, Callable[[GroundedSymbolicActionModel, dict], bool]] | None = None,
+        frame_predicates: frozenset[str] = frozenset(),
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
         self.failure_conditions = failure_conditions or {}
+        self.frame_predicates = frame_predicates  # facts the action must not change unless it says so
+        self.start_facts: frozenset = frozenset()
         self.steps_effects_held = 0
         if not skills:
             raise ValueError("SkillEnvironment needs at least one skill")
@@ -116,6 +120,7 @@ class SkillEnvironment(gym.Wrapper):
                 logger.warning("episode start: %s effects already hold", grounded)
             self.grounded_action_model = grounded
             self.steps_effects_held = 0
+            self.start_facts = info["facts"]
             self.reward_functions[self.skill.name].reset(grounded, info)
             return obs, {**self._annotate(info, success=False), "setup": setup}
         raise RuntimeError(f"could not set up {self.skill.name} in {self.max_setup_attempts} attempts")
@@ -126,7 +131,11 @@ class SkillEnvironment(gym.Wrapper):
         # even if the effects hold then (e.g. a dropped block that lands in place), and ends the episode.
         failure = self.failure_conditions.get(self.skill.name)
         failed = failure is not None and failure(self.grounded_action_model, info)
-        held = self.grounded_action_model.effects_hold(info["facts"]) and not failed
+        held = (
+            self.grounded_action_model.effects_hold(info["facts"])
+            and self.grounded_action_model.frame_holds(self.start_facts, info["facts"], self.frame_predicates)
+            and not failed
+        )
         self.steps_effects_held = self.steps_effects_held + 1 if held else 0
         success = self.steps_effects_held >= self.success_hold_steps
         reward_function = self.reward_functions[self.skill.name]
