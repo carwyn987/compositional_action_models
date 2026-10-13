@@ -132,7 +132,8 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
         if config["reward"] == "shaped"
         else {}
     )
-    operator_encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills) # This is static, not trained, right now. TODO: Replace with trainable embeddings
+    # fixed encoding; trainable and compositional embeddings are learned in the policy's features extractor
+    operator_encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills)
     grounding_encoder = GroundingEncoder(
         object_types=FetchEnvStateAnnotationWrapper.OBJECT_TYPES,
         max_objects=fetch_multiblock_environment.MAX_BLOCKS,
