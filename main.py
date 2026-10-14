@@ -122,8 +122,9 @@ def build_parser() -> argparse.ArgumentParser:
         "the model is also saved when training ends, is interrupted, or crashes",
     )
     training.add_argument(
-        "--save-replay-buffer", action="store_true",
-        help="sac: also save the replay buffer with each checkpoint (can be large), so a resumed run keeps it",
+        "--save-replay-buffer", action=argparse.BooleanOptionalAction, default=False,
+        help="sac, mtsac: also save the replay buffer with each checkpoint (about 1 GB), so a resumed run keeps it; "
+        "a run resumed without one makes no updates for its first steps",
     )
     training.add_argument("--seed", type=int, default=0)
     training.add_argument(
