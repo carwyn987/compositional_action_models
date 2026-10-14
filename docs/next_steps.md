@@ -92,20 +92,34 @@ In rough priority order.
    successful `push-front` episode. Store it again under that operator's embedding. This gives every
    operator more successes and directly trains the policy to read the operator. It's easiest with sparse
    rewards; with shaped rewards the relabeled transitions need their rewards recomputed.
-3. **Competence-based skill sampling.** Episodes rotate through the skills regardless of how well each is
-   learned. Sample skills more often when their recent success is low (the `SkillSampler` planned in the
-   redesign doc).
-4. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
+3. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
    update per step (2–4). Both are cheap on a GPU but change the baseline, so apply them to every condition.
-5. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; the diagonal pushes take ~70
+4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; the diagonal pushes take ~70
    steps. Try 0.98.
-6. **Run specs as files.** Replace the overnight runner's environment variables with spec files
+5. **Run specs as files.** Replace the overnight runner's environment variables with spec files
    (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, budgets), so every
    experiment is reproducible from one file.
-7. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
+6. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
    scripted ones, so training links skills into chains.
-8. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
+7. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
    with scripted episodes. It's still RL, but usually much faster.
+8. **Better competence sampling.** `--skill-sampling competence` (`competence_shares` in
+   `skill_environment.py`) gives episodes to skills in proportion to their recent failure rate. Success is the
+   right signal (shaped rewards differ in stages and scale between skills; success means the same for every
+   skill and condition), but counting failures misses:
+   - **a skill that cannot be learned** keeps a large share forever (push-beside reached only 0.55 alone);
+   - **at 0% success** it cannot tell "almost there" from "hopeless";
+   - **noise:** 20 episodes per skill, about ±0.1;
+   - **resume:** each skill's recent success starts empty, so every skill counts as failing and the shares are
+     even for about the first 20 episodes per skill (including a repair's first episodes).
+
+   Options: gate unlearnable skills out of the training set; **learning progress** (favour skills whose
+   success is changing: older vs newer half of the window, with a small failure-rate term so a skill at 0%
+   still gets episodes), as in Teacher–Student Curriculum Learning (Matiisen et al.) and ALP-GMM (Portelas et
+   al.), or the critic's prediction errors, as in Prioritized Level Replay (Jiang et al.); or the recent
+   return as a fraction of the scripted policy's (dense, but it inherits the shaped rewards' quirks).
+   Learning progress is the most defensible; on resume, each skill's recent success can be read from the
+   run's `monitor.csv`.
 
 ## 5. Research direction, per question
 

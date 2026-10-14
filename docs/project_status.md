@@ -56,10 +56,17 @@ O(1–10) instead of growing.
 Fetch simulator (`FetchMultiBlock-v0`, 1–5 blocks), wrapped from the inside out:
 1. `FetchEnvStateAnnotationWrapper`: named state, including block positions and rotations.
 2. `FetchPredicateEvaluationWrapper`: the facts true in the current state.
-3. `SkillEnvironment`: per episode, picks a skill, runs one of its setup chains with scripted policies,
+3. `SkillEnvironment`: per episode, picks a skill (`--skill-sampling`, below), runs one of its setup chains with scripted policies,
    picks a random applicable grounding, and computes success, failure and reward.
 4. `TimeLimit`: outside `SkillEnvironment`, so setup steps don't count toward the episode's limit.
 5. `PolicyObservationWrapper`: builds `{observation, operator_embedding, grounding}`.
+
+**Skill sampling** (`--skill-sampling`): **round-robin** (the skills take turns) or **competence**: each skill
+keeps half its even share of the episodes, and the rest goes to skills in proportion to their recent failure
+rate (over their last 20 training episodes; an episode cut off by the time limit is a failure), so skills
+that are learned give their episodes to skills that are not. The choice is a smooth weighted round-robin, so
+the shares hold without sampling noise. The overnight runner uses competence for every condition. A skill
+that cannot be learned keeps a large share, so gate such skills out of the training set.
 
 Design rules the code keeps:
 - `cam.domain` (symbols, action models, the PDDL parser and writer) imports neither Gymnasium, NumPy nor

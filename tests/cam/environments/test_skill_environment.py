@@ -225,6 +225,45 @@ def test_skills_take_turns_without_a_reset_option():
     assert [env.reset(seed=0)[1]["skill"] for _ in range(3)] == ["pickup", "putdown", "pickup"]
 
 
+def episodes_per_skill(env, episodes: int) -> dict[str, int]:
+    """Run episodes in which pickup always succeeds (grasp its block) and putdown always fails (wait until the
+    next reset cuts it off, as the time limit would); count each skill's episodes."""
+    counts = {"pickup": 0, "putdown": 0}
+    for _ in range(episodes):
+        _, info = env.reset(seed=0)
+        counts[info["skill"]] += 1
+        target = info["grounded_action_model"].arguments[0]
+        env.step(grasp(target) if info["skill"] == "pickup" else WAIT)
+    return counts
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("competence_sampling", [False, True])
+def test_competence_sampling_gives_failing_skills_more_episodes(competence_sampling):
+    """pickup always succeeds and putdown always fails. Control: taking turns gives each 20 of 40 episodes. With
+    competence sampling putdown gets most of them, while pickup keeps at least its minimum (half its even share)."""
+    from cam.environments.skill_environment import COMPETENCE_MIN_SHARE
+
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownAfterPickup(PDDL_CONFIG)],
+                           {"pickup": GraspTarget()}, competence_sampling=competence_sampling)
+    counts = episodes_per_skill(env, 40)
+    if not competence_sampling:
+        assert counts == {"pickup": 20, "putdown": 20}
+    else:
+        assert counts["putdown"] >= 28 and counts["pickup"] >= COMPETENCE_MIN_SHARE / 2 * 40 - 1
+        assert env.competence_shares() == {"pickup": pytest.approx(0.25), "putdown": pytest.approx(0.75)}
+
+
+@pytest.mark.unit
+def test_competence_shares_are_even_while_no_skill_fails():
+    """Without failures (here: no episodes recorded as failed) every skill gets an even share."""
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG), PutdownAfterPickup(PDDL_CONFIG)],
+                           {"pickup": GraspTarget()}, competence_sampling=True)
+    for name in env.recent_success:
+        env.recent_success[name].extend([1.0] * 5)
+    assert env.competence_shares() == {"pickup": 0.5, "putdown": 0.5}
+
+
 @pytest.mark.unit
 def test_unknown_skill_option_is_rejected():
     """Asking for a skill the environment was not built with is an error."""

@@ -216,6 +216,11 @@ def build_parser() -> argparse.ArgumentParser:
         "drifting upward (0: off)",
     )
     training.add_argument(
+        "--skill-sampling", choices=["round-robin", "competence"], default="round-robin",
+        help="which skill each training episode runs: round-robin (in turn) or competence (skills with low recent "
+        "success get more episodes; each keeps at least half its even share)",
+    )
+    training.add_argument(
         "--success-hold-steps", type=int, default=5,
         help="an episode succeeds once the skill's effects have held this many consecutive steps (settled success)",
     )

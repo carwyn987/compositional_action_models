@@ -5,7 +5,7 @@ task over one or more skills. Each episode is one grounded action of one skill
 (e.g. putdown(block2)):
 
     reset  choose the episode's skill (options={"skill": name}, otherwise the
-           next skill in turn), reset the scene, run that skill's setup chain
+           next skill in turn, or by competence), reset the scene, run that skill's setup chain
            (one of skill.setup_skills, e.g. pickup before putdown) to reach a state
            where it applies, then choose a random grounding whose
            preconditions hold
@@ -37,6 +37,7 @@ them. Put the episode step limit outside: TimeLimit(SkillEnvironment(...), n).
 """
 
 import logging
+from collections import deque
 from typing import Callable
 
 import gymnasium as gym
@@ -48,6 +49,11 @@ from cam.skills.registry import build_skill
 from cam.skills.skill import Skill
 
 logger = logging.getLogger(__name__)
+
+# Competence sampling: a skill's recent success is over its last this many episodes in this environment ...
+COMPETENCE_WINDOW = 20
+# ... and every skill keeps at least this fraction of its even share of the episodes, however well it does
+COMPETENCE_MIN_SHARE = 0.5
 
 
 class SkillEnvironment(gym.Wrapper):
@@ -74,6 +80,7 @@ class SkillEnvironment(gym.Wrapper):
         frame_predicates: frozenset[str] = frozenset(),
         shared_reward: RewardFunction | None = None,
         failure_penalty: float = 0.0,
+        competence_sampling: bool = False,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
@@ -105,11 +112,19 @@ class SkillEnvironment(gym.Wrapper):
         self.max_steps_per_setup_skill = max_steps_per_setup_skill
         self.max_setup_attempts = max_setup_attempts
         self.episodes_started = 0
+        # competence_sampling: skills with low recent success get more episodes (see _select_skill); without it,
+        # the skills take turns
+        self.competence_sampling = competence_sampling
+        self.recent_success = {name: deque(maxlen=COMPETENCE_WINDOW) for name in self.skills}
+        self.selection_credit = dict.fromkeys(self.skills, 0.0)
+        self.episode_open = False  # an episode started and has not been recorded as a success or failure yet
         self.skill: Skill | None = None
         self.grounded_action_model: GroundedSymbolicActionModel | None = None
 
     def reset(self, *, seed=None, options=None):
         options = dict(options or {})
+        if self.episode_open:  # the last episode ended without success or failure: cut off by the time limit
+            self._record_outcome(success=False)
         self.skill = self._select_skill(options.pop("skill", None))
         self.episodes_started += 1
         for attempt in range(self.max_setup_attempts):
@@ -132,6 +147,7 @@ class SkillEnvironment(gym.Wrapper):
             if self.shared_reward is not None:
                 self.shared_reward.reset(grounded, info)
             self.reward_functions[self.skill.name].reset(grounded, info)
+            self.episode_open = True
             return obs, {**self._annotate(info, success=False), "setup": setup}
         raise RuntimeError(f"could not set up {self.skill.name} in {self.max_setup_attempts} attempts")
 
@@ -158,12 +174,39 @@ class SkillEnvironment(gym.Wrapper):
             logger.info("episode failed: %s (%s)", self.grounded_action_model, failure)
             reward, components = reward - self.failure_penalty, {**components, "failure": -self.failure_penalty}
         info = {**self._annotate(info, success), "reward_components": components, "failed": failed, "failure": failure}
+        if success or failed:
+            self._record_outcome(success)
         return obs, reward, terminated or success or failed, truncated, info
 
+    def _record_outcome(self, success: bool) -> None:
+        self.recent_success[self.skill.name].append(float(success))
+        self.episode_open = False
+
+    def competence_shares(self) -> dict[str, float]:
+        """Each skill's share of the next episodes under competence sampling: COMPETENCE_MIN_SHARE of its even share,
+        plus the rest in proportion to its recent failure rate (1 - success over its last COMPETENCE_WINDOW episodes;
+        a skill without episodes yet counts as failing). Even shares when no skill fails."""
+        floor = COMPETENCE_MIN_SHARE / len(self.skills)
+        need = {name: 1.0 - (sum(outcomes) / len(outcomes) if outcomes else 0.0)
+                for name, outcomes in self.recent_success.items()}
+        total = sum(need.values())
+        if total == 0:
+            return dict.fromkeys(self.skills, 1.0 / len(self.skills))
+        return {name: floor + (1.0 - floor * len(self.skills)) * need[name] / total for name in self.skills}
+
     def _select_skill(self, skill_name: str | None) -> Skill:
-        """The named skill, or the next skill in turn when no name is given."""
+        """The named skill; with no name, the next skill in turn, or with competence sampling, the skill furthest
+        behind its competence share (smooth weighted round-robin: each episode every skill gains its share as
+        credit, and the skill with the most credit runs and pays one episode), so the shares hold without sampling
+        noise."""
         if skill_name is None:
-            return list(self.skills.values())[self.episodes_started % len(self.skills)]
+            if not self.competence_sampling:
+                return list(self.skills.values())[self.episodes_started % len(self.skills)]
+            for name, share in self.competence_shares().items():
+                self.selection_credit[name] += share
+            chosen = max(self.selection_credit, key=self.selection_credit.get)
+            self.selection_credit[chosen] -= 1.0
+            return self.skills[chosen]
         if skill_name not in self.skills:
             raise ValueError(f"unknown skill {skill_name!r}; this environment runs {sorted(self.skills)}")
         return self.skills[skill_name]
