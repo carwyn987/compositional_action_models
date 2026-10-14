@@ -66,11 +66,16 @@ Settings (environment variables, defaults in brackets)
           literal of each TO appears in some base skill, so a policy reading the operator can use it)
   REPAIR_MODES ["isolated retain"]  REPAIR_EVAL_INTERVAL [10000] (how often a repair run evaluates every skill)
   LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000] (a repair run's most steps)
+  RQ1_STEPS=auto: each rq1 run's budget is RQ1_BUDGET_MARGIN [1.5] x the sum over BASE_SKILLS of the steps each
+                  needed alone to reach the threshold in its learnability run (at least one EVAL_INTERVAL; a skill
+                  that never did, or has no learnability result, counts as LEARN_STEPS), so every skill gets at
+                  least what it needs alone. The rq1 runs wait for the learnability runs.
   EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]
 """
 
 import csv
 import json
+import math
 import os
 import re
 import shutil
@@ -112,7 +117,8 @@ REPAIRED = [to for _, to in REPAIRS]
 REPAIR_MODES = setting("REPAIR_MODES", "isolated retain").split()
 REPAIR_EVAL_INTERVAL = int(setting("REPAIR_EVAL_INTERVAL", "10000"))
 LEARN_STEPS = int(setting("LEARN_STEPS", "150000"))
-RQ1_STEPS = int(setting("RQ1_STEPS", "500000"))
+RQ1_AUTO = setting("RQ1_STEPS", "500000") == "auto"
+RQ1_BUDGET_MARGIN = float(setting("RQ1_BUDGET_MARGIN", "1.5"))
 REPAIR_STEPS = int(setting("REPAIR_STEPS", "150000"))
 EVAL_INTERVAL = int(setting("EVAL_INTERVAL", "50000"))
 EVAL_EPISODES = int(setting("EVAL_EPISODES", "20"))
@@ -168,7 +174,7 @@ class Run:
     output: Path  # new runs: --output-dir; repair runs: the run directory itself
     command: list[str]
     copy_from: Path | None = None  # repair runs: the rq1 output directory holding the run to continue
-    depends_on: str | None = None
+    depends_on: tuple[str, ...] = ()  # labels of runs that must end first
     repaired: str | None = None  # repair runs: the repaired skill
 
     @property
@@ -207,6 +213,33 @@ def repair_difference(repair_from: str, repair_to: str) -> str:
     return ", ".join(changes) or "no literal changes"
 
 
+def rq1_budget(steps_to_threshold: dict[str, int | None], margin: float, learn_steps: int, interval: int) -> int:
+    """RQ1_STEPS=auto: margin x the sum of the steps each skill needed alone to reach the threshold (at least one
+    evaluation interval, a learnability run's resolution; learn_steps, all it had, if it never did), rounded up to
+    whole evaluation intervals."""
+    needed = sum(learn_steps if steps is None else max(steps, interval) for steps in steps_to_threshold.values())
+    return math.ceil(margin * needed / interval) * interval
+
+
+def learnability_steps(skills: list[str]) -> tuple[dict[str, int | None], list[str]]:
+    """Each skill's deterministic steps to threshold in its learnability run under OUT (None: never reached),
+    and the skills without a learnability result (also None)."""
+    steps, missing = {}, []
+    for skill in skills:
+        found = sorted((OUT / "learnability" / skill).glob("*/metrics.json"))
+        if not found:
+            steps[skill] = None
+            missing.append(skill)
+            continue
+        steps[skill] = json.loads(found[0].read_text())["summary"]["deterministic"].get(skill, {}).get("steps_to_threshold")
+    return steps, missing
+
+
+# rq1 steps: the setting, or with RQ1_STEPS=auto the most the budget can be until the learnability runs are done
+RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, EVAL_INTERVAL) if RQ1_AUTO
+             else int(setting("RQ1_STEPS", "500000")))
+
+
 def build_plan() -> list[Run]:
     runs: list[Run] = []
     skill_list = ", ".join(BASE_SKILLS)
@@ -231,11 +264,15 @@ def build_plan() -> list[Run]:
                 runs.append(Run(
                     label=rq1_label, group="rq1", title=f"RQ1 · {condition} · seed {seed}",
                     what=(f"one shared {ALGORITHM.upper()} policy on {len(BASE_SKILLS)} skills ({skill_list}), "
-                          f"{RQ1_STEPS:,} steps; the policy is told which skill to do through {description}"),
+                          + ("a budget set from the learnability runs (RQ1_STEPS=auto)" if RQ1_AUTO else
+                             f"{RQ1_STEPS:,} steps")
+                          + f"; the policy is told which skill to do through {description}"),
                     why=("RQ1: does conditioning on this representation of the operator make multi-skill learning "
                          "faster or better than an arbitrary skill ID? Compared across conditions on steps to "
                          "threshold, AUC and final success."),
                     steps=RQ1_STEPS, condition=condition, output=rq1_output,
+                    depends_on=tuple(f"learnability_{skill}" for skill in BASE_SKILLS)
+                    if RQ1_AUTO and "learnability" in RUN_GROUPS else (),
                     command=["main.py", "--skills", *BASE_SKILLS, *options, "--total-timesteps", str(RQ1_STEPS),
                              "--seed", str(seed), *COMMON, "--output-dir", str(rq1_output)],
                 ))
@@ -265,7 +302,7 @@ def build_plan() -> list[Run]:
                              f"RQ3: does {description} let the policy carry out the repaired operator zero-shot, "
                              "or learn it faster than the other conditions?"),
                         steps=REPAIR_STEPS, condition=condition, output=run_directory, copy_from=rq1_output,
-                        depends_on=rq1_label if "rq1" in RUN_GROUPS else None, repaired=repair_to,
+                        depends_on=(rq1_label,) if "rq1" in RUN_GROUPS else (), repaired=repair_to,
                         command=["main.py", "--run-directory", str(run_directory), "--skills", *skills,
                                  "--stop-skills", repair_to, "--repair-mode", mode,
                                  "--total-timesteps", str(REPAIR_STEPS), "--eval-interval", str(REPAIR_EVAL_INTERVAL),
@@ -384,6 +421,7 @@ class Runner:
         self.started = time.monotonic()
         self.jobs: list[Job] = []
         self.last_status = 0.0
+        self.rq1_steps: int | None = None  # RQ1_STEPS=auto: the budget, once the learnability runs are done
 
     # ---- time estimates
 
@@ -413,7 +451,10 @@ class Runner:
             f"{THREADS} torch threads each), output in {OUT}")
         for index, run in enumerate(self.runs, 1):
             state = "done" if run.finished() else f"{run.steps // 1000}k steps"
-            after = f"  (after {run.depends_on})" if run.depends_on else ""
+            if run.group == "rq1" and RQ1_AUTO and self.rq1_steps is None and not run.finished():
+                state = f"auto (at most {run.steps // 1000}k steps)"
+            after = (f"  (after {', '.join(run.depends_on)})" if len(run.depends_on) <= 2 else
+                     f"  (after {len(run.depends_on)} runs: {run.depends_on[0]}, ...)") if run.depends_on else ""
             say(f"  {index:2d}. {run.title:66s} {state}{after}")
         say(f"Estimated time: ~{duration(self.time_left())} (a first guess from typical CPU speeds; refined from "
             "the measured speed as runs finish)")
@@ -426,8 +467,8 @@ class Runner:
             for run in list(pending):  # start every run that can start, in plan order
                 if len(self.jobs) >= JOBS:
                     break
-                if run.depends_on and run.depends_on not in self.done | self.failed:
-                    continue  # waits for the run it continues
+                if any(label not in self.done | self.failed for label in run.depends_on):
+                    continue  # waits for the runs it needs
                 pending.remove(run)
                 self.start(run, self.runs.index(run) + 1)
             if not self.jobs:
@@ -457,8 +498,9 @@ class Runner:
             self.done.add(run.label)
             self.report(run)
             return
-        if run.depends_on in self.failed:
-            say(f"   ⤼ skipped: {run.depends_on} failed")
+        failed_dependencies = [label for label in run.depends_on if label in self.failed]
+        if run.copy_from is not None and failed_dependencies:  # a repair continues its rq1 run's model
+            say(f"   ⤼ skipped: {', '.join(failed_dependencies)} failed")
             self.failed.add(run.label)
             return
         command = self.prepare(run)
@@ -475,8 +517,24 @@ class Runner:
         self.jobs.append(Job(run, index, process, log, time.monotonic(), []))
         say(f"   ▶ started ({len(self.jobs)} of {JOBS} slots busy)")
 
+    def set_rq1_budget(self, run: Run) -> None:
+        """RQ1_STEPS=auto: the rq1 run's budget from the learnability results, the same for every rq1 run."""
+        if self.rq1_steps is None:
+            steps, missing = learnability_steps(BASE_SKILLS)
+            self.rq1_steps = rq1_budget(steps, RQ1_BUDGET_MARGIN, LEARN_STEPS, EVAL_INTERVAL)
+            needed = ", ".join(f"{skill} {'-' if value is None else f'{value // 1000}k'}" for skill, value in steps.items())
+            say(f"   budget (RQ1_STEPS=auto): {self.rq1_steps:,} steps = {RQ1_BUDGET_MARGIN} x the steps each skill "
+                f"needed alone ({needed}; '-' counts as {LEARN_STEPS // 1000}k)")
+            if missing:
+                say(f"   ! no learnability result for {', '.join(missing)} in {OUT / 'learnability'}; counted as "
+                    f"{LEARN_STEPS // 1000}k")
+        run.steps = self.rq1_steps
+        run.command[run.command.index("--total-timesteps") + 1] = str(self.rq1_steps)
+
     def prepare(self, run: Run) -> list[str] | None:
         """The command to run: a new run, a repair copied from its rq1 run, or a resume of an interrupted run."""
+        if run.group == "rq1" and RQ1_AUTO:
+            self.set_rq1_budget(run)
         run_directory = run.run_directory()
         if run.copy_from is not None and run_directory is None:
             sources = sorted(path.parent for path in run.copy_from.glob("*/model.zip"))
