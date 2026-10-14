@@ -52,49 +52,32 @@ How changes are made here (keep doing this):
 
 | what the report shows | likely cause | next step |
 | --- | --- | --- |
-| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Look at its `failure` reasons in the logs and `watch_best_policies.py`. For the pushes, try `--max-steps-per-episode 150` (the gentle scripted diagonal needs ~105–120 steps). If failures dominate, revisit the thresholds (§3.6). |
+| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Look at its `failure` reasons in the logs and `watch_best_policies.py`. For the pushes, try `--max-steps-per-episode 150` (the gentle scripted diagonal needs ~105–120 steps). If failures dominate, revisit the thresholds (§3.3). |
 | Many episodes end in **failure** (`disturbed`, `excessive force`, `dropped`) | constraints too strict for exploration, or a real behaviour problem | Watch the policy. Disturbance is 3 cm, force 500 N (penalty above 100 N); relax only if the behaviour is acceptable. |
 | **RQ1** conditions are indistinguishable | one seed, or too small a budget (13 skills in 500k steps is ~40k each) | 3+ seeds, `RQ1_STEPS=1000000`; then add confidence intervals (§4.1). |
 | A **compositional** condition lags | composition scale (watch `operator_embedding_magnitude_before_normalization/*`) or capacity | Tune `--composition-weight-decay`; compare tree / slots / geometric. |
 | **Repair: repair-hidden succeeds zero-shot** (`REPAIR INVALID` in section 5) | the original behaviour already satisfies the repaired operator | Redesign that repair pair so the old behaviour fails it. |
 | **Repair: repair-visible zero-shot is ~0 everywhere** | the held-out operator is too far from training, or the policy ignores the embedding | Check with a wrong-embedding control (§5, RQ1). Try the easier pair (`push-left` → `push-left-front`) first. |
-| Repair steps-to-threshold vary but look noisy | one seed, and the replay buffer is empty when a repair starts | §3.2, more seeds. |
+| Repair steps-to-threshold vary but look noisy | one seed, and the replay buffer is empty when a repair starts | §3.1, more seeds. |
 
 ## 3. Issues to fix
 
 In rough priority order.
 
-1. **README is wrong.** It describes the pre-refactor code (`inspect_facts.py`, `train_skill.py`,
-   `rollout_skill.py`), none of which exists. Rewrite it: install, quickstart (`run_skill.py`, `main.py`,
-   `start_overnight.sh`, `review_runs.py`, `watch_best_policies.py`, TensorBoard) and an index of `docs/`.
-2. **Repair runs start with an empty replay buffer.** RQ1 runs don't save their buffer
+1. **Repair runs start with an empty replay buffer.** RQ1 runs don't save their buffer
    (`--save-replay-buffer`), so a repair run's first updates use only new data and the old skills get no
    replay. Save the buffer for RQ1 runs in `overnight_runs.py`; about 1 GB per run.
-3. **Stale docs.**
-   - `docs/policy_inputs.md`: multi-hot sizes (now 192 at arity 3) and one-hot behaviour (now indexed by
-     registry order, with identity aliases).
-   - `docs/environment_wrapper_spec.md`: written before the code. Its file paths, `PredicateEvaluator`
-     base class and threshold dataclass don't exist, and its "observations are not modified" principle
-     contradicts `PolicyObservationWrapper`. Fold the accurate parts into `project_status.md` and delete it,
-     or mark it as the original design.
-   - `docs/repository_redesign_overview.md`: the target architecture. Add a "built / differs / not built"
-     table (not built: YAML configs, `SkillSampler`, `PolicyProvider` with FiLM or a hypernetwork,
-     `RolloutRunner`, policy-similarity metrics, probe datasets, graph encoder, toy environment).
-   - `docs/component_diagrams.md` and `.html`: the class diagram lacks the text, random and compositional
-     encoders, the features extractors and the metrics callback; the scripts are out of date.
-4. **Stale code comment** at `src/cam/experiments/environment_setup.py:135` ("This is static, not trained,
-   right now. TODO: Replace with trainable embeddings"): trainable and compositional embeddings exist.
-5. **Run directory names grow with the skill list.** With the 13 default skills a name is 185 characters,
+2. **Run directory names grow with the skill list.** With the 13 default skills a name is 185 characters,
    and the filesystem limit is 255. A few more skills, or longer skill names, will break run creation.
    Shorten them, e.g. `13skills-<short hash>` once the list is long.
-6. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
+3. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
    `MAX_GRIPPER_FORCE` (500 N), `DROP_HEIGHT` (2 cm) and the motion penalty weights were calibrated on the
    scripted policies. Set the force limits from the real gripper's rating if a real robot is planned. The
    gripper is position-controlled in simulation, so first contact gives one-step force spikes.
-7. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
+4. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.
-8. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). Write progress to a small
+5. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). Write progress to a small
    structured file, which the runner can read instead.
 
 ## 4. Features to add
@@ -148,7 +131,7 @@ In rough priority order.
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
   - transfer gain (§4.1);
-  - keeping the replay buffer (§3.2);
+  - keeping the replay buffer (§3.1);
   - more pairs where the repaired literal appears in training in a different skill;
   - `stack` → `place-beside` changes several literals, so read it as a new-skill test.
 
@@ -184,9 +167,8 @@ In rough priority order.
 ## 6. Suggested order
 
 1. **Read the current overnight run** with §2.
-2. **Quick fixes in one PR:** README (§3.1), the stale comment (§3.4) and the doc fixes (§3.3).
-3. **Before the next overnight run:** keep the replay buffer for repairs (§3.2), add transfer gain and
-   confidence intervals (§4.1), and shorten run names (§3.5). Then run learnability, then RQ1 + repair with
+2. **Before the next overnight run:** keep the replay buffer for repairs (§3.1), add transfer gain and
+   confidence intervals (§4.1), and shorten run names (§3.2). Then run learnability, then RQ1 + repair with
    3 seeds.
-4. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
+3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
    RQ2's protocol, or RQ4 starting with FiLM.

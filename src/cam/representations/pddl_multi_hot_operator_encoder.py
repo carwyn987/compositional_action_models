@@ -86,10 +86,10 @@ class PDDLMultiHotOperatorEncoder(OperatorEncoder):
 
     Size: 4 sections x (1 name-only + max_arity!/(max_arity - k)! positional
     features per predicate of arity k). For Fetch (holding/1, on-table/1,
-    clear/1, on/2, gripper-empty/0, raised/1, beside/2): max_arity 1 -> 48,
-    2 -> 80, 3 -> 128.
+    clear/1, on/2, gripper-empty/0, raised/1, beside/2, at-left/right/front/back/1):
+    max_arity 1 -> 80, 2 -> 128, 3 -> 192.
 
-    Example, Fetch predicates with max_arity=1 (48 features); the features set
+    Example, Fetch predicates with max_arity=1 (80 features); the features set
     for pickup and putdown (each positional / name-only pair is one row, every
     other feature is 0):
 
@@ -106,6 +106,7 @@ class PDDLMultiHotOperatorEncoder(OperatorEncoder):
         delete clear(0)                        1       0
         delete gripper-empty()                 1       0
         delete holding(0)                      0       1
+        delete raised(0)                       1       0
 
     Adding the precondition (not (on ?o ?x)) to an operator would set the
     negated_precondition on(0, 1) and on features; nothing else moves.

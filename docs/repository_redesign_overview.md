@@ -9,6 +9,32 @@ Build a modular research codebase for learning robotic control policies from sym
 
 The codebase must support zero-shot evaluation on unseen operators, fine-tuning speed, multi-skill training, policy-similarity analysis, and controlled ablations across representation / policy / training choices.
 
+## Built, differs, not built
+This document is the target architecture. What the code has of it (`docs/project_status.md` describes the code):
+
+| design element | status | in the code |
+| --- | --- | --- |
+| `PDDLOperator`, `Predicate`, `TypedParameter`, `Effect`, parser | built | `cam.domain`; formats behind `SymbolicActionModel` / `GroundedSymbolicActionModel` and the loader's format table, in place of `TaskLevelOperator` |
+| `SkillSpec` | differs | `Skill`: name, symbolic action model, setup chains. Rewards and scripted policies are per-skill tables in `environment_setup.py`; success comes from the action model's effects |
+| `OperatorEncoder`: whole-string, compositional, slot-based | built | text, tree, slots, plus one-hot, random, multi-hot and geometric. Learned encoders compose inside the policy's features extractor; the observation carries a fixed vector or structure array, not an `OperatorRepresentation` |
+| mean / DeepSets / attention aggregators, graph encoder | not built | |
+| `Policy` | built | `Policy(obs, info, grounded action)`: scripted, random, `StableBaselines3Policy` |
+| `PolicyProvider`: shared append-conditioned | differs | the Stable-Baselines3 MLP over `[grounding, observation, operator embedding]`; no provider interface |
+| `PolicyProvider`: FiLM, hypernetwork | not built | |
+| `Environment`, `PredicateEvaluator`, `SetupProcedure`, `EnvironmentManager` | differs | Gymnasium environment and wrappers; `FetchPredicateEvaluationWrapper`; setup chains run inside `SkillEnvironment.reset`; `setup_environment` builds the stack |
+| `Trainer`, `TrainingBudget` | differs | `train_stable_baselines3` and `main.py` options (`--total-timesteps`, `--stop-skills`, `--patience`) |
+| SAC, PPO adapters | built | `stable_baselines3_trainer.py` |
+| behaviour cloning | not built | |
+| `SkillSampler` | not built | `SkillEnvironment` rotates through the skills |
+| `RolloutRunner` | not built | `evaluation.evaluate` and `scripts/run_skill.py` run their own episodes |
+| `EvaluationHarness` | differs | `MetricsCallback` during training, `--mode evaluate` after |
+| zero-shot, steps to threshold, AUC, final success | built | `cam.evaluation` |
+| transfer gain, policy similarity, ablation sensitivity, probe-state datasets | not built | |
+| `ExperimentConfig`, `ExperimentRunner`, sweeps | differs | command-line options saved to `config.json`; `scripts/overnight_runs.py` plans sweeps from environment variables; no YAML configs |
+| checkpoints, result store, TensorBoard | built | `checkpointing.py`, `metrics.json`, TensorBoard logs |
+| package shape | differs | flatter: no `operators/`, `parsing/`, `graph/`, `providers/`, `sampling/`, `probes/`, `configs/` |
+| toy environment | not built | development went straight to Fetch |
+
 ## Core Design Principles
 - Single-responsibility modules; avoid large manager classes.
 - Define small interfaces first; concrete implementations are swappable.

@@ -58,8 +58,18 @@ Fetch simulator (`FetchMultiBlock-v0`, 1–5 blocks), wrapped from the inside ou
 2. `FetchPredicateEvaluationWrapper`: the facts true in the current state.
 3. `SkillEnvironment`: per episode, picks a skill, runs one of its setup chains with scripted policies,
    picks a random applicable grounding, and computes success, failure and reward.
-4. `TimeLimit`.
+4. `TimeLimit`: outside `SkillEnvironment`, so setup steps don't count toward the episode's limit.
 5. `PolicyObservationWrapper`: builds `{observation, operator_embedding, grounding}`.
+
+Design rules the code keeps:
+- `cam.domain` (symbols, action models, the PDDL parser and writer) imports neither Gymnasium, NumPy nor
+  torch.
+- Facts are closed-world and use the action models' predicate names and arities. They follow the PDDL
+  meaning, not physical intuition: a held block is not `clear`.
+- Predicates are functions of a `FetchState` (named fields), so they are unit-tested on hand-built states
+  without the simulator.
+- Setup acts through the normal `step` API, never by setting the simulator state, so every set-up state
+  is physically reachable.
 
 Training is Stable-Baselines3 SAC (default) or PPO, with features extractors for the trainable and
 compositional embeddings. See `docs/operator_embeddings.md` for every embedding type, with worked
