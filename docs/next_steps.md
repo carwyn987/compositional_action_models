@@ -103,6 +103,23 @@ In rough priority order.
    scripted ones, so training links skills into chains.
 7. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
    with scripted episodes. It's still RL, but usually much faster.
+8. **Better competence sampling.** `--skill-sampling competence` (`competence_shares` in
+   `skill_environment.py`) gives episodes to skills in proportion to their recent failure rate. Success is the
+   right signal (shaped rewards differ in stages and scale between skills; success means the same for every
+   skill and condition), but counting failures misses:
+   - **a skill that cannot be learned** keeps a large share forever (push-beside reached only 0.55 alone);
+   - **at 0% success** it cannot tell "almost there" from "hopeless";
+   - **noise:** 20 episodes per skill, about ±0.1;
+   - **resume:** each skill's recent success starts empty, so every skill counts as failing and the shares are
+     even for about the first 20 episodes per skill (including a repair's first episodes).
+
+   Options: gate unlearnable skills out of the training set; **learning progress** (favour skills whose
+   success is changing: older vs newer half of the window, with a small failure-rate term so a skill at 0%
+   still gets episodes), as in Teacher–Student Curriculum Learning (Matiisen et al.) and ALP-GMM (Portelas et
+   al.), or the critic's prediction errors, as in Prioritized Level Replay (Jiang et al.); or the recent
+   return as a fraction of the scripted policy's (dense, but it inherits the shaped rewards' quirks).
+   Learning progress is the most defensible; on resume, each skill's recent success can be read from the
+   run's `monitor.csv`.
 
 ## 5. Research direction, per question
 
