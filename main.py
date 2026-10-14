@@ -10,6 +10,10 @@
     # resume with an added (new or repaired) skill, until it reaches the success threshold
     ./main.py --run-directory outputs/<run> --skills pickup putdown stack --stop-skills stack
 
+    # resume with a repaired skill: train only it (isolated), or all skills until none is forgotten (retain)
+    ./main.py --run-directory outputs/<run> --skills pickup putdown place-beside --stop-skills place-beside \
+        --repair-mode retain
+
     # evaluate a run only (optionally other or held-out skills)
     ./main.py --mode evaluate --run-directory outputs/<run> --eval-skills stack --eval-episodes 50
 
@@ -46,7 +50,12 @@ logger = logging.getLogger("cam.main")
 
 MODES = ["train-evaluate", "train", "evaluate"]
 # Options for one invocation only: not taken from a resumed run's config.json.
-PER_INVOCATION = ["mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device"]
+PER_INVOCATION = [
+    "mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device", "repair_mode",
+    "recovery_tolerance",
+]
+# With --repair-mode, the stop needs this many evaluations in a row (each of --eval-episodes, about ±0.1 at 20)
+REPAIR_CONSECUTIVE_EVALUATIONS = 2
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
@@ -225,6 +234,20 @@ def build_parser() -> argparse.ArgumentParser:
         "--eval-skills", nargs="+", choices=sorted(SKILL_REGISTRY),
         help="--mode evaluate: skills to evaluate (default: the run's skills); may include untrained skills",
     )
+    repair = parser.add_argument_group(
+        "repair (resuming with added or repaired skills, named in --stop-skills)",
+        "isolated: train only the --stop-skills (every skill is still evaluated, which shows what the others "
+        "forget); stop once they reach --success-threshold. retain: train every skill, choosing each episode's "
+        "skill as the run does; stop once the --stop-skills are at the threshold and every other skill is back "
+        "within --recovery-tolerance of its level before the --stop-skills were added. Both need "
+        f"{REPAIR_CONSECUTIVE_EVALUATIONS} evaluations in a row. metrics.json records each other skill's level "
+        "before, its lowest and last level after, and when it recovered (\"retention\").",
+    )
+    repair.add_argument("--repair-mode", choices=["isolated", "retain"])
+    repair.add_argument(
+        "--recovery-tolerance", type=float, default=0.1,
+        help="retain: how far below its level before the repair a skill's success rate may be and count as back",
+    )
     return parser
 
 
@@ -263,6 +286,8 @@ def parse_args(argv: list[str] | None = None) -> dict:
     unknown_stop_skills = [skill for skill in config["stop_skills"] if skill not in config["skills"]]
     if unknown_stop_skills:
         parser.error(f"--stop-skills {unknown_stop_skills} are not among --skills {config['skills']}")
+    if config["repair_mode"] and not config["stop_skills"]:
+        parser.error("--repair-mode needs --stop-skills: the added or repaired skills")
     return config
 
 
@@ -306,6 +331,13 @@ def policy_kwargs(config: dict) -> dict | None:
     return {"features_extractor_class": TrainableOperatorEmbeddingExtractor, "share_features_extractor": True}
 
 
+def training_skills(config: dict, skills: list[Skill]) -> list[Skill]:
+    """The skills to train: only the --stop-skills with --repair-mode isolated, otherwise all of them."""
+    if config["repair_mode"] == "isolated":
+        return [skill for skill in skills if skill.name in config["stop_skills"]]
+    return skills
+
+
 def resume_command(run_directory: Path) -> str:
     return f"./main.py --run-directory {shlex.quote(str(run_directory))}"
 
@@ -342,6 +374,9 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             seed=config["seed"] + 10_000,  # evaluation scenes differ from training's
             stop_skills=config["stop_skills"],
             patience=config["patience"],
+            stop_consecutive=REPAIR_CONSECUTIVE_EVALUATIONS if config["repair_mode"] else 1,
+            recover_others=config["repair_mode"] == "retain",
+            recovery_tolerance=config["recovery_tolerance"],
             metrics=json.loads(metrics_path.read_text()) if resume and metrics_path.exists() else None,
         )
         callbacks.append(metrics_callback)
@@ -423,7 +458,7 @@ def main(argv: list[str] | None = None) -> None:
     logger.info("to resume this run if it stops: %s", resume_command(run_directory))
 
     skills = [build_skill(skill_name, config) for skill_name in config["skills"]]
-    env = setup_environment(config, skills)
+    env = setup_environment(config, training_skills(config, skills))
     try:
         train(config, env, skills, run_directory, resume)
     finally:

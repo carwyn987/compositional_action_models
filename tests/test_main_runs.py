@@ -1,6 +1,7 @@
 """main.py run lifecycle: new run, resume with an added skill, evaluate only, locked options."""
 
 import json
+import shutil
 
 import pytest
 
@@ -38,6 +39,37 @@ def test_new_run_then_resume_with_added_skill_then_evaluate(tmp_path):
     (evaluation_file,) = run.glob("evaluation_*.json")
     evaluation = json.loads(evaluation_file.read_text())
     assert evaluation["step"] == 300 and set(evaluation["results"]["deterministic"]) == {"putdown"}
+
+
+@pytest.mark.integration
+def test_repair_modes_choose_which_skills_train_after_the_addition(tmp_path):
+    """Train pickup 200 steps, then resume for 100 more with putdown added as the repaired skill, three ways.
+    Control (no repair mode): the two take turns. isolated: only putdown trains, pickup is still evaluated, and
+    its retention is recorded. retain: both train, taking turns as without a mode."""
+    main(["--skills", "pickup", *FAST, "--total-timesteps", "200", "--eval-interval", "100", "--output-dir", str(tmp_path)])
+    base = run_directory(tmp_path, ["pickup"])
+    before = json.loads((base / "metrics.json").read_text())["progress"]["skill_episodes"]["pickup"]
+    added = {}
+    for mode in ("none", "isolated", "retain"):
+        run = shutil.copytree(base, tmp_path / mode)
+        options = [] if mode == "none" else ["--stop-skills", "putdown", "--repair-mode", mode]
+        main(["--run-directory", str(run), "--skills", "pickup", "putdown", "--total-timesteps", "100", *options])
+        metrics = json.loads((run / "metrics.json").read_text())
+        episodes = metrics["progress"]["skill_episodes"]
+        added[mode] = (episodes["pickup"] - before, episodes.get("putdown", 0))
+        assert "pickup" in metrics["curves"]["deterministic"]["points"][-1]["result"]  # evaluated in every mode
+        assert set(metrics["retention"]["skills"]) == {"pickup"}
+
+    assert abs(added["none"][0] - added["none"][1]) <= 1
+    assert added["isolated"][0] == 0 and added["isolated"][1] > 0
+    assert abs(added["retain"][0] - added["retain"][1]) <= 1
+
+
+@pytest.mark.unit
+def test_repair_mode_needs_stop_skills():
+    """--repair-mode says how the added skills train, so it needs them named in --stop-skills."""
+    with pytest.raises(SystemExit):
+        parse_args(["--skills", "pickup", "putdown", "--repair-mode", "isolated"])
 
 
 @pytest.mark.unit

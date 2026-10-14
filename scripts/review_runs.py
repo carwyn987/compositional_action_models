@@ -14,7 +14,9 @@ Sections:
                     magnitudes logged during training, flagging NaN or exploding values
     5. added skills per run where a skill was added or replaced after training started (repair / new
                     skill runs): the step it was added, its zero-shot success rate there, and the steps to
-                    threshold from there, per condition (mean ± std over seeds)
+                    threshold from there, per condition (mean ± std over seeds); and what the other skills
+                    forgot: their mean level before, lowest after and final, and the steps until all were
+                    back at their level
     6. embeddings   per run with a learned operator embedding (trainable or compositional): the final
                     embedding of each skill, from the saved model: its magnitude (L2 norm, i.e. length)
                     and the distance and cosine similarity between skills (low separation means the
@@ -153,7 +155,7 @@ def section_added_skills(runs: list[Path]) -> list[str]:
                 continue
             summary = {mode: metrics["summary"][mode].get(skill, {}) for mode in ("deterministic", "stochastic")}
             condition = f"{run.parent.name}/{re.sub(r'_seed\d+$', '', run.name)}"
-            conditions.setdefault(f"{condition} {skill}", []).append((step, summary, removed))
+            conditions.setdefault(f"{condition} {skill}", []).append((step, summary, removed, metrics.get("retention")))
     for key, entries in sorted(conditions.items()):
         removed = entries[0][2]
         lines.append(f"   {key}  ({len(entries)} seeds; added at step {mean_std([e[0] for e in entries])}"
@@ -167,6 +169,15 @@ def section_added_skills(runs: list[Path]) -> list[str]:
             lines.append(f"     {mode[:5]}  zero-shot {mean_std([v.get('zero_shot_success_rate') for v in values]):>12s}"
                          f"  steps to threshold {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
                          f"  final {mean_std([v.get('final_success_rate') for v in values]):>10s}")
+        retentions = [e[3] for e in entries if e[3] and e[3]["skills"]]
+        if retentions:
+            def mean_of(key: str) -> list:
+                return [statistics.mean(s[key] or 0 for s in r["skills"].values()) for r in retentions]
+            back = [r["all_recovered_at"] - r["added_at"] for r in retentions if r["all_recovered_at"] is not None]
+            lines.append(f"     others (mean over skills)  before {mean_std(mean_of('level_before')):>10s}"
+                         f"  lowest after {mean_std(mean_of('lowest_after')):>10s}"
+                         f"  final {mean_std(mean_of('final')):>10s}"
+                         f"  all back after {mean_std(back):>10s} steps ({len(back)} of {len(retentions)} seeds)")
     if len(lines) == 1:
         lines.append("   none")
     return lines
