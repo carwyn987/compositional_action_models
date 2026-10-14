@@ -52,7 +52,8 @@ Outputs, under OUT (default outputs/overnight_<date>)
 View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 
 Settings (environment variables, defaults in brackets)
-  OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  ALGORITHM [sac]  SEEDS ["0"]
+  OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  SEEDS ["0"]
+  ALGORITHM [mtsac] (main.py --algorithm: sac; mtsac, SAC with a separate entropy temperature per skill; ppo)
   JOBS [2] runs at once   DEVICE [auto]   THREADS [cores / JOBS] torch threads per run   DRY_RUN [0]
   CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
               compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
@@ -89,7 +90,7 @@ def setting(name: str, default: str) -> str:
 
 OUT = Path(setting("OUT", f"outputs/overnight_{date.today():%Y%m%d}"))
 RUN_GROUPS = setting("RUN_GROUPS", "learnability rq1 repair").split()
-ALGORITHM = setting("ALGORITHM", "sac")
+ALGORITHM = setting("ALGORITHM", "mtsac")
 SEEDS = [int(seed) for seed in setting("SEEDS", "0").split()]
 CONDITIONS = setting(
     "CONDITIONS",

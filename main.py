@@ -102,7 +102,10 @@ def build_parser() -> argparse.ArgumentParser:
     environment.add_argument("--window-height", type=int, default=960)
 
     training = parser.add_argument_group("training")
-    training.add_argument("--algorithm", choices=["sac", "ppo"], default="sac", help="Stable-Baselines3 algorithm")
+    training.add_argument(
+        "--algorithm", choices=["sac", "mtsac", "ppo"], default="sac",
+        help="Stable-Baselines3 SAC or PPO; mtsac: SAC with a separate entropy temperature per skill (multi-task SAC)",
+    )
     training.add_argument(
         "--total-timesteps", type=int, default=100_000,
         help="training environment steps; when resuming, steps to train in addition to the run's",
