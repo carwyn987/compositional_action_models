@@ -71,7 +71,8 @@ def load_metrics(run: Path) -> dict | None:
 
 
 def section_conditions(runs: list[Path]) -> list[str]:
-    lines = ["2. CONDITIONS (mean ± std over seeds; steps / episodes to threshold count from the skill's zero-shot point)"]
+    lines = ["2. CONDITIONS (mean ± std over seeds; steps / episodes to threshold count from the skill's zero-shot point; "
+             "on skill: of those steps, the ones spent on the skill itself)"]
     conditions: dict[str, list[dict]] = {}
     for run in runs:
         metrics = load_metrics(run)
@@ -85,6 +86,7 @@ def section_conditions(runs: list[Path]) -> list[str]:
                 values = [metrics["summary"][mode].get(skill, {}) for metrics in metrics_list]
                 lines.append(
                     f"     {mode[:5]} {skill:10s} steps {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
+                    f"  on skill {mean_std([v.get('skill_steps_to_threshold') for v in values]):>16s}"
                     f"  episodes {mean_std([v.get('episodes_to_threshold') for v in values]):>14s}"
                     f"  auc {mean_std([v.get('auc') for v in values]):>12s}"
                     f"  final {mean_std([v.get('final_success_rate') for v in values]):>12s}"
@@ -168,6 +170,7 @@ def section_added_skills(runs: list[Path]) -> list[str]:
             values = [e[1][mode] for e in entries]
             lines.append(f"     {mode[:5]}  zero-shot {mean_std([v.get('zero_shot_success_rate') for v in values]):>12s}"
                          f"  steps to threshold {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
+                         f"  on skill {mean_std([v.get('skill_steps_to_threshold') for v in values]):>16s}"
                          f"  final {mean_std([v.get('final_success_rate') for v in values]):>10s}")
         retentions = [e[3] for e in entries if e[3] and e[3]["skills"]]
         if retentions:

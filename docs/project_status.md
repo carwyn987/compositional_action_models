@@ -148,7 +148,10 @@ stochastic. A skill added on resume (a repaired or new operator) is also evaluat
 steps after it was added, doubling until `--eval-interval` takes over: precise steps to threshold early,
 where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in `metrics_callback.py`).
 - **success rate**;
-- **steps / episodes to threshold:** from the skill's first evaluation, until success ≥ 0.95;
+- **steps / episodes to threshold:** from the skill's first evaluation, until success ≥ 0.95, counted in all
+  training steps and in the skill's own (**on skill**, `skill_steps_to_threshold`). Skills share a run's
+  steps, so the skill's own steps are what compare across skills, across ways of sampling skills, and with
+  learning the skill alone;
 - **zero-shot:** the first evaluation of a skill;
 - **final success**;
 - **AUC:** the *average* success rate over the run (area under the curve divided by the steps). It stays

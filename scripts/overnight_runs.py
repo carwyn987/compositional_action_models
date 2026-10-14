@@ -560,7 +560,8 @@ class Runner:
 
     @staticmethod
     def report(run: Run) -> None:
-        """The run's outcome from its metrics.json: per skill, final success and steps to threshold."""
+        """The run's outcome from its metrics.json: per skill, final success and steps to threshold (and how many of
+        those steps were spent on the skill itself)."""
         run_directory = run.run_directory()
         if run_directory is None or not (run_directory / "metrics.json").exists():
             return
@@ -569,7 +570,7 @@ class Runner:
         if run.group == "repair":
             values = summary.get(run.repaired, {})
             say(f"   result: {run.repaired} zero-shot {values.get('zero_shot_success_rate')}, "
-                f"steps to threshold {values.get('steps_to_threshold')}"
+                f"steps to threshold {values.get('steps_to_threshold')} ({values.get('skill_steps_to_threshold')} on it)"
                 + (f"; stopped: {metrics['stop_reason']}" if metrics.get("stop_reason") else ""))
             retention = metrics.get("retention") or {}
             others = retention.get("skills") or {}
@@ -580,9 +581,13 @@ class Runner:
                     f"-> {mean('final'):.2f} at the end; "
                     + (f"all back after {back - retention['added_at']:,} steps" if back is not None else "not all back"))
             return
-        cells = [f"{skill} {values.get('final_success_rate')}"
-                 + (f" (95% at {values['steps_to_threshold'] // 1000}k)" if values.get("steps_to_threshold") is not None else "")
-                 for skill, values in summary.items()]
+        def reached(values: dict) -> str:
+            steps, on_skill = values.get("steps_to_threshold"), values.get("skill_steps_to_threshold")
+            if steps is None:
+                return ""
+            return f" (95% at {steps // 1000}k" + (f", {on_skill // 1000}k on it" if on_skill is not None else "") + ")"
+
+        cells = [f"{skill} {values.get('final_success_rate')}{reached(values)}" for skill, values in summary.items()]
         say(f"   result (final success, deterministic): {'; '.join(cells)}")
 
     def interrupt(self, *_) -> None:
