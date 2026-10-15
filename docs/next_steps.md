@@ -144,7 +144,8 @@ In rough priority order.
   - every literal of each repaired operator is trained in another skill, so a repair asks how much a policy
     learns about a behaviour from a literal in one place of the operator: `pickup-raised` for `(raised ?o)`;
     `stack`, `putdown` and `push-beside` for place-beside; `push-front` and the other diagonals for
-    `(at-front ?o)`;
+    `(at-front ?o)`. The runner refuses a plan that leaves a literal untrained (e.g. `BASE_SKILLS` without
+    `push-beside`);
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
   - transfer gain (§4.1);

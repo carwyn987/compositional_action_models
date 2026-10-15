@@ -1,5 +1,5 @@
-"""scripts/overnight_runs.py: the experiment's settings, and the RQ1 budget set from the learnability runs
-(RQ1_STEPS=auto)."""
+"""scripts/overnight_runs.py: the experiment's settings, the repairs it accepts, and the RQ1 budget set from the
+learnability runs (RQ1_STEPS=auto)."""
 
 import json
 import os
@@ -77,6 +77,19 @@ def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypa
         monkeypatch.setattr(overnight_runs, name, value)
     groups = [run.group for run in overnight_runs.build_plan()]
     assert groups == ["learnability"] * 4 + ["rq1"] * 2 + ["repair"] * 3  # one-hot: visible and hidden; text: visible
+
+
+@pytest.mark.unit
+def test_a_repair_asking_for_an_untrained_literal_stops_the_runner(monkeypatch):
+    """Control: with push-beside among the base skills, stack -> place-beside passes. Without it, place-beside's
+    (beside ?o ?u) is in no base skill, and the runner stops before anything runs, naming the skill that has it."""
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("REPAIRS", [("stack", "place-beside")]),
+                        ("BASE_SKILLS", ["pickup", "putdown", "stack", "push-beside"])):
+        monkeypatch.setattr(overnight_runs, name, value)
+    overnight_runs.check_repairs()
+    monkeypatch.setattr(overnight_runs, "BASE_SKILLS", ["pickup", "putdown", "stack"])
+    with pytest.raises(SystemExit, match=r"no base skill has effect \(beside \?o \?u\) \(add one of: push-beside\)"):
+        overnight_runs.check_repairs()
 
 
 @pytest.mark.unit

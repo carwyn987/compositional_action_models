@@ -9,7 +9,7 @@ environment variable named as the setting overrides it for one invocation (e.g. 
 runner lists the overrides it used, and start_overnight.sh records them in run_info.txt.
 """
 
-from cam.skills.registry import SKILL_REGISTRY
+from cam.skills.registry import SKILL_REGISTRY, build_skill
 
 
 class Experiment:
@@ -116,6 +116,7 @@ class RQ3Repair(Experiment):
                                     literals at once, so read it as a new-skill test
       push-left -> push-left-front  adds (at-front ?o) and (not (at-front ?o)), trained in push-front and in the
                                     other diagonals
+    The runner refuses to start if the training skills leave a literal of a repaired operator untrained.
 
     Conditions: one of each kind (identity, literals, text, composition), and only isolated repairs, whose steps
     compare directly with learning from scratch; CONDITIONS and REPAIR_MODES add the others at the cost of a longer
@@ -134,3 +135,22 @@ EXPERIMENTS: dict[str, type[Experiment]] = {
     experiment.name: experiment for experiment in (Learnability, RQ1, RQ3Repair)
 }
 
+
+def literals(skill: str) -> set[str]:
+    """The skill's operator literals, e.g. "precondition (on-table ?u)" or "effect (not (holding ?o))": where the
+    literal is in the operator, its sign, its predicate and its arguments."""
+    model = build_skill(skill, {"symbolic_action_model_format": "pddl"}).symbolic_action_model
+
+    def text(predicate, negated: bool) -> str:
+        atom = f"({' '.join((predicate.name, *predicate.args))})"
+        return f"(not {atom})" if negated else atom
+
+    return ({f"precondition {text(p.predicate, p.negated)}" for p in model.preconditions}
+            | {f"effect {text(e.predicate, e.delete)}" for e in model.effects})
+
+
+def untrained_literals(skill: str, training_skills) -> list[str]:
+    """The skill's literals that no training skill has: what a policy reading the operator never had the chance to
+    learn."""
+    trained = set().union(*(literals(name) for name in training_skills))
+    return sorted(literals(skill) - trained)

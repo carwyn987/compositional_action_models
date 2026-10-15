@@ -10,7 +10,8 @@
 Experiments (--experiment NAME, default rq3-repair) are defined in src/cam/experiments/definitions.py: learnability
 (each skill alone), rq1 (one shared policy per operator embedding condition) and rq3-repair (rq1's policies
 continued with repaired operators). Each sets the groups to run and every setting below; an environment variable
-of a setting's name overrides it, and the runner lists the overrides when it starts.
+of a setting's name overrides it, and the runner lists the overrides when it starts. A plan whose repairs ask for
+a literal that no training skill has refuses to start.
 
 How it runs
   * Up to JOBS runs at once (default 2). One run uses a fraction of a GPU or CPU: SAC alternates a
@@ -86,7 +87,8 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from cam.experiments.definitions import EXPERIMENTS
+from cam.experiments.definitions import EXPERIMENTS, literals, untrained_literals
+from cam.skills.registry import SKILL_REGISTRY
 
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = str(ROOT / ".venv" / "bin" / "python") if (ROOT / ".venv" / "bin" / "python").exists() else sys.executable
@@ -219,14 +221,6 @@ def condition_options(condition: str) -> list[str]:
 
 def repair_difference(repair_from: str, repair_to: str) -> str:
     """What repair_to changes relative to repair_from, e.g. 'adds effect (raised ?o)'."""
-    from cam.skills.registry import build_skill
-
-    config = {"symbolic_action_model_format": "pddl"}
-    def literals(name: str) -> set[str]:
-        model = build_skill(name, config).symbolic_action_model
-        return {f"precondition {'(not ' if p.negated else ''}{p.predicate}{')' if p.negated else ''}"
-                for p in model.preconditions} | {
-                f"effect {'(not ' if e.delete else ''}{e.predicate}{')' if e.delete else ''}" for e in model.effects}
     before, after = literals(repair_from), literals(repair_to)
     changes = [f"adds {literal}" for literal in sorted(after - before)]
     changes += [f"removes {literal}" for literal in sorted(before - after)]
@@ -388,6 +382,25 @@ def check_repair_modes() -> None:
     unknown = [mode for mode in REPAIR_MODES if mode not in ("isolated", "retain")]
     if unknown:
         sys.exit(f"unknown REPAIR_MODES {unknown}; known: isolated, retain")
+
+
+def check_repairs() -> None:
+    """Each repair replaces a base skill with an operator held out of training, every literal of which a base skill
+    has: otherwise the repair asks for something the policy never had the chance to learn."""
+    if "repair" not in RUN_GROUPS:
+        return
+    problems = []
+    for repair_from, repair_to in REPAIRS:
+        if repair_from not in BASE_SKILLS:
+            problems.append(f"{repair_from} -> {repair_to}: {repair_from} is not in BASE_SKILLS")
+        if repair_to in BASE_SKILLS:
+            problems.append(f"{repair_from} -> {repair_to}: {repair_to} is in BASE_SKILLS, so it is not held out")
+        for literal in untrained_literals(repair_to, BASE_SKILLS):
+            carriers = [skill for skill in SKILL_REGISTRY if skill != repair_to and literal in literals(skill)]
+            problems.append(f"{repair_from} -> {repair_to}: no base skill has {literal}"
+                            + (f" (add one of: {', '.join(carriers)})" if carriers else " (no skill has it)"))
+    if problems:
+        sys.exit("repairs that test nothing learnable:\n  " + "\n  ".join(problems))
 
 
 def check_text_backend(skills: list[str]) -> None:
@@ -738,6 +751,7 @@ def main() -> None:
     for condition in CONDITIONS:
         condition_options(condition)
     check_repair_modes()
+    check_repairs()
     runs = build_plan()
     if not runs:
         sys.exit(f"nothing to run for RUN_GROUPS={' '.join(RUN_GROUPS)}")

@@ -195,6 +195,8 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
     environment variable named as a setting overrides it, and the runner lists the overrides. `learnability`:
     each registered skill alone; `rq1`: one shared policy per condition on the training skills; `rq3-repair`:
     rq1's policies continued with repaired operators;
+  - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
+    skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
   - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
     by side get through the plan several times faster;
   - announces each run (what it trains, why), reports progress every minute and each outcome; training
