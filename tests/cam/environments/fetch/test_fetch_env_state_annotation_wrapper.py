@@ -120,3 +120,28 @@ def test_gripper_force_is_the_carried_blocks_weight_while_holding_it():
     force = info["environment_state"].gripper_force
     env.close()
     assert 15 < np.linalg.norm(force) < 30 and force[2] < 0
+
+
+@pytest.mark.integration
+def test_gripper_force_history_restarts_at_each_reset_and_keeps_the_last_steps():
+    """The force history holds this episode's steps only (the reset observation first), at most
+    GRIPPER_FORCE_HISTORY of them, newest last."""
+    from main import parse_args
+    from cam.environments.fetch.fetch_env_state_annotation_wrapper import FetchEnvStateAnnotationWrapper
+    from cam.experiments.environment_setup import setup_environment
+    from cam.skills.registry import build_skill
+
+    config = dict(parse_args(["--skills", "pickup", "--num-blocks", "2"]))
+    env = setup_environment(config, [build_skill("pickup", config)])
+    try:
+        _, info = env.reset(seed=0)
+        assert len(info["environment_state"].gripper_force_history) == 1
+        for _ in range(15):
+            _, *_, info = env.step(np.zeros(4))
+        history = info["environment_state"].gripper_force_history
+        assert len(history) == FetchEnvStateAnnotationWrapper.GRIPPER_FORCE_HISTORY
+        assert history[-1] == pytest.approx(float(np.linalg.norm(info["environment_state"].gripper_force)))
+        _, info = env.reset(seed=1)
+        assert len(info["environment_state"].gripper_force_history) == 1
+    finally:
+        env.close()

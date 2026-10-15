@@ -177,11 +177,16 @@ FETCH_FRAME_PREDICATES = frozenset({"on-table", "on", "clear", "holding", "gripp
 DROP_HEIGHT = 0.02  # a block let go more than this above its support was dropped, not placed
 DISTURB_DISTANCE = 0.03  # another block moved further than this from its start was knocked or pushed aside
 # Net contact force on the gripper (FetchState.gripper_force). Holding a block is ~20 N, lifting or placing one
-# peaks ~55 N, pushing one ~65 N; ramming a block at full speed spikes to ~650 N. Above SAFE_GRIPPER_FORCE the
-# shaped reward penalizes the excess (FetchMotionReward); above MAX_GRIPPER_FORCE the episode fails: forces a
-# real robot's gripper should never see (pressing hard on a block or the table, ramming).
+# peaks ~55 N, pushing one ~65 N. Above SAFE_GRIPPER_FORCE the shaped reward penalizes the excess, up to
+# MAX_GRIPPER_FORCE (FetchMotionReward). Above MAX_GRIPPER_FORCE for FORCE_FAILURE_STEPS consecutive steps
+# (0.2 s) the episode fails: pressing on a block or the table, which stays above it (pressing into the table:
+# ~55 kN on every step). Shorter stretches are penalized, not failures: first contact of the position-controlled
+# gripper spikes for one step (ramming a block with closed fingers: ~900 N once; random exploration: up to
+# ~38 kN), and random exploration bumps the table for a few steps (over 500 N for 2+ steps in about half of
+# random episodes, for 5+ in about 1 in 8, never for 10).
 SAFE_GRIPPER_FORCE = 100.0
 MAX_GRIPPER_FORCE = 500.0
+FORCE_FAILURE_STEPS = 5
 
 
 def dropped(grounded_action_model, start_info: dict, info: dict) -> bool:
@@ -211,11 +216,11 @@ def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None
 def check_fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
     """Checks whether the episode has failed in this step: returns the reason if it has, None if it has not.
     Called on every step by SkillEnvironment (its check_failure); a returned reason makes the step a failure,
-    which ends the episode. The failures, checked in this order: an extreme force on the gripper, the moved
-    block dropped, another block disturbed."""
-    force = float(np.linalg.norm(info["environment_state"].gripper_force))
-    if force > MAX_GRIPPER_FORCE:
-        return f"excessive force on the gripper ({force:.0f} N)"
+    which ends the episode. The failures, checked in this order: an extreme force on the gripper for
+    FORCE_FAILURE_STEPS consecutive steps, the moved block dropped, another block disturbed."""
+    recent = info["environment_state"].gripper_force_history[-FORCE_FAILURE_STEPS:]
+    if len(recent) == FORCE_FAILURE_STEPS and min(recent) > MAX_GRIPPER_FORCE:
+        return f"excessive force on the gripper (over {min(recent):.0f} N for {FORCE_FAILURE_STEPS} steps)"
     if dropped(grounded_action_model, start_info, info):
         return f"dropped {grounded_action_model.arguments[0]}"
     other = disturbed(grounded_action_model, start_info, info)

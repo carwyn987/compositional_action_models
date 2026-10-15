@@ -17,6 +17,7 @@ from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     BESIDE_DISTANCE,
     OPEN_FINGER_WIDTH,
+    MAX_GRIPPER_FORCE,
     SAFE_GRIPPER_FORCE,
     RAISED_HEIGHT,
     TABLE_REST_Z,
@@ -34,7 +35,10 @@ class FetchMotionRewardConfig:
     smoothness_penalty: float = 0.005  # per unit squared of change between consecutive actions
     acceleration_penalty: float = 500.0  # per (m/step^2)^2 of the moved block's acceleration
     disturbance_penalty: float = 20.0  # per metre the other blocks move
-    force_penalty: float = 0.01  # per newton of net contact force on the gripper above SAFE_GRIPPER_FORCE
+    # per newton of net gripper contact force from SAFE_ to MAX_GRIPPER_FORCE: at most FAILURE_PENALTY /
+    # FORCE_FAILURE_STEPS (2) per step, so pressing until it fails costs at most twice a failure, and a shorter
+    # bump less than one (a larger penalty would make failing on purpose the cheaper way out)
+    force_penalty: float = 0.005
 
 
 @dataclass
@@ -45,8 +49,11 @@ class FetchMotionReward(RewardFunction):
                       steps), squared: high when it is yanked, thrown or slammed
         disturbance   how far the other blocks moved this step: any knock is penalized (moving one more than
                       DISTURB_DISTANCE from its start also ends the episode as a failure)
-        force         net contact force on the gripper above SAFE_GRIPPER_FORCE (100 N): pressing on a block or
-                      the table, ramming (above MAX_GRIPPER_FORCE the episode fails). Required for real robots.
+        force         net contact force on the gripper above SAFE_GRIPPER_FORCE (100 N), counted up to
+                      MAX_GRIPPER_FORCE (500 N): at most 2 per step. One-step contact spikes reach tens of kN in
+                      simulation; uncapped, one would cost hundreds of points, far more than success earns,
+                      and exploring would score worse than doing nothing. Above MAX_GRIPPER_FORCE for
+                      FORCE_FAILURE_STEPS consecutive steps the episode fails. Required for real robots.
     A full-speed scripted episode costs about 0.05-1.3; throwing a block costs several points per step.
     """
 
@@ -80,8 +87,10 @@ class FetchMotionReward(RewardFunction):
             "smoothness": -cfg.smoothness_penalty * smoothness,
             "acceleration": -cfg.acceleration_penalty * acceleration,
             "disturbance": -cfg.disturbance_penalty * disturbance,
-            "force": -cfg.force_penalty * max(0.0, float(np.linalg.norm(info["environment_state"].gripper_force))
-                                               - SAFE_GRIPPER_FORCE),
+            "force": -cfg.force_penalty * min(
+                max(0.0, float(np.linalg.norm(info["environment_state"].gripper_force)) - SAFE_GRIPPER_FORCE),
+                MAX_GRIPPER_FORCE - SAFE_GRIPPER_FORCE,
+            ),
         }
         return sum(components.values()), components
 

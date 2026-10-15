@@ -70,7 +70,9 @@ In rough priority order.
 2. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
    `MAX_GRIPPER_FORCE` (500 N), `DROP_HEIGHT` (2 cm) and the motion penalty weights were calibrated on the
    scripted policies. Set the force limits from the real gripper's rating if a real robot is planned. The
-   gripper is position-controlled in simulation, so first contact gives one-step force spikes.
+   gripper is position-controlled in simulation, so first contact spikes for one step; failure therefore
+   needs 5 steps over 500 N, and a single hard impact (e.g. ramming a block) is only penalized. Telling a
+   ram from a first contact would need the impact speed, not the force.
 3. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.

@@ -1,5 +1,6 @@
 """Gymnasium-Robotics Fetch environments annotated with a named state."""
 
+from collections import deque
 from dataclasses import dataclass, field, replace
 
 import gymnasium as gym
@@ -15,6 +16,8 @@ class FetchState:
     block_rotations: dict[str, np.ndarray] = field(default_factory=dict)  # block name -> (3,) Euler angles
     # (3,) net contact force on the gripper (N, world frame): what the gripper pushes against or carries
     gripper_force: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # magnitudes (N) of the net gripper force over the last steps since the reset, oldest first, this one last
+    gripper_force_history: tuple[float, ...] = ()
 
 
 class FetchEnvStateAnnotationWrapper(gym.Wrapper):
@@ -35,6 +38,7 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
     Blocks are named block0..block{N-1}; N is determined by the observation length.
     """
 
+    GRIPPER_FORCE_HISTORY = 10  # steps of FetchState.gripper_force_history
     OBJECT_TYPES = ["block"]
     OBJECT_FEATURE_DIM = 6  # position (3) + position relative to the gripper (3)
     BASE_OBSERVATION_SIZE = 25
@@ -47,6 +51,7 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
 
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
+        self.gripper_forces = deque(maxlen=self.GRIPPER_FORCE_HISTORY)
         return {"observation": obs["observation"]}, {**info, **self._annotations(obs)}
 
     def step(self, action):
@@ -80,7 +85,11 @@ class FetchEnvStateAnnotationWrapper(gym.Wrapper):
         return total
 
     def _annotations(self, obs: dict) -> dict:
-        state = replace(self.extract_state(obs), gripper_force=self.gripper_force())
+        force = self.gripper_force()
+        if not hasattr(self, "gripper_forces"):
+            self.gripper_forces = deque(maxlen=self.GRIPPER_FORCE_HISTORY)
+        self.gripper_forces.append(float(np.linalg.norm(force)))
+        state = replace(self.extract_state(obs), gripper_force=force, gripper_force_history=tuple(self.gripper_forces))
         return {
             "environment_state": state,
             "objects": {name: "block" for name in state.block_positions},
