@@ -78,6 +78,17 @@ In rough priority order.
    each evaluation episode and report them separately.
 4. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). Write progress to a small
    structured file, which the runner can read instead.
+5. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
+   conditions that `operator_embedding_magnitude_before_normalization/*` settles at O(1–10) with
+   `--composition-weight-decay` (`project_status.md` §2). If it keeps growing, the other remedies are:
+
+   | remedy | how it works | trade-off |
+   | --- | --- | --- |
+   | function-preserving rescaling | LayerNorm ignores the scale of its input, so periodically dividing the composition's last layer by its current output magnitude changes nothing the policy computes and resets the raw magnitude to about 1 | exact, no tuning; only the last layer is reset, and Adam's moment estimates briefly mismatch |
+   | bounded components | `nn.Embedding(..., max_norm=1)` for the type, variable and predicate embeddings, plus spectral norm on every composition layer | raw output bounded by construction; constrains capacity, and spectral norm costs compute every step |
+   | normalize after every stage | LayerNorm/RMSNorm after TYPED, LITERAL, AND, PRE/EFF, OPERATOR | bounds activations, but the weights can still drift; best combined with weight decay |
+   | norm-aware optimizer (LAMB/LARS) | step size proportional to ‖w‖ | treats the symptom; a different optimizer for one module |
+   | penalty on the raw magnitude | a backward hook adds the gradient of λ(‖raw‖ − 1)² | direct, but hacky inside Stable-Baselines3's losses |
 
 ## 4. Features to add
 
