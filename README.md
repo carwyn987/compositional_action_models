@@ -50,6 +50,7 @@ conditions (`--operator-encoder`, `--trainable-operator-embedding`, `--compositi
 | file | contents |
 | --- | --- |
 | `docs/research_focus.md` | the research questions (RQ1–RQ6), their experiments and metrics |
+| `docs/related_work.md` | the closest prior work for each research question, what this project adds, and references |
 | `docs/project_status.md` | what the code does: predicates, skills, success and failure, embeddings, metrics, scripts, and results so far |
 | `docs/next_steps.md` | the backlog: open issues, features, the direction for each research question; start a new session here |
 | `docs/policy_inputs.md` | the policy's observation: state, operator embedding (multi-hot), grounding slots |
