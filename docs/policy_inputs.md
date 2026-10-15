@@ -47,21 +47,92 @@ Example, the stack operator (used again below):
     :effect (and (on ?o ?u) (clear ?o) (gripper-empty) (not (holding ?o)) (not (clear ?u))))
 ```
 
-It sets these positional features, each with its matching name-only feature;
-every other feature is 0:
+For Fetch with `--max-operator-arity 3` the vocabulary has 192 features. It is
+sorted (section, predicate, then positions, the name-only feature first), so
+each section is one block of 48 features in the same order: feature i is at
+index i in add, 48 + i in delete, 96 + i in negated_precondition and 144 + i in
+precondition. Every feature, with stack's value (1 in bold):
 
-| Feature | Meaning |
-|---|---|
-| precondition `holding`(0) | the gripper holds parameter 0 |
-| precondition `clear`(1) | nothing is on parameter 1 |
-| add `on`(0, 1) | parameter 0 ends up on parameter 1 |
-| add `clear`(0) | parameter 0 ends up with nothing on it |
-| add `gripper-empty`() | the gripper ends up empty |
-| delete `holding`(0) | the gripper no longer holds parameter 0 |
-| delete `clear`(1) | parameter 1 is no longer clear |
+| i | Feature | add (i) | delete (48 + i) | negated_precondition (96 + i) | precondition (144 + i) |
+|---|---|---|---|---|---|
+| 0 | `at-back` (name only) | 0 | 0 | 0 | 0 |
+| 1 | `at-back`(0) | 0 | 0 | 0 | 0 |
+| 2 | `at-back`(1) | 0 | 0 | 0 | 0 |
+| 3 | `at-back`(2) | 0 | 0 | 0 | 0 |
+| 4 | `at-front` (name only) | 0 | 0 | 0 | 0 |
+| 5 | `at-front`(0) | 0 | 0 | 0 | 0 |
+| 6 | `at-front`(1) | 0 | 0 | 0 | 0 |
+| 7 | `at-front`(2) | 0 | 0 | 0 | 0 |
+| 8 | `at-left` (name only) | 0 | 0 | 0 | 0 |
+| 9 | `at-left`(0) | 0 | 0 | 0 | 0 |
+| 10 | `at-left`(1) | 0 | 0 | 0 | 0 |
+| 11 | `at-left`(2) | 0 | 0 | 0 | 0 |
+| 12 | `at-right` (name only) | 0 | 0 | 0 | 0 |
+| 13 | `at-right`(0) | 0 | 0 | 0 | 0 |
+| 14 | `at-right`(1) | 0 | 0 | 0 | 0 |
+| 15 | `at-right`(2) | 0 | 0 | 0 | 0 |
+| 16 | `beside` (name only) | 0 | 0 | 0 | 0 |
+| 17 | `beside`(0, 1) | 0 | 0 | 0 | 0 |
+| 18 | `beside`(0, 2) | 0 | 0 | 0 | 0 |
+| 19 | `beside`(1, 0) | 0 | 0 | 0 | 0 |
+| 20 | `beside`(1, 2) | 0 | 0 | 0 | 0 |
+| 21 | `beside`(2, 0) | 0 | 0 | 0 | 0 |
+| 22 | `beside`(2, 1) | 0 | 0 | 0 | 0 |
+| 23 | `clear` (name only) | **1** | **1** | 0 | **1** |
+| 24 | `clear`(0) | **1** | 0 | 0 | 0 |
+| 25 | `clear`(1) | 0 | **1** | 0 | **1** |
+| 26 | `clear`(2) | 0 | 0 | 0 | 0 |
+| 27 | `gripper-empty` (name only) | **1** | 0 | 0 | 0 |
+| 28 | `gripper-empty`() | **1** | 0 | 0 | 0 |
+| 29 | `holding` (name only) | 0 | **1** | 0 | **1** |
+| 30 | `holding`(0) | 0 | **1** | 0 | **1** |
+| 31 | `holding`(1) | 0 | 0 | 0 | 0 |
+| 32 | `holding`(2) | 0 | 0 | 0 | 0 |
+| 33 | `on` (name only) | **1** | 0 | 0 | 0 |
+| 34 | `on`(0, 1) | **1** | 0 | 0 | 0 |
+| 35 | `on`(0, 2) | 0 | 0 | 0 | 0 |
+| 36 | `on`(1, 0) | 0 | 0 | 0 | 0 |
+| 37 | `on`(1, 2) | 0 | 0 | 0 | 0 |
+| 38 | `on`(2, 0) | 0 | 0 | 0 | 0 |
+| 39 | `on`(2, 1) | 0 | 0 | 0 | 0 |
+| 40 | `on-table` (name only) | 0 | 0 | 0 | 0 |
+| 41 | `on-table`(0) | 0 | 0 | 0 | 0 |
+| 42 | `on-table`(1) | 0 | 0 | 0 | 0 |
+| 43 | `on-table`(2) | 0 | 0 | 0 | 0 |
+| 44 | `raised` (name only) | 0 | 0 | 0 | 0 |
+| 45 | `raised`(0) | 0 | 0 | 0 | 0 |
+| 46 | `raised`(1) | 0 | 0 | 0 | 0 |
+| 47 | `raised`(2) | 0 | 0 | 0 | 0 |
 
-The vocabulary, its size and the operators it rejects are in
-`docs/operator_embeddings.md`.
+Each of stack's 7 literals sets its positional feature and its section's
+name-only feature for that predicate: 14 of 192. `PaddedOperatorEncoder` then
+appends 64 zeros, up to `--operator-embedding-dim` (256). The float32 vector in
+`obs["operator_embedding"]`, 16 values per row:
+
+```text
+index      values                              part
+  0-15     0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    add
+ 16-31     0 0 0 0 0 0 0 1  1 0 0 1 1 0 0 0    add
+ 32-47     0 1 1 0 0 0 0 0  0 0 0 0 0 0 0 0    add
+ 48-63     0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    delete
+ 64-79     0 0 0 0 0 0 0 1  0 1 0 0 0 1 1 0    delete
+ 80-95     0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    delete
+ 96-111    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    negated_precondition
+112-127    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    negated_precondition
+128-143    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    negated_precondition
+144-159    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    precondition
+160-175    0 0 0 0 0 0 0 1  0 1 0 0 0 1 1 0    precondition
+176-191    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    precondition
+192-207    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    padding (PaddedOperatorEncoder)
+208-223    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    padding (PaddedOperatorEncoder)
+224-239    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    padding (PaddedOperatorEncoder)
+240-255    0 0 0 0 0 0 0 0  0 0 0 0 0 0 0 0    padding (PaddedOperatorEncoder)
+```
+
+that is, 1 at indices 23, 24, 27, 28, 33, 34, 71, 73, 77, 78, 167, 169, 173, 174 and 0 everywhere else.
+
+How the vocabulary is built, its size for other maximum arities and the
+operators it rejects are in `docs/operator_embeddings.md`.
 
 ## Grounding (dereferenced parameter slots)
 
