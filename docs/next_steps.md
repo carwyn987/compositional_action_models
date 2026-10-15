@@ -150,7 +150,7 @@ In rough priority order.
 **RQ4: can embeddings generate policies (hypernetworks)?**
 - *Built:* nothing yet, apart from the single-skill learnability runs, which are the "individually trained
   policies" baseline.
-- *Next:*
+- *Next:* If I ever ask you to look through here and implement, skip this one for now.
   1. FiLM conditioning: the embedding scales and shifts the state features.
   2. A hypernetwork actor: a custom SB3 SAC actor whose action head weights are generated from the
      embedding, low-rank W(e) = U·diag(h(e))·V.
@@ -162,9 +162,10 @@ In rough priority order.
   - Linear probes from each learned embedding to its literals, with the multi-hot vector as the target.
   - A 2-D PCA plot of embeddings during training (one existed in the original implementation:
     `plot_embeddings.py`, git commit 59054395).
+     - I like this idea, and plotting each literal on the same 2-3 dimensions, so that we can see the relation of e.g. where left, front, back, right, ... lie, as well as things like pickup-putdown vector : stack-unstack vector (which I assume would have similar vector directions, magnitudes)
 
 **RQ6: does behavioural sensitivity reveal unnecessary or incorrect literals?**
-- *Next:*
+- *Next:* If I ever ask you to look through here and implement, skip this one for now.
   - Remove or alter one literal at a time and compare behaviour on fixed probe states.
   - Needs probe-state datasets and action-similarity metrics (action MSE or KL), as in the redesign doc.
 
