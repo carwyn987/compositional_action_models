@@ -7,11 +7,11 @@
     DRY_RUN=1 .venv/bin/python scripts/overnight_runs.py --experiment rq1            # print the plan, run nothing
     SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py --experiment learnability
 
-Experiments (--experiment NAME, default rq3-repair) are defined in src/cam/experiments/definitions.py: learnability
-(each skill alone), rq1 (one shared policy per operator embedding condition) and rq3-repair (rq1's policies
-continued with repaired operators). Each sets the groups to run and every setting below; an environment variable
-of a setting's name overrides it, and the runner lists the overrides when it starts. A plan whose repairs ask for
-a literal that no training skill has refuses to start.
+Experiments (--experiment NAME, default rq3-repair) are defined in src/cam/experiments/research_experiments.py:
+learnability (each skill alone), rq1 (one shared policy per operator embedding condition) and rq3-repair (rq1's
+policies continued with repaired operators). Each sets the groups to run and every setting below; an environment
+variable of a setting's name overrides it, and the runner lists the overrides when it starts. A plan whose repairs
+ask for a literal that no training skill has refuses to start.
 
 How it runs
   * Up to JOBS runs at once (default 2). One run uses a fraction of a GPU or CPU: SAC alternates a
@@ -60,7 +60,7 @@ Outputs, under OUT (default outputs/overnight_<date>)
   summary.csv        per run and skill metrics     review.txt   scripts/review_runs.py's report
 View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 
-Settings: the experiment's (definitions.py describes each), unless set as an environment variable
+Settings: the experiment's (research_experiments.py describes each), unless set as an environment variable
   RUN_GROUPS  SEEDS  ALGORITHM  SKILL_SAMPLING  CONDITIONS  ALIAS_CONDITIONS  TEXT_BACKEND  BASE_SKILLS
   REPAIRS (FROM:TO pairs)  REPAIR_MODES  REPAIR_EVAL_INTERVAL  LEARN_STEPS  RQ1_STEPS (a number, or auto)
   RQ1_BUDGET_MARGIN  REPAIR_STEPS  EVAL_INTERVAL  EVAL_EPISODES  SAVE_INTERVAL
@@ -87,7 +87,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from cam.experiments.definitions import EXPERIMENTS, literals, untrained_literals
+from cam.experiments.research_experiments import EXPERIMENTS, literals, untrained_literals
 from cam.skills.registry import SKILL_REGISTRY
 
 ROOT = Path(__file__).resolve().parent.parent

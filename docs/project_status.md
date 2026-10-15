@@ -143,9 +143,10 @@ disturbing anything else.
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | pre `(not (beside ?o ?u))`, eff `(beside ?o ?u)` | – | push toward ?u | as push |
 
-In the `rq3-repair` experiment (`src/cam/experiments/definitions.py`), `push-left-front` is held out and the
-other three diagonals are trained. Every scripted policy succeeds with 5-step settled success (2 and 3 blocks):
-pick/place skills 10/10, pushes 18–20/20 (with 3 blocks another block can lie on a straight push path).
+In the `rq3-repair` experiment (`src/cam/experiments/research_experiments.py`), `push-left-front` is held out
+and the other three diagonals are trained. Every scripted policy succeeds with 5-step settled success (2 and 3
+blocks): pick/place skills 10/10, pushes 18–20/20 (with 3 blocks another block can lie on a straight push
+path).
 
 ### Operator embedding conditions (`--operator-encoder`, `--operator-embedding-dim 256`)
 - **Identity only:** one-hot (indexed by registry order, so indices don't depend on the training
@@ -189,12 +190,12 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
   runs the unit tests, writes `run_info.txt`, blocks sleep, then runs `overnight_runs.py`.
 - **`scripts/overnight_runs.py`:**
-  - **runs an experiment** (`--experiment NAME`, default `rq3-repair`; `--list` describes each). Experiments are
-    classes in `src/cam/experiments/definitions.py`: the docstring gives the question, design, controls and what
-    to read; the attributes are the runner's settings (groups, skills, repairs, conditions, budgets). An
-    environment variable named as a setting overrides it, and the runner lists the overrides. `learnability`:
-    each registered skill alone; `rq1`: one shared policy per condition on the training skills; `rq3-repair`:
-    rq1's policies continued with repaired operators;
+  - **runs an experiment** (`--experiment NAME`, default `rq3-repair`; `--list` describes each). Experiments
+    are classes in `src/cam/experiments/research_experiments.py`: the docstring gives the question, design,
+    controls and what to read; the attributes are the runner's settings (groups, skills, repairs, conditions,
+    budgets). An environment variable named as a setting overrides it, and the runner lists the overrides.
+    `learnability`: each registered skill alone; `rq1`: one shared policy per condition on the training skills;
+    `rq3-repair`: rq1's policies continued with repaired operators;
   - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
     skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
   - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side

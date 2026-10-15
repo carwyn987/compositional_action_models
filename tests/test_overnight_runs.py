@@ -9,7 +9,7 @@ import sys
 
 import pytest
 
-from cam.experiments.definitions import EXPERIMENTS
+from cam.experiments.research_experiments import EXPERIMENTS
 from cam.skills.registry import SKILL_REGISTRY
 from scripts import overnight_runs
 

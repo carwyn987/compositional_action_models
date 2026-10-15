@@ -1,8 +1,8 @@
-"""cam.experiments.definitions: every repair asks only for literals the training skills have."""
+"""cam.experiments.research_experiments: every repair asks only for literals the training skills have."""
 
 import pytest
 
-from cam.experiments.definitions import EXPERIMENTS, TRAINING_SKILLS, untrained_literals
+from cam.experiments.research_experiments import EXPERIMENTS, TRAINING_SKILLS, untrained_literals
 
 
 @pytest.mark.unit

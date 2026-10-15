@@ -132,15 +132,15 @@ In rough priority order.
 **RQ2: does structure speed up learning a new skill?**
 - *Built:* resuming with added skills, dense-then-sparse evaluation of added skills, and zero-shot points.
 - *Next:* the protocol from `research_focus.md`: add skills one at a time in shuffled orders across seeds,
-  and measure steps to threshold per new skill. Add it as an experiment (`src/cam/experiments/definitions.py`)
-  with its own runner group.
+  and measure steps to threshold per new skill. Add it as an experiment
+  (`src/cam/experiments/research_experiments.py`) with its own runner group.
 
 **RQ3: does structure allow repair (zero-shot or faster)?** The most important experiment to run:
 `./scripts/start_overnight.sh --experiment rq3-repair`.
 - *Built:*
-  - the `rq3-repair` experiment (its docstring in `src/cam/experiments/definitions.py` gives the design,
-    controls and what to read), with three repair pairs: `unstack` → `unstack-raised`, `stack` → `place-beside`,
-    `push-left` → `push-left-front`;
+  - the `rq3-repair` experiment (its docstring in `src/cam/experiments/research_experiments.py` gives the
+    design, controls and what to read), with three repair pairs: `unstack` → `unstack-raised`,
+    `stack` → `place-beside`, `push-left` → `push-left-front`;
   - every literal of each repaired operator is trained in another skill, so a repair asks how much a policy
     learns about a behaviour from a literal in one place of the operator: `pickup-raised` for `(raised ?o)`;
     `stack`, `putdown` and `push-beside` for place-beside; `push-front` and the other diagonals for

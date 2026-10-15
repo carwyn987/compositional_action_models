@@ -35,7 +35,7 @@ The text embedding condition with `--text-backend openai` reads the OpenAI key f
 ./main.py --run-directory outputs/<run>                      # resume a run
 ./scripts/run_skill.py --policy model --run-directory outputs/<run> --skill pickup --render
 
-./scripts/start_overnight.sh --list                          # the experiments (src/cam/experiments/definitions.py)
+./scripts/start_overnight.sh --list                          # the experiments: what each asks, and its settings
 DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq3-repair   # an experiment's plan and its time estimate
 DEVICE=cuda ./scripts/start_overnight.sh --experiment rq3-repair # run it (inside tmux)
 ./scripts/review_runs.py outputs/overnight_<date>            # report: runs, conditions, curves, repairs
