@@ -16,17 +16,22 @@ Give the session the latest overnight results. From the repository on the traini
 ```bash
 OUT=$(ls -d outputs/overnight_*/ | tail -1)
 cat $OUT/run_info.txt                       # the commit and settings the run used
-tail -3 $OUT/overnight.log                  # finished? ("all runs done" or "All done")
 cat $OUT/failed.txt 2>/dev/null             # runs that crashed
-./scripts/review_runs.py $OUT --no-embeddings | sed -n '/^1\./,/^3\./p;/^5\./,/^6\./p'   # runs, conditions, repairs
+./scripts/review_runs.py $OUT --no-embeddings | sed -n '/^1\./,/^3\./p;/^5\./,/^6\./p'   # runs (finished or not), conditions, repairs
 ```
+
+The runner prints `All done` when every run has ended (in its terminal, or in the console log when started
+in the background, see `scripts/start_overnight.sh`).
 
 Then ask it to read this file, `project_status.md` and `research_focus.md`, and to propose what to do next
 using §2 below.
 
-**Check the run's commit first.** Runs started before the frame check, the motion and force penalties and the
-disturbance failure were merged (PR #9, commit `7077802f`) were trained without those constraints. Their
-successes may include exploits such as lifting both blocks, so don't compare them with newer runs.
+**Check the run's commit first** (`run_info.txt`): successes compare only between runs trained under the same
+constraints. Runs from before commit `7077802f` were trained without the frame check, the motion and force
+penalties and the disturbance failure, so their successes may include exploits such as lifting both blocks.
+Runs from before commit `24ff8b41` had an uncapped force penalty and failed on a single step over 500 N, under
+which almost nothing was learned (`project_status.md` §5). `git merge-base --is-ancestor <commit> <run's commit>`
+tells whether a run includes a commit.
 
 ## 1. Working agreements
 
@@ -36,7 +41,10 @@ How changes are made here (keep doing this):
   message, so each commit reviews on its own; the PR description lists the commits. Touch as few files as
   possible and keep additions minimal.
 - **Tests for everything; functional tests for behaviour.** A test of a safeguard includes a control
-  showing that without it the problem happens (otherwise the test may pass for the wrong reason).
+  showing that without it the problem happens (otherwise the test may pass for the wrong reason). Don't rely
+  on long RL runs to find architecture bugs: unit-test each interface with fake inputs, and test the paths
+  through it (operator → embedding → policy → action, joint training on two skills, metrics from synthetic
+  learning curves) with short runs.
 - **Scripted policies are the ground truth for a skill's setup, predicates and reward.** Every skill's
   scripted policy must succeed (see `scripts/run_skill.py`) before anything trains on it.
 - **Code comments and docs describe the code as it is**: no history ("now", "previously", "we changed"),
@@ -52,7 +60,7 @@ How changes are made here (keep doing this):
 
 | what the report shows | likely cause | next step |
 | --- | --- | --- |
-| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Look at its `failure` reasons in the logs and `watch_best_policies.py`. For the pushes, try `--max-steps-per-episode 150` (the gentle scripted diagonal needs ~105–120 steps). If failures dominate, revisit the thresholds (§3.2). |
+| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Look at its `failure` reasons in the logs and `watch_best_policies.py`. For the pushes, try `--max-steps-per-episode 150` (a scripted diagonal push takes about 30–120 steps, mostly 70–100; the default limit is 100). If failures dominate, revisit the thresholds (§3.3). |
 | Many episodes end in **failure** (`disturbed`, `excessive force`, `dropped`) | constraints too strict for exploration, or a real behaviour problem | Watch the policy. Disturbance is 3 cm, force 500 N (penalty above 100 N); relax only if the behaviour is acceptable. |
 | **RQ1** conditions are indistinguishable | one seed, or too small a budget (13 skills in 500k steps is ~40k each) | 3+ seeds, `RQ1_STEPS=1000000`; then add confidence intervals (§4.1). |
 | A **compositional** condition lags | composition scale (watch `operator_embedding_magnitude_before_normalization/*`) or capacity | Tune `--composition-weight-decay`; compare tree / slots / geometric. |
@@ -64,20 +72,40 @@ How changes are made here (keep doing this):
 
 In rough priority order.
 
-1. **Run directory names grow with the skill list.** With the 13 default skills a name is 185 characters,
-   and the filesystem limit is 255. A few more skills, or longer skill names, will break run creation.
+1. **One-hot repair-hidden runs give the other skills the wrong codes.** `OneHotOperatorEncoder` builds its
+   index over the registry with the aliases applied, so an alias (e.g. `unstack-raised=unstack`) removes one
+   index and shifts every later skill in registry order down by one. In a one-hot repair-hidden run, every
+   skill after the repaired one in `SKILL_REGISTRY` (for `unstack-raised`: place-beside and every push) gets
+   another skill's code than in the rq1 run it continues. The repaired skill itself gets the original's code,
+   so its zero-shot result is valid; the other skills' evaluations, their retention and, in retain mode,
+   their training are not. Random vectors are per name and unaffected. Fix: index every registered operator
+   as without aliases and map an aliased name to its original's index, with a test that aliasing leaves
+   every other operator's code unchanged.
+2. **Run directory names grow with the skill list.** With the 13 default skills a name is up to 187
+   characters, and the filesystem limit is 255. A few more skills, or longer skill names, will break run creation.
    Shorten them, e.g. `13skills-<short hash>` once the list is long.
-2. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
+3. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
    `MAX_GRIPPER_FORCE` (500 N), `DROP_HEIGHT` (2 cm) and the motion penalty weights were calibrated on the
    scripted policies. Set the force limits from the real gripper's rating if a real robot is planned. The
    gripper is position-controlled in simulation, so first contact spikes for one step; failure therefore
    needs 5 steps over 500 N, and a single hard impact (e.g. ramming a block) is only penalized. Telling a
    ram from a first contact would need the impact speed, not the force.
-3. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
+4. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.
-4. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). Write progress to a small
+5. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). Write progress to a small
    structured file, which the runner can read instead.
+6. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
+   conditions that `operator_embedding_magnitude_before_normalization/*` settles at O(1–10) with
+   `--composition-weight-decay` (`project_status.md` §2). If it keeps growing, the other remedies are:
+
+   | remedy | how it works | trade-off |
+   | --- | --- | --- |
+   | function-preserving rescaling | LayerNorm ignores the scale of its input, so periodically dividing the composition's last layer by its current output magnitude changes nothing the policy computes and resets the raw magnitude to about 1 | exact, no tuning; only the last layer is reset, and Adam's moment estimates briefly mismatch |
+   | bounded components | `nn.Embedding(..., max_norm=1)` for the type, variable and predicate embeddings, plus spectral norm on every composition layer | raw output bounded by construction; constrains capacity, and spectral norm costs compute every step |
+   | normalize after every stage | LayerNorm/RMSNorm after TYPED, LITERAL, AND, PRE/EFF, OPERATOR | bounds activations, but the weights can still drift; best combined with weight decay |
+   | norm-aware optimizer (LAMB/LARS) | step size proportional to ‖w‖ | treats the symptom; a different optimizer for one module |
+   | penalty on the raw magnitude | a backward hook adds the gradient of λ(‖raw‖ − 1)² | direct, but hacky inside Stable-Baselines3's losses |
 
 ## 4. Features to add
 
@@ -93,11 +121,12 @@ In rough priority order.
    rewards; with shaped rewards the relabeled transitions need their rewards recomputed.
 3. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
    update per step (2–4). Both are cheap on a GPU but change the baseline, so apply them to every condition.
-4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; the diagonal pushes take ~70
-   steps. Try 0.98.
+4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; a scripted diagonal push takes
+   about 30–120 steps. Try 0.98.
 5. **Run specs as files.** Replace the overnight runner's environment variables with spec files
-   (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, budgets), so every
-   experiment is reproducible from one file.
+   (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, seeds, learner,
+   budgets, sampling, evaluation), so every experiment is reproducible from one file. Only the runner reads
+   the file; it builds everything else from it, and lower-level modules take plain arguments.
 6. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
    scripted ones, so training links skills into chains.
 7. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
@@ -119,6 +148,12 @@ In rough priority order.
    return as a fraction of the scripted policy's (dense, but it inherits the shaped rewards' quirks).
    Learning progress is the most defensible; on resume, each skill's recent success can be read from the
    run's `monitor.csv`.
+9. **One episode runner.** A `RolloutRunner` that runs one episode of (skill, policy, environment) and
+   returns a structured result, used by evaluation, `scripts/run_skill.py`, dataset collection and the
+   probes of RQ6. Today `evaluation.evaluate` and `run_skill.py` each run their own episodes.
+10. **More compositional aggregators.** Mean pooling, DeepSets and attention over the literal embeddings,
+    and a graph (message-passing) encoder of the operator, as further compositional conditions alongside
+    tree, slots and geometric.
 
 ## 5. Research direction, per question
 
@@ -127,15 +162,13 @@ In rough priority order.
   geometric), the rq1 group, and per-skill steps to threshold, AUC and final success.
 - *Next:*
   - Fair, adequately sized runs: 3+ seeds and `RQ1_STEPS=1000000`.
-  - A **wrong-embedding control:** evaluate each skill with another skill's embedding. If behaviour doesn't
-    change, the policy identifies skills from the state or the grounding, not the operator. Stack, putdown
-    and place-beside start from the same state, but their groundings differ in how many slots are used,
-    which also identifies the skill.
+  - The **wrong-embedding control** (`research_focus.md`, RQ1): evaluate each skill with another skill's
+    embedding.
 
 **RQ2: does structure speed up learning a new skill?**
 - *Built:* resuming with added skills, dense-then-sparse evaluation of added skills, and zero-shot points.
-- *Next:* the protocol from `research_focus.md`: add skills one at a time in shuffled orders across seeds,
-  and measure steps to threshold per new skill. Add it as a runner group.
+- *Next:* the protocol from `research_focus.md` (RQ2): add skills one at a time in shuffled orders across
+  seeds, and measure zero-shot success and steps to threshold per new skill. Add it as a runner group.
 
 **RQ3: does structure allow repair (zero-shot or faster)?**
 - *Built:*
@@ -144,8 +177,7 @@ In rough priority order.
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
   - transfer gain (§4.1);
-  - more pairs where the repaired literal appears in training in a different skill;
-  - `stack` → `place-beside` changes several literals, so read it as a new-skill test.
+  - more pairs where the repaired literal appears in training in a different skill.
 
 **RQ4: can embeddings generate policies (hypernetworks)?**
 - *Built:* nothing yet, apart from the single-skill learnability runs, which are the "individually trained
@@ -155,32 +187,37 @@ In rough priority order.
   2. A hypernetwork actor: a custom SB3 SAC actor whose action head weights are generated from the
      embedding, low-rank W(e) = U·diag(h(e))·V.
 
-  This introduces the `PolicyProvider` seam from the redesign doc.
+  Both need a `PolicyProvider` interface: operator embedding → executable `Policy`, with the shared
+  (input-conditioned), FiLM-conditioned and generated policies behind the same outer interface, as are saved
+  and scripted policies. Today the only provider is the Stable-Baselines3 MLP over
+  `[grounding, observation, operator embedding]`.
 
 **RQ5: do learned embeddings encode operator structure?**
 - *Next:*
   - Linear probes from each learned embedding to its literals, with the multi-hot vector as the target.
-  - A 2-D PCA plot of embeddings during training (one existed in the original implementation:
-    `plot_embeddings.py`, git commit 59054395).
+  - A 2-D PCA plot of embeddings during training (the original implementation had one:
+    `deprecated/plot_embeddings.py` at commit 59054395).
 
 **RQ6: does behavioural sensitivity reveal unnecessary or incorrect literals?**
 - *Next:*
   - Remove or alter one literal at a time and compare behaviour on fixed probe states.
-  - Needs probe-state datasets and action-similarity metrics (action MSE or KL), as in the redesign doc.
+  - Needs fixed probe-state datasets, so that different policies are compared on identical states, and
+    policy-similarity metrics (action MSE or KL, optionally distances between parameters). RQ4 uses the
+    same metrics to compare generated and trained policies.
 
 **Further out:**
-- **Rotation skills.** These need wrist yaw control (a 5-D action variant of the environment) and global
-  yaw predicates, e.g. `yaw-0` / `yaw-45` / `yaw-90`. Test generalization on an in-between angle or a chain.
+- **Rotation skills.** These need wrist yaw control (a 5-D action variant of the environment; prototyped in
+  `scripts/experimental/rectangle_grasp.py`) and global yaw predicates, e.g. `yaw-0` / `yaw-45` / `yaw-90`.
+  Test generalization on an in-between angle or a chain.
 - **A drop skill** as a control: it's structurally identical to putdown but needs different behaviour, so
   structure-based embeddings *should* fail on it.
-- **Ideas from the original implementation** (git commit 59054395): behaviour-cloning warm starts, keyboard
-  teleoperation with live facts, and a push-rotation penalty.
+- **Ideas from the original implementation** (`deprecated/` at commit 59054395): behaviour-cloning warm
+  starts, keyboard teleoperation with live facts, and a push-rotation penalty.
 
 ## 6. Suggested order
 
 1. **Read the current overnight run** with §2.
-2. **Before the next overnight run:** add transfer gain and confidence intervals (§4.1), and shorten run
-   names (§3.1). Then run learnability, then RQ1 + repair with
-   3 seeds.
+2. **Before the next overnight run:** fix the one-hot aliases (§3.1), add transfer gain and confidence
+   intervals (§4.1), and shorten run names (§3.2). Then run learnability, then RQ1 + repair with 3 seeds.
 3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
    RQ2's protocol, or RQ4 starting with FiLM.
