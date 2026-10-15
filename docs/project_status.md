@@ -109,17 +109,22 @@ true: lifting both blocks is not an unstack.
 
 **Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
 over success. It is the same for every skill (`check_fetch_failure`): an **extreme force** on the gripper (net
-contact force above `MAX_GRIPPER_FORCE`, 500 N), the moved block (first argument) was **dropped** (let go
+contact force above `MAX_GRIPPER_FORCE`, 500 N, for `FORCE_FAILURE_STEPS`, 5, steps in a row: pressing on a
+block or the table), the moved block (first argument) was **dropped** (let go
 more than `DROP_HEIGHT`, 2 cm, above its support), or another block was **disturbed** (moved more than
 `DISTURB_DISTANCE`, 3 cm, from where it started: knocked or pushed aside).
 
 **Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`): action changes
 (smoothness), the moved block's acceleration, any movement of the other blocks, and the **gripper force**
-above `SAFE_GRIPPER_FORCE` (100 N). The gripper force is the net contact force on the gripper and fingers,
-read from MuJoCo (`FetchState.gripper_force`): a grasp's squeeze cancels out, so it measures pressing on a
-block or the table, pushing, ramming, and a carried block's weight (~20 N). Lifting and placing peak around
-55 N, steady pushing around 65 N, a full-speed ram around 650 N. This matters for moving to real robots,
-whose grippers such forces would damage. Grasping skills therefore
+above `SAFE_GRIPPER_FORCE` (100 N), counted up to 500 N: at most 2 per step, so pressing until it fails
+costs at most twice the failure, and a shorter bump less than one. The gripper force is the net contact force
+on the gripper and fingers, read from MuJoCo (`FetchState.gripper_force`, with the last 10 steps' magnitudes
+in `gripper_force_history`): a grasp's squeeze cancels out, so it measures pressing on a block or the table,
+pushing, ramming, and a carried block's weight (~20 N). Lifting and placing peak around 55 N, steady pushing
+around 65 N; pressing into the table stays around 55 kN. First contact spikes for a single step (ramming a
+block with closed fingers: ~900 N once; random exploration: up to ~38 kN on about 1% of steps), and random
+exploration bumps the table for a few steps at a time, which is why the penalty is capped and failure needs 5
+steps. This matters for moving to real robots, whose grippers such forces would damage. Grasping skills therefore
 succeed only once the block is lifted and held, and placing skills only once it is released, gently, without
 disturbing anything else.
 
@@ -242,6 +247,15 @@ normalization.
   unstack in 25 steps, unstack-raised in 26. A policy that keeps lifting satisfies it for free, and
   pickup-raised teaches it to keep lifting. Repair runs also evaluated only every 50k steps, so
   steps-to-threshold could not separate conditions.
+
+### Overnight 2026-10-13 (mtsac, competence sampling, 12 skills, one seed, 500k steps)
+- **Nothing learned except putdown** (0.85 alone); every RQ1 condition stayed at 0 on every skill.
+- **Cause: the force penalty and failure.** The penalty was linear in the net contact force, and contact in
+  the simulation spikes for single steps (up to ~38 kN): a random-action pickup episode cost about −195 in
+  force penalty, against +31 for the scripted success and about 0 for doing nothing, and a single step over
+  500 N ended 7 of 10 random episodes. Policies learned to stay out of contact.
+- **Change:** the penalty is capped (2 per step) and failure needs 5 steps over 500 N. Random pickup episodes
+  then cost about −10 in force penalty and 2 of 10 fail on force; the scripted policies are unchanged.
 
 ## 4. Changes made after the 2026-10-10 run
 Each addresses something that run showed:

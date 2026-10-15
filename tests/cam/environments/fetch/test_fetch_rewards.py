@@ -170,17 +170,90 @@ def test_motion_reward_penalizes_action_changes_block_acceleration_and_other_blo
     assert slam["smoothness"] < 0 and slam["acceleration"] < 0 and slam["disturbance"] < 0
 
 
+def force_info(force, earlier=()):
+    """A step's info whose net gripper force is force N, pointing down, after the earlier steps' magnitudes."""
+    state = FetchState(np.zeros(3), 0.05, {"block0": np.array([1.3, 0.7, 0.425])},
+                       gripper_force=np.array([0.0, 0.0, force]), gripper_force_history=(*earlier, force))
+    return {"environment_state": state, "facts": frozenset()}
+
+
 @pytest.mark.unit
-def test_heavy_gripper_force_is_penalized_and_extreme_force_fails():
-    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import check_fetch_failure
-
-    def info(force):
-        state = FetchState(np.zeros(3), 0.05, {"block0": np.array([1.3, 0.7, 0.425])}, gripper_force=np.array(force))
-        return {"environment_state": state, "facts": frozenset()}
-
+def test_gripper_force_is_penalized_up_to_the_failure_limit():
+    """Holding a block (20 N) costs nothing; 300 N costs 1. A one-step contact spike of 38 kN (seen while exploring)
+    costs at most 2, where the uncapped penalty (the control) would cost 190, far more than success earns (15).
+    At most 2 per step, a press that lasts until it fails (5 steps) costs at most twice the failure itself."""
     reward = FetchMotionReward()
     reward.reset(PICKUP_BLOCK0, {})
-    assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 20.0]), False)[1]["force"] == 0  # holding a block
-    assert reward(PICKUP_BLOCK0, np.zeros(4), info([0.0, 0.0, 300.0]), False)[1]["force"] == pytest.approx(-2.0)
-    assert check_fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 300.0])) is None
-    assert check_fetch_failure(PICKUP_BLOCK0, info([0.0, 0.0, 0.0]), info([0.0, 0.0, 600.0])).startswith("excessive force")
+    assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(20.0), False)[1]["force"] == 0
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FORCE_FAILURE_STEPS
+    from cam.environments.fetch.fetch_rewards import FAILURE_PENALTY
+
+    assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(300.0), False)[1]["force"] == pytest.approx(-1.0)
+    spike = reward(PICKUP_BLOCK0, np.zeros(4), force_info(38_000.0), False)[1]["force"]
+    assert spike == pytest.approx(-2.0) == -FAILURE_PENALTY / FORCE_FAILURE_STEPS
+    assert reward.config.force_penalty * (38_000.0 - 100.0) == pytest.approx(189.5)
+
+
+@pytest.mark.unit
+def test_extreme_gripper_force_fails_only_when_it_lasts_five_steps():
+    """Over 500 N for one step (a first-contact spike) or four (a bump) is not a failure; for five steps in a row
+    (pressing) it is. Moderate force (300 N) never fails, however long."""
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FORCE_FAILURE_STEPS, check_fetch_failure
+
+    start = force_info(0.0)
+    assert FORCE_FAILURE_STEPS == 5
+    assert check_fetch_failure(PICKUP_BLOCK0, start, force_info(300.0, earlier=[300.0] * 9)) is None
+    assert check_fetch_failure(PICKUP_BLOCK0, start, force_info(38_000.0, earlier=[0.0] * 4)) is None
+    assert check_fetch_failure(PICKUP_BLOCK0, start, force_info(600.0, earlier=[0.0, 700, 700, 700])) is None
+    pressing = check_fetch_failure(PICKUP_BLOCK0, start, force_info(600.0, earlier=[0.0, 700, 700, 700, 700]))
+    assert pressing.startswith("excessive force")
+
+
+def pickup_environment():
+    from main import parse_args
+    from cam.experiments.environment_setup import setup_environment
+    from cam.skills.registry import build_skill
+
+    config = parse_args(["--skills", "pickup", "--num-blocks", "2", "--reward", "shaped", "--seed", "0"])
+    return setup_environment(config, [build_skill("pickup", config)])
+
+
+@pytest.mark.integration
+def test_random_exploration_mostly_survives_its_table_bumps():
+    """Random actions (how SAC starts exploring) bump the table: over 500 N for a few steps at a time. Recorded over
+    20 random pickup episodes, failing on a single step over 500 N (the control) would end most of them; failing
+    only after 5 steps in a row ends few."""
+    env = pickup_environment()
+    env.env.env.check_failure = None  # record every episode to its end
+    rng = np.random.default_rng(7)
+    longest = []
+    try:
+        for episode in range(20):
+            env.reset(seed=200 + episode)
+            run = best = 0
+            done = truncated = False
+            while not (done or truncated):
+                _, _, done, truncated, info = env.step(rng.uniform(-1, 1, 4))
+                run = run + 1 if info["environment_state"].gripper_force_history[-1] > 500 else 0
+                best = max(best, run)
+            longest.append(best)
+    finally:
+        env.close()
+    assert np.mean(np.array(longest) >= 1) >= 0.4
+    assert np.mean(np.array(longest) >= 5) <= 0.25
+
+
+@pytest.mark.integration
+def test_pressing_into_the_table_still_fails():
+    """Driving the gripper down into the table keeps the force far above 500 N (~55 kN) on every step: the episode
+    fails on excessive force, within a few steps of first contact."""
+    env = pickup_environment()
+    try:
+        env.reset(seed=3)
+        for step in range(40):
+            _, _, done, _, info = env.step(np.array([0.0, 0.0, -1.0, 1.0]))
+            if done:
+                break
+    finally:
+        env.close()
+    assert done and info["failure"].startswith("excessive force") and step < 15
