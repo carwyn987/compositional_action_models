@@ -198,6 +198,8 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
   - **`RQ1_STEPS=auto`:** each rq1 run's budget is 1.5 × the sum of the steps each skill needed alone to
     reach the threshold in its learnability run (a skill that never did counts as `LEARN_STEPS`), so every
     skill gets at least what it needs alone; the rq1 runs wait for the learnability runs;
+  - **order:** runs start in plan order, the most informative first: every learnability run, then every rq1
+    run, then the repairs;
   - **replay buffers:** rq1 runs save theirs (about 1 GB each), and each repair starts from it (hard-linked,
     not copied, and not saved again), so the skills it was trained on keep being replayed. A run resumed
     without a buffer acts without updating for its first 5k steps (`RESUME_WARMUP_STEPS`), instead of training

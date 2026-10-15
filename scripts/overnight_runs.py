@@ -10,6 +10,8 @@ How it runs
   * Up to JOBS runs at once (default 2). One run uses a fraction of a GPU or CPU: SAC alternates a
     simulator step (CPU) with one small gradient step, so several runs side by side get through the plan
     several times faster. JOBS=1 runs one at a time.
+  * Runs start in plan order, most informative first: every learnability run (can each skill be learned at
+    all?), then every rq1 run (each condition and seed), then the repairs.
   * Each run is a child process (main.py) whose full output goes to <OUT>/logs/<label>.log. The terminal
     shows, as each run starts, what it trains and why (which research question or check it serves);
     while runs go, their progress (steps, steps/s, time left) and the overall time left; when one ends,
@@ -255,6 +257,7 @@ def link_replay_buffer(source: str, destination: str) -> str:
 
 def build_plan() -> list[Run]:
     runs: list[Run] = []
+    repairs: list[Run] = []  # after every rq1 run, so each condition's rq1 result comes before any repair
     skill_list = ", ".join(BASE_SKILLS)
     if "learnability" in RUN_GROUPS:
         for skill in dict.fromkeys(BASE_SKILLS + REPAIRED):
@@ -303,7 +306,7 @@ def build_plan() -> list[Run]:
                 for variant in variants:
                     run_directory = OUT / "repair" / repair_to / f"{condition}_{variant}_{mode}_seed{seed}"
                     hidden = variant == "repair-hidden"
-                    runs.append(Run(
+                    repairs.append(Run(
                         label=f"repair_{repair_to}_{condition}_{variant}_{mode}_seed{seed}", group="repair",
                         title=(f"Repair (RQ3) · {repair_from} -> {repair_to} · {condition} · {variant} · {mode} · "
                                f"seed {seed}"),
@@ -323,7 +326,7 @@ def build_plan() -> list[Run]:
                                  "--device", DEVICE, "--no-save-replay-buffer",  # the rq1 run's, linked
                                  *(["--operator-identity-aliases", f"{repair_to}={repair_from}"] if hidden else [])],
                     ))
-    return runs
+    return runs + repairs
 
 
 def duration(seconds: float) -> str:

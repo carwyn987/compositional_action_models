@@ -57,3 +57,16 @@ def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
     expected = overnight_runs.rq1_budget({"pickup": 100_000, "putdown": 50_000}, overnight_runs.RQ1_BUDGET_MARGIN,
                                          overnight_runs.LEARN_STEPS, overnight_runs.EVAL_INTERVAL)
     assert [(run.steps, run.command[-1]) for run in runs] == [(expected, str(expected))] * 2
+
+
+@pytest.mark.unit
+def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypatch):
+    """Runs start in plan order, so the most informative come first: whether each skill can be learned, then every
+    condition's rq1 result, then the repairs (which wait for their rq1 run anyway)."""
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("CONDITIONS", ["one-hot", "text"]),
+                        ("SEEDS", [0]), ("BASE_SKILLS", ["pickup", "putdown", "stack"]),
+                        ("REPAIRS", [("stack", "place-beside")]), ("REPAIRED", ["place-beside"]),
+                        ("REPAIR_MODES", ["isolated"]), ("RQ1_AUTO", False)):
+        monkeypatch.setattr(overnight_runs, name, value)
+    groups = [run.group for run in overnight_runs.build_plan()]
+    assert groups == ["learnability"] * 4 + ["rq1"] * 2 + ["repair"] * 3  # one-hot: visible and hidden; text: visible
