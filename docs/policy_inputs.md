@@ -26,6 +26,40 @@ into a 256-value embedding. `PolicyObservationWrapper` encodes each distinct
 lifted operator it sees, so a repaired operator (a new, different object) gets
 its own encoding.
 
+The default `--operator-encoder`, multi-hot (`PDDLMultiHotOperatorEncoder`),
+gives each operator a vector over a fixed vocabulary of literal features, with
+1 where it has the feature and 0 where it does not. A feature is a literal of
+one section (`precondition`, `negated_precondition`, `add`, `delete`),
+described two ways:
+
+- **positional**: `(section, predicate, parameter positions)`, e.g.
+  `("add", "on", (0, 1))` = "the object in parameter 0 ends up on the object in
+  parameter 1". Variable names (`?o`, `?b`) are irrelevant; positions are canonical.
+- **name only**: `(section, predicate)`, e.g. `("add", "on")`. Shared by more
+  operators, so a held-out operator still activates features seen in training.
+
+Example over pickup and putdown, showing only the features they set
+(positional features shown; each also sets the matching name-only feature):
+
+| Feature | pickup `(?o)` | putdown `(?o)` |
+|---|---|---|
+| precondition `on-table`(0) | 1 | 0 |
+| precondition `clear`(0) | 1 | 0 |
+| precondition `gripper-empty`() | 1 | 0 |
+| precondition `holding`(0) | 0 | 1 |
+| add `holding`(0) | 1 | 0 |
+| add `on-table`(0) | 0 | 1 |
+| add `clear`(0) | 0 | 1 |
+| add `gripper-empty`() | 0 | 1 |
+| delete `on-table`(0) | 1 | 0 |
+| delete `clear`(0) | 1 | 0 |
+| delete `gripper-empty`() | 1 | 0 |
+| delete `holding`(0) | 0 | 1 |
+| delete `raised`(0) | 1 | 0 |
+
+The vocabulary, its size and the operators it rejects are in
+`docs/operator_embeddings.md`.
+
 ## Grounding (dereferenced parameter slots)
 
 The grounding maps each parameter, in order, to the object bound to it, e.g.
@@ -76,8 +110,7 @@ operator's `:parameters` list, and each encoder follows it on its own:
   (`GroundedSymbolicActionModel.arguments`), and the grounding encoder writes
   the object bound to parameter i into slot i.
 
-Example: `stack(block2, block0)` with the multi-hot encoder (its positional and
-name-only features are in `docs/operator_embeddings.md`), three blocks,
+Example: `stack(block2, block0)` with the multi-hot encoder, three blocks,
 `max_arity = 3`, `max_objects = 3`.
 
 ```lisp
