@@ -20,6 +20,9 @@ Fetch simulator (`FetchMultiBlock-v0`, 1–5 blocks), wrapped from the inside ou
 Design rules the code keeps:
 - `cam.domain` (symbols, action models, the PDDL parser and writer) imports neither Gymnasium, NumPy nor
   torch.
+- Action models sit behind `SymbolicActionModel` / `GroundedSymbolicActionModel` and the loader's format
+  table (`--symbolic-action-model-format`, PDDL only), so another action-model format plugs in without
+  changing skills or environments.
 - Small interfaces with swappable implementations: `SymbolicActionModel`, `OperatorEncoder`, `Policy`,
   `RewardFunction`.
 - Facts are closed-world and use the action models' predicate names and arities. They follow the PDDL

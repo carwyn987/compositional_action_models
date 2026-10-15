@@ -41,7 +41,10 @@ How changes are made here (keep doing this):
   message, so each commit reviews on its own; the PR description lists the commits. Touch as few files as
   possible and keep additions minimal.
 - **Tests for everything; functional tests for behaviour.** A test of a safeguard includes a control
-  showing that without it the problem happens (otherwise the test may pass for the wrong reason).
+  showing that without it the problem happens (otherwise the test may pass for the wrong reason). Don't rely
+  on long RL runs to find architecture bugs: unit-test each interface with fake inputs, and test the paths
+  through it (operator → embedding → policy → action, joint training on two skills, metrics from synthetic
+  learning curves) with short runs.
 - **Scripted policies are the ground truth for a skill's setup, predicates and reward.** Every skill's
   scripted policy must succeed (see `scripts/run_skill.py`) before anything trains on it.
 - **Code comments and docs describe the code as it is**: no history ("now", "previously", "we changed"),
@@ -121,8 +124,9 @@ In rough priority order.
 4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; a scripted diagonal push takes
    about 30–120 steps. Try 0.98.
 5. **Run specs as files.** Replace the overnight runner's environment variables with spec files
-   (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, budgets), so every
-   experiment is reproducible from one file.
+   (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, seeds, learner,
+   budgets, sampling, evaluation), so every experiment is reproducible from one file. Only the runner reads
+   the file; it builds everything else from it, and lower-level modules take plain arguments.
 6. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
    scripted ones, so training links skills into chains.
 7. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
@@ -144,6 +148,12 @@ In rough priority order.
    return as a fraction of the scripted policy's (dense, but it inherits the shaped rewards' quirks).
    Learning progress is the most defensible; on resume, each skill's recent success can be read from the
    run's `monitor.csv`.
+9. **One episode runner.** A `RolloutRunner` that runs one episode of (skill, policy, environment) and
+   returns a structured result, used by evaluation, `scripts/run_skill.py`, dataset collection and the
+   probes of RQ6. Today `evaluation.evaluate` and `run_skill.py` each run their own episodes.
+10. **More compositional aggregators.** Mean pooling, DeepSets and attention over the literal embeddings,
+    and a graph (message-passing) encoder of the operator, as further compositional conditions alongside
+    tree, slots and geometric.
 
 ## 5. Research direction, per question
 
@@ -167,8 +177,7 @@ In rough priority order.
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
   - transfer gain (§4.1);
-  - more pairs where the repaired literal appears in training in a different skill;
-  - `stack` → `place-beside` changes several literals, so read it as a new-skill test.
+  - more pairs where the repaired literal appears in training in a different skill.
 
 **RQ4: can embeddings generate policies (hypernetworks)?**
 - *Built:* nothing yet, apart from the single-skill learnability runs, which are the "individually trained
@@ -178,7 +187,10 @@ In rough priority order.
   2. A hypernetwork actor: a custom SB3 SAC actor whose action head weights are generated from the
      embedding, low-rank W(e) = U·diag(h(e))·V.
 
-  This introduces the `PolicyProvider` seam from the redesign doc.
+  Both need a `PolicyProvider` interface: operator embedding → executable `Policy`, with the shared
+  (input-conditioned), FiLM-conditioned and generated policies behind the same outer interface, as are saved
+  and scripted policies. Today the only provider is the Stable-Baselines3 MLP over
+  `[grounding, observation, operator embedding]`.
 
 **RQ5: do learned embeddings encode operator structure?**
 - *Next:*
@@ -189,7 +201,9 @@ In rough priority order.
 **RQ6: does behavioural sensitivity reveal unnecessary or incorrect literals?**
 - *Next:*
   - Remove or alter one literal at a time and compare behaviour on fixed probe states.
-  - Needs probe-state datasets and action-similarity metrics (action MSE or KL), as in the redesign doc.
+  - Needs fixed probe-state datasets, so that different policies are compared on identical states, and
+    policy-similarity metrics (action MSE or KL, optionally distances between parameters). RQ4 uses the
+    same metrics to compare generated and trained policies.
 
 **Further out:**
 - **Rotation skills.** These need wrist yaw control (a 5-D action variant of the environment; prototyped in
@@ -197,8 +211,8 @@ In rough priority order.
   Test generalization on an in-between angle or a chain.
 - **A drop skill** as a control: it's structurally identical to putdown but needs different behaviour, so
   structure-based embeddings *should* fail on it.
-- **Ideas from the original implementation** (`deprecated/` at commit 59054395): behaviour-cloning warm starts, keyboard
-  teleoperation with live facts, and a push-rotation penalty.
+- **Ideas from the original implementation** (`deprecated/` at commit 59054395): behaviour-cloning warm
+  starts, keyboard teleoperation with live facts, and a push-rotation penalty.
 
 ## 6. Suggested order
 

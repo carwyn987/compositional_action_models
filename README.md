@@ -55,4 +55,3 @@ conditions (`--operator-encoder`, `--trainable-operator-embedding`, `--compositi
 | `docs/policy_inputs.md` | the policy's observation: state, operator embedding (multi-hot), grounding slots |
 | `docs/operator_embeddings.md` | every operator embedding condition, with worked examples |
 | `docs/component_diagrams.md` | component map, one training episode, class diagram (`.html` renders them in a browser) |
-| `docs/repository_redesign_overview.md` | the target architecture, and what of it is built |
