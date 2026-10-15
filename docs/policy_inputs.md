@@ -98,9 +98,11 @@ Add `gripper-empty`() mentions no parameter. The operator embedding sets these
 grounding is
 
 ```text
-slot 0  [ 1 | 1 | 0, 0, 1 | block2's position, block2's position relative to the gripper ]
-slot 1  [ 1 | 1 | 1, 0, 0 | block0's position, block0's position relative to the gripper ]
-slot 2  [ 0 | 0 | 0, 0, 0 | 0, 0, 0, 0, 0, 0 ]
+          used   type one-hot   object index one-hot       object features
+                 (block)        (block0, block1, block2)   (position, position relative to the gripper)
+slot 0  [ 1    | 1            | 0, 0, 1                  | block2's position, block2's position relative to the gripper ]
+slot 1  [ 1    | 1            | 1, 0, 0                  | block0's position, block0's position relative to the gripper ]
+slot 2  [ 0    | 0            | 0, 0, 0                  | 0, 0, 0, 0, 0, 0 ]
 ```
 
 Read together: hold the block in slot 0, and end with it on the block in slot 1.
