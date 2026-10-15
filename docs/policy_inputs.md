@@ -13,7 +13,8 @@ dictionary of three fixed-size vectors:
 The operator embedding says *what kind* of action this is (pickup vs putdown);
 the grounding says *which objects* it applies to (block2 vs block0). The two are
 linked by **parameter position**: parameter 0 in the operator embedding is
-grounding slot 0, parameter 1 is slot 1, and so on.
+grounding slot 0, parameter 1 is slot 1, and so on (worked example in
+[How the operator embedding and the grounding line up](#how-the-operator-embedding-and-the-grounding-line-up)).
 
 ## Operator embedding (positional multi-hot)
 
@@ -115,6 +116,101 @@ Example with three blocks, `pickup(block2)`, `max_arity = 1`, `max_objects = 3`:
 Only parameters get slots. The gripper is not a parameter of any current
 operator; its state is in `observation`. An operator with an arm parameter
 would give the arm a slot like any other object.
+
+## How the operator embedding and the grounding line up
+
+Neither vector contains the other. The operator embedding is computed from the
+lifted operator alone, once per operator, so `stack(block2, block0)` and
+`stack(block1, block2)` get the same operator embedding; the grounding holds
+objects and no predicates. The two share one convention, the order of the
+operator's `:parameters` list, and each encoder follows it on its own:
+
+- the operator encoder writes each variable as its position in that list
+  (`?o` → 0, `?u` → 1);
+- the grounded operator lists its objects in the same order
+  (`GroundedSymbolicActionModel.arguments`), and the grounding encoder writes
+  the object bound to parameter i into slot i.
+
+Example: `stack(block2, block0)` with three blocks, `max_arity = 3`,
+`max_objects = 3`.
+
+```lisp
+(:action stack
+    :parameters (?o - block ?u - block)
+    :precondition (and (holding ?o) (clear ?u))
+    :effect (and (on ?o ?u) (clear ?o) (gripper-empty) (not (holding ?o)) (not (clear ?u))))
+```
+
+| Position | Variable | Positional features that mention it | Grounding slot |
+|---|---|---|---|
+| 0 | `?o` | precondition `holding`(0), add `on`(0, 1), add `clear`(0), delete `holding`(0) | slot 0: block2 |
+| 1 | `?u` | precondition `clear`(1), add `on`(0, 1), delete `clear`(1) | slot 1: block0 |
+| 2 | none | none | slot 2: empty |
+
+Add `gripper-empty`() mentions no parameter. The operator embedding sets these
+7 positional features and their 7 name-only features (14 of 192), and the
+grounding is
+
+```text
+slot 0  [ 1 | 1 | 0, 0, 1 | block2's position, block2's position relative to the gripper ]
+slot 1  [ 1 | 1 | 1, 0, 0 | block0's position, block0's position relative to the gripper ]
+slot 2  [ 0 | 0 | 0, 0, 0 | 0, 0, 0, 0, 0, 0 ]
+```
+
+Read together: hold the block in slot 0, and end with it on the block in slot 1.
+
+Nothing joins the two explicitly. The policy's input is the concatenation
+`[ grounding | observation | operator embedding ]` (observation keys in sorted
+order, for every features extractor), and its fully connected network has to
+learn the link from reward: when add `on`(0, 1) is set, the target is slot 1's
+position. Where an entry sits in that input does not matter to such a network;
+reordering the inputs only reorders the first layer's weights.
+
+- Roles keep their slot across operators that list parameters in the same
+  order: in `stack` and `place-beside`, parameter 0 is the block being placed
+  and parameter 1 the block it is placed relative to.
+- Reordering an operator's parameters (`:parameters (?u - block ?o - block)`)
+  changes both vectors consistently (add `on`(1, 0); block2 moves to slot 1):
+  the same action, but a different input.
+- Only the multi-hot and compositional encoders refer to parameter positions.
+  One-hot and random describe no parameters, so the network learns each
+  operator's slot roles separately; the text encoder sees variable names (`?o`),
+  related to slots only by their order in the text.
+
+## How the input grows
+
+With P predicates of arity at most K, maximum operator arity n, T types, M
+objects and F object features:
+
+| Part | Size | Fetch (P = 11, K = 2, T = 1, M = 5, F = 6) |
+|---|---|---|
+| multi-hot operator embedding | 4 × sum over predicates of (1 + n! / (n - k)!), k the predicate's arity; ≤ 4P(1 + n^K) | 8n² + 24n + 48: 80, 128, 192, 272, 368 for n = 1 to 5 |
+| grounding | n(1 + T + M + F) | 13n: 39 for n = 3 |
+| observation | linear in the number of objects | gripper, fingers, every block |
+
+- Nothing grows with the number of operators or skills, and nothing is
+  exponential in what changes in practice. The multi-hot is one entry per
+  (section, predicate, parameter tuple), so it is polynomial in n of degree K,
+  and exponential only in predicate arity, which stays small. At n = 5 it
+  exceeds the default `--operator-embedding-dim` of 256.
+- It is readable (every entry has a name) but not compressed: stack sets 14 of
+  192 entries, the name-only features repeat the positional ones (kept so a
+  held-out operator shares features with training operators), and most entries
+  are never set. An entry that is always 0 costs a fully connected network only
+  its weights.
+- The compositional encoder (`docs/operator_embeddings.md`) does not grow
+  combinatorially: its structure array holds each literal as ids, linear in its
+  maxima, and the learned embedding has the fixed size
+  `--operator-embedding-dim`. A vector-symbolic encoding (e.g. holographic
+  reduced representations, Plate 1995) would too, without learning: fixed
+  random vectors per section, predicate, argument and parameter position, bound
+  by elementwise multiplication and summed over literals. Its size is fixed for
+  any n, K or P; more literals add interference, not entries. Not implemented.
+- None of these makes the link to the grounding explicit. A per-parameter
+  encoding would: one token per parameter, its operator features (section,
+  predicate, argument index: 4 × sum of predicate arities, independent of n)
+  joined with its grounding slot, read by a network shared across parameters
+  with attention between them. Not implemented.
 
 ## Requirements on the environment
 
