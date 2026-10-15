@@ -143,9 +143,10 @@ disturbing anything else.
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | pre `(not (beside ?o ?u))`, eff `(beside ?o ?u)` | – | push toward ?u | as push |
 
-In the default overnight plan (`scripts/overnight_runs.py`), `push-left-front` is held out and the other
-three diagonals are trained. Every scripted policy succeeds with 5-step settled success (2 and 3 blocks):
-pick/place skills 10/10, pushes 18–20/20 (with 3 blocks another block can lie on a straight push path).
+In the `rq3-repair` experiment (`src/cam/experiments/research_experiments.py`), `push-left-front` is held out
+and the other three diagonals are trained. Every scripted policy succeeds with 5-step settled success (2 and 3
+blocks): pick/place skills 10/10, pushes 18–20/20 (with 3 blocks another block can lie on a straight push
+path).
 
 ### Operator embedding conditions (`--operator-encoder`, `--operator-embedding-dim 256`)
 - **Identity only:** one-hot (indexed by registry order, so indices don't depend on the training
@@ -189,6 +190,14 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
   runs the unit tests, writes `run_info.txt`, blocks sleep, then runs `overnight_runs.py`.
 - **`scripts/overnight_runs.py`:**
+  - **runs an experiment** (`--experiment NAME`, default `rq3-repair`; `--list` describes each). Experiments
+    are classes in `src/cam/experiments/research_experiments.py`: the docstring gives the question, design,
+    controls and what to read; the attributes are the runner's settings (groups, skills, repairs, conditions,
+    budgets). An environment variable named as a setting overrides it, and the runner lists the overrides.
+    `learnability`: each registered skill alone; `rq1`: one shared policy per condition on the training skills;
+    `rq3-repair`: rq1's policies continued with repaired operators;
+  - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
+    skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
   - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
     by side get through the plan several times faster;
   - announces each run (what it trains, why), reports progress every minute and each outcome; training
@@ -286,11 +295,11 @@ project's single backlog.
 
 ## 6. How to run
 ```bash
-./scripts/start_overnight.sh                       # plan, checks, then 2 runs at a time, each explained
-DEVICE=cuda ./scripts/start_overnight.sh           # on a GPU
-DRY_RUN=1 ./scripts/start_overnight.sh             # the plan and its time estimate only
-RUN_GROUPS=learnability JOBS=6 ./scripts/start_overnight.sh
-CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh
+./scripts/start_overnight.sh --list                # the experiments: what each asks, and its settings
+./scripts/start_overnight.sh --experiment rq3-repair   # checks, then 2 runs at a time, each explained
+DEVICE=cuda JOBS=3 ./scripts/start_overnight.sh --experiment rq3-repair   # on a GPU, 3 at a time
+DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq1   # the plan and its time estimate only
+SEEDS="0 1 2" CONDITIONS="one-hot compositional-tree" ./scripts/start_overnight.sh --experiment rq1
 ./scripts/review_runs.py outputs/overnight_<date>  # the report, at any time
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
 ./scripts/watch_best_policies.py                   # the best trained policy for each skill, rendered
