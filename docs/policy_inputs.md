@@ -15,70 +15,15 @@ the grounding says *which objects* it applies to (block2 vs block0). The two are
 linked by **parameter position**: parameter 0 in the operator embedding is
 grounding slot 0, parameter 1 is slot 1, and so on.
 
-## Operator embedding (positional multi-hot)
+## Operator embedding
 
-This section describes multi-hot, the default `--operator-encoder`. Every encoder (one-hot, random, text,
-multi-hot, trainable, compositional) is in `docs/operator_embeddings.md`, with worked examples.
-
-`PDDLMultiHotOperatorEncoder` gives each operator a vector over a fixed
-vocabulary of literal features, with 1 where it has the feature and 0 where it
-does not. A feature is a literal of one section, described two ways:
-
-- **positional**: `(section, predicate, parameter positions)`, e.g.
-  `("add", "on", (0, 1))` = "the object in parameter 0 ends up on the object in
-  parameter 1". Variable names (`?o`, `?b`) are irrelevant; positions are canonical.
-- **name only**: `(section, predicate)`, e.g. `("add", "on")`. Shared by more
-  operators, so a held-out operator still activates features seen in training.
-
-Sections: `precondition`, `negated_precondition`, `add`, `delete`.
-
-Example over pickup and putdown, showing only the features they set
-(positional features shown; each also sets the matching name-only feature):
-
-| Feature | pickup `(?o)` | putdown `(?o)` |
-|---|---|---|
-| precondition `on-table`(0) | 1 | 0 |
-| precondition `clear`(0) | 1 | 0 |
-| precondition `gripper-empty`() | 1 | 0 |
-| precondition `holding`(0) | 0 | 1 |
-| add `holding`(0) | 1 | 0 |
-| add `on-table`(0) | 0 | 1 |
-| add `clear`(0) | 0 | 1 |
-| add `gripper-empty`() | 0 | 1 |
-| delete `on-table`(0) | 1 | 0 |
-| delete `clear`(0) | 1 | 0 |
-| delete `gripper-empty`() | 1 | 0 |
-| delete `holding`(0) | 0 | 1 |
-| delete `raised`(0) | 1 | 0 |
-
-The vocabulary does **not** depend on the training operators. It is every
-feature any operator could have, given the predicates the environment can
-evaluate (Fetch: `FETCH_PREDICATE_ARITIES`) and a maximum operator arity
-(`--max-operator-arity`, default 3):
-
-    size = 4 sections x sum over predicates of (1 + max_arity! / (max_arity - arity)!)
-
-For Fetch (11 predicates) that is 80 / 128 / 192 features for a maximum arity
-of 1 / 2 / 3. `PaddedOperatorEncoder` appends zeros up to
-`--operator-embedding-dim` (default 256), the size every encoder shares. So
-training on n operators and testing on an (n+1)-th uses the same indices, and
-an operator repaired by adding or removing preconditions or effects is simply
-re-encoded: only the features of the changed literals move.
-`PolicyObservationWrapper` encodes each distinct lifted operator it sees, so a
-repaired operator (a new, different object) gets its own encoding.
-
-Operators the vocabulary cannot represent are rejected with `ValueError`
-rather than partially encoded: more parameters than the maximum arity, a
-predicate the environment cannot evaluate, a constant argument, or a repeated
-parameter such as `(on ?x ?x)`.
-
-`OneHotOperatorEncoder` is the baseline: one entry per operator, no structure.
-It indexes every registered skill's operator in registry order (`SKILL_REGISTRY`),
-so an operator keeps its index whatever the training skills, and a held-out
-skill has an index no training run has used. Operators are identified by name.
-`--operator-identity-aliases NEW=OLD` encodes NEW exactly as OLD (one-hot and
-random only), so a repaired operator is indistinguishable from the original:
-the repair-hidden control.
+Every encoder (one-hot, random, text, multi-hot, trainable, compositional) is
+described in `docs/operator_embeddings.md`, with worked examples. They share one
+size, `--operator-embedding-dim` (default 256), except the compositional
+condition, whose observation entry is a structure array that the policy composes
+into a 256-value embedding. `PolicyObservationWrapper` encodes each distinct
+lifted operator it sees, so a repaired operator (a new, different object) gets
+its own encoding.
 
 ## Grounding (dereferenced parameter slots)
 
@@ -89,11 +34,11 @@ observation, each slot carries the pointed-to object's own features:
 
 ```text
 slot = [ used (1) | type one-hot (n_types) | object index one-hot (max_objects) | object features (feature_dim) ]
-grounding = slot_0 + slot_1 + ... + slot_{max_arity-1}
+grounding = slot_0 + slot_1 + ... + slot_{max_arity-1}   (concatenated)
 ```
 
 - **used**: 1 for a parameter the operator has, 0 for padding. There are
-  `max_arity` slots (`--max-operator-arity`, shared with the operator
+  `max_arity` slots (`--max-operator-arity`, default 3, shared with the operator
   embedding); operators with fewer parameters get zero-filled slots, so every
   skill's input has the same size.
 - **type one-hot**: the parameter's type (`block`, later e.g. `tray`). Each type
