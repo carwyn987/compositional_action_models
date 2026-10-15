@@ -38,24 +38,27 @@ described two ways:
 - **name only**: `(section, predicate)`, e.g. `("add", "on")`. Shared by more
   operators, so a held-out operator still activates features seen in training.
 
-Example over pickup and putdown, showing only the features they set
-(positional features shown; each also sets the matching name-only feature):
+Example, the stack operator (used again below):
 
-| Feature | pickup `(?o)` | putdown `(?o)` |
-|---|---|---|
-| precondition `on-table`(0) | 1 | 0 |
-| precondition `clear`(0) | 1 | 0 |
-| precondition `gripper-empty`() | 1 | 0 |
-| precondition `holding`(0) | 0 | 1 |
-| add `holding`(0) | 1 | 0 |
-| add `on-table`(0) | 0 | 1 |
-| add `clear`(0) | 0 | 1 |
-| add `gripper-empty`() | 0 | 1 |
-| delete `on-table`(0) | 1 | 0 |
-| delete `clear`(0) | 1 | 0 |
-| delete `gripper-empty`() | 1 | 0 |
-| delete `holding`(0) | 0 | 1 |
-| delete `raised`(0) | 1 | 0 |
+```lisp
+(:action stack
+    :parameters (?o - block ?u - block)
+    :precondition (and (holding ?o) (clear ?u))
+    :effect (and (on ?o ?u) (clear ?o) (gripper-empty) (not (holding ?o)) (not (clear ?u))))
+```
+
+It sets these positional features, each with its matching name-only feature;
+every other feature is 0:
+
+| Feature | Meaning |
+|---|---|
+| precondition `holding`(0) | the gripper holds parameter 0 |
+| precondition `clear`(1) | nothing is on parameter 1 |
+| add `on`(0, 1) | parameter 0 ends up on parameter 1 |
+| add `clear`(0) | parameter 0 ends up with nothing on it |
+| add `gripper-empty`() | the gripper ends up empty |
+| delete `holding`(0) | the gripper no longer holds parameter 0 |
+| delete `clear`(1) | parameter 1 is no longer clear |
 
 The vocabulary, its size and the operators it rejects are in
 `docs/operator_embeddings.md`.
@@ -110,15 +113,9 @@ operator's `:parameters` list, and each encoder follows it on its own:
   (`GroundedSymbolicActionModel.arguments`), and the grounding encoder writes
   the object bound to parameter i into slot i.
 
-Example: `stack(block2, block0)` with the multi-hot encoder, three blocks,
-`max_arity = 3`, `max_objects = 3`.
-
-```lisp
-(:action stack
-    :parameters (?o - block ?u - block)
-    :precondition (and (holding ?o) (clear ?u))
-    :effect (and (on ?o ?u) (clear ?o) (gripper-empty) (not (holding ?o)) (not (clear ?u))))
-```
+Example: `stack(block2, block0)` (stack is shown under
+[Operator embedding](#operator-embedding)) with the multi-hot encoder, three
+blocks, `max_arity = 3`, `max_objects = 3`.
 
 | Position | Variable | Positional features that mention it | Grounding slot |
 |---|---|---|---|
