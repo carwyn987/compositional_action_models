@@ -95,14 +95,11 @@ In rough priority order.
    update per step (2–4). Both are cheap on a GPU but change the baseline, so apply them to every condition.
 4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; the diagonal pushes take ~70
    steps. Try 0.98.
-5. **Run specs as files.** Replace the overnight runner's environment variables with spec files
-   (e.g. `configs/overnight_rq.yaml`: skills, held-out operators, repair pairs, conditions, budgets), so every
-   experiment is reproducible from one file.
-6. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
+5. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
    scripted ones, so training links skills into chains.
-7. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
+6. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
    with scripted episodes. It's still RL, but usually much faster.
-8. **Better competence sampling.** `--skill-sampling competence` (`competence_shares` in
+7. **Better competence sampling.** `--skill-sampling competence` (`competence_shares` in
    `skill_environment.py`) gives episodes to skills in proportion to their recent failure rate. Success is the
    right signal (shaped rewards differ in stages and scale between skills; success means the same for every
    skill and condition), but counting failures misses:
@@ -135,17 +132,26 @@ In rough priority order.
 **RQ2: does structure speed up learning a new skill?**
 - *Built:* resuming with added skills, dense-then-sparse evaluation of added skills, and zero-shot points.
 - *Next:* the protocol from `research_focus.md`: add skills one at a time in shuffled orders across seeds,
-  and measure steps to threshold per new skill. Add it as a runner group.
+  and measure steps to threshold per new skill. Add it as an experiment (`src/cam/experiments/definitions.py`)
+  with its own runner group.
 
-**RQ3: does structure allow repair (zero-shot or faster)?**
+**RQ3: does structure allow repair (zero-shot or faster)?** The most important experiment to run:
+`./scripts/start_overnight.sh --experiment rq3-repair`.
 - *Built:*
-  - three repair pairs: `unstack` → `unstack-raised`, `stack` → `place-beside`,
+  - the `rq3-repair` experiment (its docstring in `src/cam/experiments/definitions.py` gives the design,
+    controls and what to read), with three repair pairs: `unstack` → `unstack-raised`, `stack` → `place-beside`,
     `push-left` → `push-left-front`;
+  - every literal of each repaired operator is trained in another skill, so a repair asks how much a policy
+    learns about a behaviour from a literal in one place of the operator: `pickup-raised` for `(raised ?o)`;
+    `stack`, `putdown` and `push-beside` for place-beside; `push-front` and the other diagonals for
+    `(at-front ?o)`;
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
   - transfer gain (§4.1);
   - more pairs where the repaired literal appears in training in a different skill;
-  - `stack` → `place-beside` changes several literals, so read it as a new-skill test.
+  - `stack` → `place-beside` changes several literals, so read it as a new-skill test;
+  - push-beside reached only 0.55 alone in the 2026-10-11 run; if it can't be learned, place-beside's
+    `(beside ?o ?u)` is trained but not learned, and that pair says little.
 
 **RQ4: can embeddings generate policies (hypernetworks)?**
 - *Built:* nothing yet, apart from the single-skill learnability runs, which are the "individually trained
@@ -181,7 +187,7 @@ In rough priority order.
 
 1. **Read the current overnight run** with §2.
 2. **Before the next overnight run:** add transfer gain and confidence intervals (§4.1), and shorten run
-   names (§3.1). Then run learnability, then RQ1 + repair with
-   3 seeds.
+   names (§3.1). Then run `--experiment rq3-repair` (learnability, RQ1, then the repairs) with
+   `SEEDS="0 1 2"`.
 3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
    RQ2's protocol, or RQ4 starting with FiLM.

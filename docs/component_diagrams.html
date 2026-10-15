@@ -8,7 +8,7 @@ flowchart LR
     %% ---------------- entry points ----------------
     subgraph entry[&quot;Entry points (repo root / scripts)&quot;]
         main[&quot;main.py&lt;br/&gt;parse_args · train · evaluate&lt;br/&gt;new run, resume, added skills&quot;]
-        overnight[&quot;scripts/start_overnight.sh → overnight_runs.py&lt;br/&gt;plan of runs: learnability · rq1 · repair&quot;]
+        overnight[&quot;scripts/start_overnight.sh → overnight_runs.py&lt;br/&gt;plan of runs for an experiment: learnability · rq1 · repair&quot;]
         review[&quot;scripts/review_runs.py&lt;br/&gt;report over a folder of runs&quot;]
         runskill[&quot;scripts/run_skill.py&lt;br/&gt;one skill: scripted / random / trained policy&quot;]
         watch[&quot;scripts/watch_best_policies.py&lt;br/&gt;best trained policy per skill&quot;]
@@ -89,6 +89,7 @@ flowchart LR
     end
 
     envsetup[&quot;cam/experiments/environment_setup.py&lt;br/&gt;setup_environment · OPERATOR_ENCODERS&quot;]
+    experiments[&quot;cam/experiments/definitions.py&lt;br/&gt;EXPERIMENTS: learnability · rq1 · rq3-repair&quot;]
     logcfg[&quot;cam/logging_config.py&lt;br/&gt;configure_logging&quot;]
 
     %% ---------------- planned ----------------
@@ -166,6 +167,7 @@ flowchart LR
     main --&gt; metricscb
     main --&gt; logcfg
     overnight -- runs --&gt; main
+    overnight -- plans from --&gt; experiments
     review -.-&gt;|reads metrics.json, TensorBoard of| metricscb
     runskill --&gt; envsetup
     runskill --&gt; sb3policy

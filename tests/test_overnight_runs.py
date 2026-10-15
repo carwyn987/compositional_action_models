@@ -1,9 +1,16 @@
-"""scripts/overnight_runs.py: the RQ1 budget set from the learnability runs (RQ1_STEPS=auto)."""
+"""scripts/overnight_runs.py: the experiment's settings, and the RQ1 budget set from the learnability runs
+(RQ1_STEPS=auto)."""
 
 import json
+import os
+import re
+import subprocess
+import sys
 
 import pytest
 
+from cam.experiments.definitions import EXPERIMENTS
+from cam.skills.registry import SKILL_REGISTRY
 from scripts import overnight_runs
 
 
@@ -70,3 +77,34 @@ def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypa
         monkeypatch.setattr(overnight_runs, name, value)
     groups = [run.group for run in overnight_runs.build_plan()]
     assert groups == ["learnability"] * 4 + ["rq1"] * 2 + ["repair"] * 3  # one-hot: visible and hidden; text: visible
+
+
+@pytest.mark.unit
+def test_settings_come_from_the_experiment_unless_set_in_the_environment(monkeypatch):
+    """The experiment's settings in the runner's format; an environment variable replaces one and is reported as an
+    override; machine settings (JOBS) are not the experiment's."""
+    monkeypatch.setattr(overnight_runs, "EXPERIMENT", EXPERIMENTS["rq3-repair"])
+    monkeypatch.setattr(overnight_runs, "OVERRIDES", {})
+    for name in ("CONDITIONS", "REPAIRS", "JOBS"):
+        monkeypatch.delenv(name, raising=False)
+    assert overnight_runs.setting("REPAIRS") == "unstack:unstack-raised stack:place-beside push-left:push-left-front"
+    assert overnight_runs.setting("CONDITIONS") == "compositional-tree one-hot multi-hot-trainable text"
+    monkeypatch.setenv("CONDITIONS", "one-hot")
+    monkeypatch.setenv("JOBS", "3")
+    assert overnight_runs.setting("CONDITIONS") == "one-hot" and overnight_runs.setting("JOBS", "2") == "3"
+    assert overnight_runs.OVERRIDES == {"CONDITIONS": "one-hot"}
+
+
+@pytest.mark.unit
+def test_the_command_line_chooses_the_experiment(tmp_path):
+    """--experiment learnability plans one run per registered skill, alone; the default plans rq3-repair's runs."""
+    environment = {name: value for name, value in os.environ.items() if name not in EXPERIMENTS["rq3-repair"].settings()}
+    environment |= {"DRY_RUN": "1", "OUT": str(tmp_path)}
+
+    def plan(*arguments: str) -> list[str]:
+        output = subprocess.run([sys.executable, "scripts/overnight_runs.py", *arguments], cwd=overnight_runs.ROOT,
+                                env=environment, capture_output=True, text=True, check=True).stdout
+        return re.findall(r"^\s+\d+\. (\S+)", output, re.MULTILINE)
+
+    assert plan("--experiment", "learnability") == ["Learnability"] * len(SKILL_REGISTRY)
+    assert set(plan()) == {"Learnability", "RQ1", "Repair"}

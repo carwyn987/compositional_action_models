@@ -1,10 +1,16 @@
 #!/usr/bin/env python3
-"""Overnight experiments for the research questions: a plan of training runs, executed and explained.
+"""Overnight experiments for the research questions: an experiment's plan of training runs, executed and explained.
 
-    ./scripts/start_overnight.sh                     # usual way: environment checks + unit tests, then this
-    .venv/bin/python scripts/overnight_runs.py       # this runner alone
-    DRY_RUN=1 .venv/bin/python scripts/overnight_runs.py              # print the plan, run nothing
-    RUN_GROUPS="learnability" SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py
+    ./scripts/start_overnight.sh --experiment rq3-repair       # usual way: environment checks + unit tests, then this
+    .venv/bin/python scripts/overnight_runs.py --list          # the experiments: what each asks, and its settings
+    .venv/bin/python scripts/overnight_runs.py --experiment rq1                      # this runner alone
+    DRY_RUN=1 .venv/bin/python scripts/overnight_runs.py --experiment rq1            # print the plan, run nothing
+    SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py --experiment learnability
+
+Experiments (--experiment NAME, default rq3-repair) are defined in src/cam/experiments/definitions.py: learnability
+(each skill alone), rq1 (one shared policy per operator embedding condition) and rq3-repair (rq1's policies
+continued with repaired operators). Each sets the groups to run and every setting below; an environment variable
+of a setting's name overrides it, and the runner lists the overrides when it starts.
 
 How it runs
   * Up to JOBS runs at once (default 2). One run uses a fraction of a GPU or CPU: SAC alternates a
@@ -53,29 +59,19 @@ Outputs, under OUT (default outputs/overnight_<date>)
   summary.csv        per run and skill metrics     review.txt   scripts/review_runs.py's report
 View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 
-Settings (environment variables, defaults in brackets)
-  OUT [outputs/overnight_<date>]  RUN_GROUPS ["learnability rq1 repair"]  SEEDS ["0"]
-  ALGORITHM [mtsac] (main.py --algorithm: sac; mtsac, SAC with a separate entropy temperature per skill; ppo)
-  SKILL_SAMPLING [competence] (main.py --skill-sampling: round-robin, or competence: skills with low recent
-                 success get more of the training episodes; the same rule for every condition)
-  JOBS [2] runs at once   DEVICE [auto]   THREADS [cores / JOBS] torch threads per run   DRY_RUN [0]
-  CONDITIONS [one-hot random multi-hot-trainable text compositional-tree compositional-slots
-              compositional-geometric]   ALIAS_CONDITIONS ["one-hot random"]
-  TEXT_BACKEND [openai] (the text condition and compositional name embeddings; mock: offline, no meaning)
-  BASE_SKILLS [pickup putdown stack unstack pickup-raised push-left push-right push-front push-back
-               push-right-front push-left-back push-right-back push-beside]
-  REPAIRS ["unstack:unstack-raised stack:place-beside push-left:push-left-front"] (FROM:TO pairs; every
-          literal of each TO appears in some base skill, so a policy reading the operator can use it)
-  REPAIR_MODES ["isolated retain"]  REPAIR_EVAL_INTERVAL [10000] (how often a repair run evaluates every skill)
-  LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000] (a repair run's most steps)
-  RQ1_STEPS=auto: each rq1 run's budget is RQ1_BUDGET_MARGIN [1.5] x the sum over BASE_SKILLS of the steps each
-                  needed alone to reach the threshold in its learnability run (at least one EVAL_INTERVAL; a skill
-                  that never did, or has no learnability result, counts as LEARN_STEPS), so every skill gets at
-                  least what it needs alone. The rq1 runs wait for the learnability runs.
-  EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]
+Settings: the experiment's (definitions.py describes each), unless set as an environment variable
+  RUN_GROUPS  SEEDS  ALGORITHM  SKILL_SAMPLING  CONDITIONS  ALIAS_CONDITIONS  TEXT_BACKEND  BASE_SKILLS
+  REPAIRS (FROM:TO pairs)  REPAIR_MODES  REPAIR_EVAL_INTERVAL  LEARN_STEPS  RQ1_STEPS (a number, or auto)
+  RQ1_BUDGET_MARGIN  REPAIR_STEPS  EVAL_INTERVAL  EVAL_EPISODES  SAVE_INTERVAL
+  e.g. CONDITIONS="one-hot text" SEEDS="0 1 2" REPAIRS="unstack:unstack-raised"
+Machine settings (environment variables, defaults in brackets)
+  OUT [outputs/overnight_<date>]  JOBS [2] runs at once  DEVICE [auto]  THREADS [cores / JOBS] torch threads per run
+  DRY_RUN [0]
 """
 
+import argparse
 import csv
+import inspect
 import json
 import math
 import os
@@ -84,47 +80,69 @@ import shutil
 import signal
 import subprocess
 import sys
+import textwrap
 import time
 from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from cam.experiments.definitions import EXPERIMENTS
+
 ROOT = Path(__file__).resolve().parent.parent
 PYTHON = str(ROOT / ".venv" / "bin" / "python") if (ROOT / ".venv" / "bin" / "python").exists() else sys.executable
 
 
-def setting(name: str, default: str) -> str:
-    return os.environ.get(name, default)
+def command_line() -> argparse.Namespace:
+    """The runner's arguments (imported as a module, e.g. by the tests: the defaults)."""
+    parser = argparse.ArgumentParser(description="Run an experiment's plan of training runs (see this file's header).")
+    parser.add_argument("--experiment", choices=EXPERIMENTS, default="rq3-repair",
+                        help="the experiment to run (default rq3-repair); --list describes each")
+    parser.add_argument("--list", action="store_true", help="describe every experiment and its settings, run nothing")
+    return parser.parse_args(sys.argv[1:] if __name__ == "__main__" else [])
+
+
+ARGUMENTS = command_line()
+EXPERIMENT = EXPERIMENTS[ARGUMENTS.experiment]
+OVERRIDES: dict[str, str] = {}  # the experiment's settings set by environment variables instead
+
+
+def setting_text(value) -> str:
+    """An experiment's setting as its environment variable would give it: lists space-separated, pairs FROM:TO."""
+    if isinstance(value, tuple):
+        return " ".join(":".join(item) if isinstance(item, tuple) else str(item) for item in value)
+    return str(value)
+
+
+def setting(name: str, default: str | None = None) -> str:
+    """The environment variable name, else the experiment's setting, else default (machine settings)."""
+    experiment_settings = EXPERIMENT.settings()
+    if name in os.environ:
+        if name in experiment_settings:
+            OVERRIDES[name] = os.environ[name]
+        return os.environ[name]
+    return setting_text(experiment_settings[name]) if name in experiment_settings else default
 
 
 OUT = Path(setting("OUT", f"outputs/overnight_{date.today():%Y%m%d}"))
-RUN_GROUPS = setting("RUN_GROUPS", "learnability rq1 repair").split()
-ALGORITHM = setting("ALGORITHM", "mtsac")
-SKILL_SAMPLING = setting("SKILL_SAMPLING", "competence")
-SEEDS = [int(seed) for seed in setting("SEEDS", "0").split()]
-CONDITIONS = setting(
-    "CONDITIONS",
-    "one-hot random multi-hot-trainable text compositional-tree compositional-slots compositional-geometric",
-).split()
-ALIAS_CONDITIONS = setting("ALIAS_CONDITIONS", "one-hot random").split()
-TEXT_BACKEND = setting("TEXT_BACKEND", "openai")
-BASE_SKILLS = setting(  # the training skills; held-out operators (REPAIRS' TO) only appear in repair runs
-    "BASE_SKILLS",
-    "pickup putdown stack unstack pickup-raised push-left push-right push-front push-back "
-    "push-right-front push-left-back push-right-back push-beside",
-).split()
-REPAIRS = [tuple(pair.split(":")) for pair in
-           setting("REPAIRS", "unstack:unstack-raised stack:place-beside push-left:push-left-front").split()]
+RUN_GROUPS = setting("RUN_GROUPS").split()
+ALGORITHM = setting("ALGORITHM")
+SKILL_SAMPLING = setting("SKILL_SAMPLING")
+SEEDS = [int(seed) for seed in setting("SEEDS").split()]
+CONDITIONS = setting("CONDITIONS").split()
+ALIAS_CONDITIONS = setting("ALIAS_CONDITIONS").split()
+TEXT_BACKEND = setting("TEXT_BACKEND")
+BASE_SKILLS = setting("BASE_SKILLS").split()  # the training skills; held-out operators (REPAIRS' TO) only in repairs
+REPAIRS = [tuple(pair.split(":")) for pair in setting("REPAIRS").split()]
 REPAIRED = [to for _, to in REPAIRS]
-REPAIR_MODES = setting("REPAIR_MODES", "isolated retain").split()
-REPAIR_EVAL_INTERVAL = int(setting("REPAIR_EVAL_INTERVAL", "10000"))
-LEARN_STEPS = int(setting("LEARN_STEPS", "150000"))
-RQ1_AUTO = setting("RQ1_STEPS", "500000") == "auto"
-RQ1_BUDGET_MARGIN = float(setting("RQ1_BUDGET_MARGIN", "1.5"))
-REPAIR_STEPS = int(setting("REPAIR_STEPS", "150000"))
-EVAL_INTERVAL = int(setting("EVAL_INTERVAL", "50000"))
-EVAL_EPISODES = int(setting("EVAL_EPISODES", "20"))
-SAVE_INTERVAL = int(setting("SAVE_INTERVAL", "50000"))
+REPAIR_MODES = setting("REPAIR_MODES").split()
+REPAIR_EVAL_INTERVAL = int(setting("REPAIR_EVAL_INTERVAL"))
+LEARN_STEPS = int(setting("LEARN_STEPS"))
+RQ1_AUTO = setting("RQ1_STEPS") == "auto"
+RQ1_BUDGET_MARGIN = float(setting("RQ1_BUDGET_MARGIN"))
+REPAIR_STEPS = int(setting("REPAIR_STEPS"))
+EVAL_INTERVAL = int(setting("EVAL_INTERVAL"))
+EVAL_EPISODES = int(setting("EVAL_EPISODES"))
+SAVE_INTERVAL = int(setting("SAVE_INTERVAL"))
 DEVICE = setting("DEVICE", "auto")
 JOBS = max(1, int(setting("JOBS", "2")))
 THREADS = setting("THREADS", str(max(1, (os.cpu_count() or 1) // JOBS)))  # no CPU oversubscription
@@ -239,7 +257,7 @@ def learnability_steps(skills: list[str]) -> tuple[dict[str, int | None], list[s
 
 # rq1 steps: the setting, or with RQ1_STEPS=auto the most the budget can be until the learnability runs are done
 RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, EVAL_INTERVAL) if RQ1_AUTO
-             else int(setting("RQ1_STEPS", "500000")))
+             else int(setting("RQ1_STEPS")))
 
 
 def link_replay_buffer(source: str, destination: str) -> str:
@@ -702,7 +720,19 @@ def write_summary() -> None:
             writer.writerows(rows)
 
 
+def describe_experiments() -> None:
+    """--list: every experiment's description and settings."""
+    for experiment in EXPERIMENTS.values():
+        say(f"{experiment.name}\n{textwrap.indent(inspect.getdoc(experiment), '    ')}\n    settings:")
+        for name, value in experiment.settings().items():
+            say(f"      {name}={setting_text(value)}")
+        say()
+
+
 def main() -> None:
+    if ARGUMENTS.list:
+        describe_experiments()
+        return
     os.chdir(ROOT)
     sys.path.insert(0, str(ROOT))
     for condition in CONDITIONS:
@@ -712,7 +742,10 @@ def main() -> None:
     if not runs:
         sys.exit(f"nothing to run for RUN_GROUPS={' '.join(RUN_GROUPS)}")
     runner = Runner(runs)
-    say(f"Overnight experiments · {datetime.now():%Y-%m-%d %H:%M} · groups: {', '.join(RUN_GROUPS)}")
+    say(f"Experiment {EXPERIMENT.name} · {datetime.now():%Y-%m-%d %H:%M} · groups: {', '.join(RUN_GROUPS)}")
+    say(f"  {inspect.getdoc(EXPERIMENT).splitlines()[0]}")
+    if OVERRIDES:
+        say("  overridden by the environment: " + "  ".join(f"{name}={value}" for name, value in OVERRIDES.items()))
     say(f"  base skills: {', '.join(BASE_SKILLS)}")
     if "repair" in RUN_GROUPS:
         for repair_from, repair_to in REPAIRS:
