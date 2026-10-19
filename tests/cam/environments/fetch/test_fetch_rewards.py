@@ -35,6 +35,20 @@ def test_moving_toward_the_block_earns_reach_reward():
 
 
 @pytest.mark.unit
+def test_backing_off_after_the_stage_bonuses_costs_what_approaching_earned():
+    """Once above the block (its bonus earned), moving away still costs reach reward, and staying near the block
+    earns nothing. Under the former rule (the control, measured on 2026-10-14 policies) the approach stopped
+    counting once above, so a pickup policy that approached, closed and backed off kept every point."""
+    reward = FetchPickupReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    reward(PICKUP_BLOCK0, np.zeros(4), info_with_gripper_at(BLOCK0 + [0.0, 0.0, 0.06]), success=False)  # above
+    assert reward.above_earned
+    _, stay = reward(PICKUP_BLOCK0, np.zeros(4), info_with_gripper_at(BLOCK0 + [0.0, 0.0, 0.06]), success=False)
+    _, away = reward(PICKUP_BLOCK0, np.zeros(4), info_with_gripper_at(BLOCK0 + [0.0, 0.05, 0.08]), success=False)
+    assert stay["reach"] == 0 and away["reach"] < 0
+
+
+@pytest.mark.unit
 def test_success_bonus_is_paid_once_per_episode():
     """The success bonus appears on the first successful step only, and again after reset."""
     reward = FetchPickupReward()

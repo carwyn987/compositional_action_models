@@ -104,7 +104,6 @@ class FetchPickupRewardConfig:
 
     # 1. Approach object
     reach_progress_weight: float = 15.0
-    reach_dense_weight: float = 0.10
 
     # 2. Get above object
     above_xy_tolerance: float = 0.030
@@ -204,14 +203,11 @@ class FetchPickupReward(RewardFunction):
             "success": 0.0,
         }
 
-        # 1. Approach the block: reward reduced distance, plus a small proximity signal.
-        if not self.above_earned:
-            if self.previous_distance is not None:
-                progress = np.clip(
-                    self.previous_distance - distance, -cfg.max_position_progress, cfg.max_position_progress
-                )
-                components["reach"] += cfg.reach_progress_weight * float(progress)
-            components["reach"] += cfg.reach_dense_weight * np.exp(-15.0 * distance)
+        # 1. Approach the block: reward reduced distance, in every stage, so moving away again (e.g. once the stage
+        #    bonuses are earned) costs what approaching earned. Being near the block earns nothing by itself.
+        if self.previous_distance is not None:
+            progress = np.clip(self.previous_distance - distance, -cfg.max_position_progress, cfg.max_position_progress)
+            components["reach"] = cfg.reach_progress_weight * float(progress)
 
         # 2. One-time reward for becoming aligned over the block.
         if above_now and not self.above_earned:
