@@ -159,11 +159,12 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 setup_policies,
                 reward_functions,
                 success_hold_steps=config.get("success_hold_steps", 1),  # configs saved before the option: 1
-                check_failure=check_fetch_failure,
+                check_failure=check_fetch_failure if config.get("failures", True) else None,
                 at_rest=moved_block_at_rest,  # settled success: the moved block stopped, not passing through
                 frame_predicates=FETCH_FRAME_PREDICATES,
                 # shaped rewards: motion penalties for every skill, and a penalty on failure
-                shared_reward=FetchMotionReward() if config["reward"] == "shaped" else None,
+                shared_reward=(FetchMotionReward() if config["reward"] == "shaped" and config.get("motion_penalties", True)
+                               else None),
                 failure_penalty=FAILURE_PENALTY if config["reward"] == "shaped" else 0.0,
                 # configs saved before the option: round-robin
                 competence_sampling=config.get("skill_sampling", "round-robin") == "competence",

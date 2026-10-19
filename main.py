@@ -222,6 +222,16 @@ def build_parser() -> argparse.ArgumentParser:
         "success get more episodes; each keeps at least half its even share)",
     )
     training.add_argument(
+        "--failures", action=argparse.BooleanOptionalAction, default=True,
+        help="end an episode on a failure (a block dropped or knocked aside, excessive force on the gripper), with the "
+        "shaped reward's failure penalty; --no-failures: failures neither end episodes nor cost anything (an ablation)",
+    )
+    training.add_argument(
+        "--motion-penalties", action=argparse.BooleanOptionalAction, default=True,
+        help="shaped rewards: penalize action changes, the moved block's acceleration, other blocks moving and gripper "
+        "force, for every skill; --no-motion-penalties: none of them (an ablation)",
+    )
+    training.add_argument(
         "--success-hold-steps", type=int, default=5,
         help="an episode succeeds once the skill's effects have held this many consecutive steps (settled success)",
     )
