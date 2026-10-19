@@ -173,15 +173,17 @@ In rough priority order.
   (`src/cam/experiments/research_experiments.py`) with its own runner group.
 
 **RQ3: does structure allow repair (zero-shot or faster)?** The most important experiment to run:
-`./scripts/start_overnight.sh --experiment rq3-repair`.
+`./scripts/start_overnight.sh --experiment rq3-repair-minimal`, then `rq3-repair-maximal`.
 - *Built:*
-  - the `rq3-repair` experiment (its docstring in `src/cam/experiments/research_experiments.py` gives the
-    design, controls and what to read), with three repair pairs: `unstack` → `unstack-raised`,
-    `stack` → `place-beside`, `push-left` → `push-left-front`;
+  - two repair experiments (their docstrings in `src/cam/experiments/research_experiments.py` give the design,
+    controls and metrics): `rq3-repair-minimal`, seven training skills, with `unstack` → `unstack-raised`,
+    `putdown` → `place-beside`, `push-left` → `push-left-front`; and `rq3-repair-maximal`, the 13 training
+    skills, with `push-left` → `push-left-front` (and `stack` → `place-beside`, a pair with little overlap, to
+    enable once place-beside's carriers learn reliably: a TODO in the experiment);
   - every literal of each repaired operator is trained in another skill, so a repair asks how much a policy
     learns about a behaviour from a literal in one place of the operator: `pickup-raised` for `(raised ?o)`;
-    `stack`, `putdown` and `push-beside` for place-beside; `push-front` and the other diagonals for
-    `(at-front ?o)`. The runner refuses a plan that leaves a literal untrained (e.g. `BASE_SKILLS` without
+    `putdown` and `push-beside` for place-beside; `push-front` (and, in the maximal experiment, the other
+    diagonals) for `(at-front ?o)`. The runner refuses a plan that leaves a literal untrained (e.g. `BASE_SKILLS` without
     `push-beside`);
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
@@ -230,7 +232,7 @@ In rough priority order.
 
 1. **Read the current overnight run** with §2.
 2. **Before the next overnight run:** fix the one-hot aliases (§3.1), add transfer gain and confidence
-   intervals (§4.1), and shorten run names (§3.2). Then run `--experiment rq3-repair` (learnability, RQ1, then
+   intervals (§4.1), and shorten run names (§3.2). Then run `--experiment rq3-repair-minimal` (learnability, RQ1, then
    the repairs) with `SEEDS="0 1 2"`.
 3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
    RQ2's protocol, or RQ4 starting with FiLM.

@@ -40,10 +40,10 @@ The text embedding condition with `--text-backend openai` reads the OpenAI key f
 ./scripts/run_skill.py --policy model --run-directory outputs/<run> --skill pickup --render
 
 ./scripts/start_overnight.sh --list                          # the experiments: what each asks, and its settings
-DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq3-repair   # an experiment's plan and its time estimate
-DEVICE=cuda ./scripts/start_overnight.sh --experiment rq3-repair # run it (inside tmux)
+DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq3-repair-minimal   # an experiment's plan and its time estimate
+DEVICE=cuda ./scripts/start_overnight.sh --experiment rq3-repair-minimal # run it (inside tmux)
 JOBS=6 ./scripts/start_overnight.sh --experiment learnability    # another experiment, 6 runs at a time
-CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh --experiment rq1   # override its settings
+OPERATOR_EMBEDDINGS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh --experiment rq1   # override its settings
 ./scripts/review_runs.py outputs/overnight_<date>            # report: runs, conditions, curves, repairs
 ./scripts/watch_best_policies.py                             # the best trained policy per skill
 ./scripts/check_policy_progress.py outputs/<run>             # is a trained policy stuck, or slowly getting there?

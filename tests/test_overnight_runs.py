@@ -40,7 +40,7 @@ def test_learnability_steps_read_each_skills_result_and_name_the_missing(tmp_pat
 def test_rq1_runs_wait_for_the_learnability_runs_only_with_an_automatic_budget(monkeypatch, auto):
     """Control: with a fixed RQ1_STEPS the rq1 runs start without waiting. With RQ1_STEPS=auto each rq1 run waits for
     the learnability run of every base skill, whose results set its budget."""
-    for name, value in (("RUN_GROUPS", ["learnability", "rq1"]), ("CONDITIONS", ["one-hot"]), ("SEEDS", [0]),
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1"]), ("OPERATOR_EMBEDDINGS", ["one-hot"]), ("SEEDS", [0]),
                         ("BASE_SKILLS", ["pickup", "putdown"]), ("REPAIRS", []), ("REPAIRED", []), ("RQ1_AUTO", auto)):
         monkeypatch.setattr(overnight_runs, name, value)
     (rq1,) = [run for run in overnight_runs.build_plan() if run.group == "rq1"]
@@ -70,7 +70,7 @@ def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
 def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypatch):
     """Runs start in plan order, so the most informative come first: whether each skill can be learned, then every
     condition's rq1 result, then the repairs (which wait for their rq1 run anyway)."""
-    for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("CONDITIONS", ["one-hot", "text"]),
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("OPERATOR_EMBEDDINGS", ["one-hot", "text"]),
                         ("SEEDS", [0]), ("BASE_SKILLS", ["pickup", "putdown", "stack"]),
                         ("REPAIRS", [("stack", "place-beside")]), ("REPAIRED", ["place-beside"]),
                         ("REPAIR_MODES", ["isolated"]), ("RQ1_AUTO", False)):
@@ -96,22 +96,22 @@ def test_a_repair_asking_for_an_untrained_literal_stops_the_runner(monkeypatch):
 def test_settings_come_from_the_experiment_unless_set_in_the_environment(monkeypatch):
     """The experiment's settings in the runner's format; an environment variable replaces one and is reported as an
     override; machine settings (JOBS) are not the experiment's."""
-    monkeypatch.setattr(overnight_runs, "EXPERIMENT", EXPERIMENTS["rq3-repair"])
+    monkeypatch.setattr(overnight_runs, "EXPERIMENT", EXPERIMENTS["rq3-repair-minimal"])
     monkeypatch.setattr(overnight_runs, "OVERRIDES", {})
-    for name in ("CONDITIONS", "REPAIRS", "JOBS"):
+    for name in ("OPERATOR_EMBEDDINGS", "REPAIRS", "JOBS"):
         monkeypatch.delenv(name, raising=False)
-    assert overnight_runs.setting("REPAIRS") == "unstack:unstack-raised stack:place-beside push-left:push-left-front"
-    assert overnight_runs.setting("CONDITIONS") == "compositional-tree one-hot multi-hot-trainable text"
-    monkeypatch.setenv("CONDITIONS", "one-hot")
+    assert overnight_runs.setting("REPAIRS") == "unstack:unstack-raised putdown:place-beside push-left:push-left-front"
+    assert overnight_runs.setting("OPERATOR_EMBEDDINGS") == "compositional-tree one-hot multi-hot-trainable text"
+    monkeypatch.setenv("OPERATOR_EMBEDDINGS", "one-hot")
     monkeypatch.setenv("JOBS", "3")
-    assert overnight_runs.setting("CONDITIONS") == "one-hot" and overnight_runs.setting("JOBS", "2") == "3"
-    assert overnight_runs.OVERRIDES == {"CONDITIONS": "one-hot"}
+    assert overnight_runs.setting("OPERATOR_EMBEDDINGS") == "one-hot" and overnight_runs.setting("JOBS", "2") == "3"
+    assert overnight_runs.OVERRIDES == {"OPERATOR_EMBEDDINGS": "one-hot"}
 
 
 @pytest.mark.unit
 def test_the_command_line_chooses_the_experiment(tmp_path):
-    """--experiment learnability plans one run per registered skill, alone; the default plans rq3-repair's runs."""
-    environment = {name: value for name, value in os.environ.items() if name not in EXPERIMENTS["rq3-repair"].settings()}
+    """--experiment learnability plans one run per registered skill, alone; the default plans rq3-repair-minimal's runs."""
+    environment = {name: value for name, value in os.environ.items() if name not in EXPERIMENTS["rq3-repair-minimal"].settings()}
     environment |= {"DRY_RUN": "1", "OUT": str(tmp_path)}
 
     def plan(*arguments: str) -> list[str]:
@@ -120,4 +120,7 @@ def test_the_command_line_chooses_the_experiment(tmp_path):
         return re.findall(r"^\s+\d+\. (\S+)", output, re.MULTILINE)
 
     assert plan("--experiment", "learnability") == ["Learnability"] * len(SKILL_REGISTRY)
+    static = subprocess.run([sys.executable, "scripts/overnight_runs.py", "--experiment", "overlap"],
+                            cwd=overnight_runs.ROOT, env=environment, capture_output=True, text=True, check=True).stdout
+    assert "Representation overlap: 13 training skills" in static and "Checks before starting" not in static
     assert set(plan()) == {"Learnability", "RQ1", "Repair"}
