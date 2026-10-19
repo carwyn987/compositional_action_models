@@ -13,7 +13,7 @@ flowchart LR
     %% ---------------- entry points ----------------
     subgraph entry["Entry points (repo root / scripts)"]
         main["main.py<br/>parse_args · train · evaluate<br/>new run, resume, added skills"]
-        overnight["scripts/start_overnight.sh → overnight_runs.py<br/>plan of runs: learnability · rq1 · repair"]
+        overnight["scripts/start_overnight.sh → overnight_runs.py<br/>plan of runs for an experiment: learnability · rq1 · repair"]
         review["scripts/review_runs.py<br/>report over a folder of runs"]
         runskill["scripts/run_skill.py<br/>one skill: scripted / random / trained policy"]
         watch["scripts/watch_best_policies.py<br/>best trained policy per skill"]
@@ -95,6 +95,7 @@ flowchart LR
     end
 
     envsetup["cam/experiments/environment_setup.py<br/>setup_environment · OPERATOR_ENCODERS"]
+    experiments["cam/experiments/research_experiments.py<br/>EXPERIMENTS: learnability · rq1 · rq3-repair-minimal / -maximal · overlap"]
     logcfg["cam/logging_config.py<br/>configure_logging"]
 
     %% ---------------- planned ----------------
@@ -172,6 +173,7 @@ flowchart LR
     main --> metricscb
     main --> logcfg
     overnight -- runs --> main
+    overnight -- plans from --> experiments
     review -.->|reads metrics.json, TensorBoard of| metricscb
     runskill --> envsetup
     runskill --> sb3policy
@@ -477,7 +479,7 @@ classDiagram
     %% ---- evaluation ----
     class MetricsCallback {
         +skill_names: list
-        +eval_interval: int
+        +train_eval_interval: int
         +stop_skills: list
     }
     class evaluation {

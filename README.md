@@ -39,17 +39,19 @@ The text embedding condition with `--text-backend openai` reads the OpenAI key f
 ./main.py --run-directory outputs/<run>                      # resume a run
 ./scripts/run_skill.py --policy model --run-directory outputs/<run> --skill pickup --render
 
-DRY_RUN=1 ./scripts/start_overnight.sh                       # the overnight plan and its time estimate
-DEVICE=cuda ./scripts/start_overnight.sh                     # run it (inside tmux)
-RUN_GROUPS=learnability JOBS=6 ./scripts/start_overnight.sh  # one group, 6 runs at a time
-CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh   # settings: see overnight_runs.py
+./scripts/start_overnight.sh --list                          # the experiments: what each asks, and its settings
+DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq3-repair-minimal   # an experiment's plan and its time estimate
+DEVICE=cuda ./scripts/start_overnight.sh --experiment rq3-repair-minimal # run it (inside tmux)
+JOBS=6 ./scripts/start_overnight.sh --experiment learnability    # another experiment, 6 runs at a time
+OPERATOR_EMBEDDINGS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh --experiment rq1   # override its settings
 ./scripts/review_runs.py outputs/overnight_<date>            # report: runs, conditions, curves, repairs
 ./scripts/watch_best_policies.py                             # the best trained policy per skill
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
 ```
 
-Each script's header and `--help` describe its options; the overnight runner's settings are environment
-variables listed in the header of `scripts/overnight_runs.py`. `main.py --help` lists the operator embedding
+Each script's header and `--help` describe its options; the overnight runner's settings are each experiment's
+(`src/cam/experiments/research_experiments.py`, or `--list`), and an environment variable of a setting's name
+overrides it for one run. `main.py --help` lists the operator embedding
 conditions (`--operator-encoder`, `--trainable-operator-embedding`, `--compositional-architecture`).
 
 ## Documentation

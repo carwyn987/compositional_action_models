@@ -98,7 +98,10 @@ released, gently, without disturbing anything else.
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | as push, both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | as push, + `(on-table ?u)`; `beside` in place of the region | – | push toward ?u | as push |
 
-Which skills are trained and which are held out is set by the run plan (§4), not by the skill definitions.
+Which skills are trained and which are held out is set by the experiment (§4), not by the skill definitions:
+in `rq3-repair-minimal` (`src/cam/experiments/research_experiments.py`), seven skills train and unstack-raised,
+place-beside and push-left-front are held out; in `rq3-repair-maximal`, the 13 training skills (every push but
+push-left-front) train and push-left-front is held out.
 
 Every scripted policy succeeds with 5-step settled success (2 and 3 blocks): pick/place skills 10/10, pushes
 18–20/20 (with 3 blocks another block can lie on a straight push path). The scripted push moves at a quarter
@@ -195,15 +198,27 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
   runs the unit tests, writes `run_info.txt` (commit and settings), blocks sleep, then runs
   `overnight_runs.py`.
-- **`scripts/overnight_runs.py`:** the plan of runs; its header lists every setting (environment variables).
+- **`scripts/overnight_runs.py`:** runs an experiment's plan of runs.
+  - **experiments** (`--experiment NAME`, default `rq3-repair-minimal`; `--list` describes each) are classes in
+    `src/cam/experiments/research_experiments.py`: the docstring gives the question, design, controls and what
+    to read; the attributes are the runner's settings (groups, skills, repairs, conditions, budgets). An
+    environment variable named as a setting overrides it, and the runner lists the overrides. `learnability`:
+    each registered skill alone; `rq1`: one shared policy per operator embedding on the training skills;
+    `rq3-repair-minimal` and `rq3-repair-maximal`: rq1's policies continued with repaired operators (few training
+    skills, each repair's new literals in one other skill; or every training skill and one repair); `overlap`: how much of their operators'
+    structure the training skills share, at five levels from predicates to whole operators, and how much of each
+    held-out operator they cover (`src/cam/experiments/representation_overlap.py`; static, nothing trains). Every
+    experiment prints the same report for its own skills when it starts and saves it as `<OUT>/overlap.txt`;
+  - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
+    skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
   - **groups:** learnability (each skill alone, multi-hot; also the individually trained baseline for RQ4),
     rq1 (one shared policy per condition and seed on `BASE_SKILLS`), repair (each `FROM:TO` in `REPAIRS`, in
     each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill evaluated every
     `REPAIR_EVAL_INTERVAL` (10k) steps);
-  - **defaults:** multi-task SAC, competence sampling, shaped rewards, 2 blocks, the OpenAI text backend,
-    13 base skills; the `TO` of each repair pair (`unstack-raised`, `place-beside`, `push-left-front`) is
-    held out of training until its repair run, so the fourth diagonal push is held out and the other three
-    are trained;
+  - **defaults** (the `Experiment` base class, and every run's options): multi-task SAC, competence sampling,
+    shaped rewards, 2 blocks, the OpenAI text backend, 13 training skills; the `TO` of each repair pair
+    (`unstack-raised`, `place-beside`, `push-left-front`) is held out of training until its repair run, so the
+    fourth diagonal push is held out and the other three are trained;
   - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
     by side get through the plan several times faster;
   - announces each run (what it trains, why), reports progress every minute and each outcome; training
