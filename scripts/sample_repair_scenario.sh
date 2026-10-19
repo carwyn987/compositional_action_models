@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# A sample repair scenario with PPO, small enough for a few hours: can a policy carry out an operator it was never
+# A sample repair scenario (PPO by default), small enough for a few hours: can a policy carry out an operator it was never
 # trained on, from the operator's structure?
 #
 #   ./scripts/sample_repair_scenario.sh                 # every step; outputs in outputs/sample_repair_<date>/
@@ -28,7 +28,8 @@
 # "raised" with "unstack-raised", so a name embedding would carry the repair by itself.
 #
 # Settings (environment variables, defaults in brackets): OUT [outputs/sample_repair_<date>]  STEPS [1000000]
-# UNSTACK_STEPS [300000]  REPAIR_STEPS [500000]  SEED [0]  DEVICE [cpu: PPO's small networks run faster there]
+# UNSTACK_STEPS [300000]  REPAIR_STEPS [500000]  SEED [0]  ALGORITHM [ppo; mtsac explores more precisely near
+# the blocks, but runs about 4x slower per step]  DEVICE [cpu: PPO's small networks run faster there]
 # EVAL_EPISODES [20]  THREADS [cores / 3] torch threads per run  PYTHON [.venv/bin/python]. Finished runs are
 # skipped when run again.
 set -euo pipefail
@@ -41,12 +42,13 @@ UNSTACK_STEPS=${UNSTACK_STEPS:-300000}
 REPAIR_STEPS=${REPAIR_STEPS:-500000}
 SEED=${SEED:-0}
 DEVICE=${DEVICE:-cpu}
+ALGORITHM=${ALGORITHM:-ppo}
 EVAL_EPISODES=${EVAL_EPISODES:-20}
 THREADS=${THREADS:-$(( $(nproc) / 3 > 0 ? $(nproc) / 3 : 1 ))}
 export OMP_NUM_THREADS=$THREADS  # no CPU oversubscription with three runs side by side
 # this repository's code only: not a PYTHONPATH from the shell (e.g. a sourced ROS setup, whose pytest plugins fail)
 export PYTHONPATH=src PYTEST_DISABLE_PLUGIN_AUTOLOAD=1
-COMMON=(--algorithm ppo --reward shaped --num-blocks 2 --skill-sampling competence --seed "$SEED" --device "$DEVICE"
+COMMON=(--algorithm "$ALGORITHM" --reward shaped --num-blocks 2 --skill-sampling competence --seed "$SEED" --device "$DEVICE"
         --eval-episodes "$EVAL_EPISODES")
 TREE=(--operator-encoder compositional --compositional-architecture tree --compositional-name none)
 mkdir -p "$OUT/logs"
@@ -68,7 +70,7 @@ step_check() {
 }
 
 step_train() {
-    echo "== train (PPO, side by side; about 2-3 hours at 1M steps on 6 CPU cores)"
+    echo "== train ($ALGORITHM, side by side; PPO: about 2-3 hours at 1M steps on 6 CPU cores)"
     local pids=() failed=0
     train unstack --skills unstack --operator-encoder one-hot --total-timesteps "$UNSTACK_STEPS" --eval-interval 50000 &
     pids+=($!)
