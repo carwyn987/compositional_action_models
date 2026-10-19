@@ -57,3 +57,10 @@ conditions (`--operator-encoder`, `--trainable-operator-embedding`, `--compositi
 | `docs/operator_embeddings.md` | every operator embedding condition, with worked examples |
 | `docs/component_diagrams.md` | component map, one training episode, class diagram (`.html` renders them in a browser) |
 | `docs/repository_redesign_overview.md` | the target architecture, and what of it is built |
+
+## Use of AI
+
+The code, documentation and analyses in this repository were created with AI assistance (Anthropic's Claude,
+through Claude Code), under strict human instruction, guidance and evaluation. The author sets the research
+questions and experiment designs, directs each change, and reviews, tests and evaluates every result commit by
+commit before it is merged.
