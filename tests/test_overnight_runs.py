@@ -124,3 +124,27 @@ def test_the_command_line_chooses_the_experiment(tmp_path):
                             cwd=overnight_runs.ROOT, env=environment, capture_output=True, text=True, check=True).stdout
     assert "Representation overlap: 13 training skills" in static and "Checks before starting" not in static
     assert set(plan()) == {"Learnability", "RQ1", "Repair"}
+
+
+@pytest.mark.unit
+def test_the_review_reports_a_repairs_transfer_gain_against_its_learnability_run(tmp_path):
+    """pickup-raised needed 60k steps alone (its learnability run) and 20k on itself after being added to a repaired
+    run: a transfer gain of 3x. A repair without a learnability run in the folder (the control) reports none."""
+    from scripts.review_runs import section_added_skills
+
+    def run(path, points, summary):
+        path.mkdir(parents=True)
+        (path / "metrics.json").write_text(json.dumps({"curves": {"deterministic": {"points": points}},
+                                                       "summary": summary}))
+        return path
+
+    def summary(skill, **values):
+        return {mode: {skill: values} for mode in ("deterministic", "stochastic")}
+
+    alone = run(tmp_path / "learnability" / "pickup-raised" / "run", [{"step": 0, "result": {"pickup-raised": {}}}],
+                summary("pickup-raised", steps_to_threshold=60_000))
+    repaired = run(tmp_path / "repair" / "pickup-raised" / "tree", [
+        {"step": 0, "result": {"pickup": {}}}, {"step": 500_000, "result": {"pickup-raised": {}}}],
+        summary("pickup-raised", zero_shot_success_rate=0.0, steps_to_threshold=20_000, skill_steps_to_threshold=20_000))
+    assert any("transfer gain 3.00x" in line for line in section_added_skills([alone, repaired]))
+    assert not any("transfer gain" in line for line in section_added_skills([repaired]))

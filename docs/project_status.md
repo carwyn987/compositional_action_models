@@ -248,8 +248,9 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   - Ctrl+C saves and stops every run, and the same command resumes;
   - outputs: run directories per group, `logs/`, `failed.txt`, `summary.csv`, and `review.txt` at the end.
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training
-  statistics including embedding magnitudes, added and repaired skills (with a `REPAIR INVALID` flag when
-  repair-hidden succeeds zero-shot), and learned embedding geometry.
+  statistics including embedding magnitudes, added and repaired skills (their transfer gain, the steps from scratch
+  in their learnability run divided by the steps after the repair, and a `REPAIR INVALID` flag when repair-hidden
+  succeeds zero-shot), and learned embedding geometry.
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
 - **`scripts/watch_best_policies.py`:** for each skill, play the best trained policy in a folder of runs (the
   newest overnight folder by default), even while it is still training.

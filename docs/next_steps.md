@@ -110,9 +110,6 @@ In rough priority order.
 ## 4. Features to add
 
 1. **Analysis without new training**
-   - **Transfer gain** in `review_runs.py`: the repaired skill's steps to threshold in a repair run, divided
-     by its steps to threshold when learned from scratch. The learnability runs already train every
-     held-out skill from scratch.
    - **Confidence intervals** across seeds (bootstrap), instead of mean ± std alone.
 2. **Operator relabeling (hindsight relabeling at the symbolic level).** An episode that satisfied another
    operator's effects is a success for that operator: a `push-left` episode that ended in `at-front` is a
@@ -187,7 +184,6 @@ In rough priority order.
     `push-beside`);
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
-  - transfer gain (§4.1);
   - more pairs where the repaired literal appears in training in a different skill;
   - push-beside reached only 0.55 alone in the 2026-10-11 run; if it can't be learned, place-beside's
     `(beside ?o ?u)` is trained but not learned, and that pair says little.
@@ -231,7 +227,7 @@ In rough priority order.
 ## 6. Suggested order
 
 1. **Read the current overnight run** with §2.
-2. **Before the next overnight run:** fix the one-hot aliases (§3.1), add transfer gain and confidence
+2. **Before the next overnight run:** fix the one-hot aliases (§3.1), add confidence
    intervals (§4.1), and shorten run names (§3.2). Then run `--experiment rq3-repair-minimal` (learnability, RQ1, then
    the repairs) with `SEEDS="0 1 2"`.
 3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
