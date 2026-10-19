@@ -62,6 +62,14 @@ are reference.
 | `docs/research_focus.md` | the research questions (RQ1–RQ6): for each, the hypothesis, experiment, controls, metrics and interpretation |
 | `docs/project_status.md` | what the code does (environment, predicates, skills, success and failure, embeddings, training, metrics, scripts) and the results so far |
 | `docs/next_steps.md` | the single backlog: open issues, features, the next work for each research question; start a new session here |
+| `docs/related_work.md` | the closest prior work for each research question, what this project adds, and references |
 | `docs/policy_inputs.md` | the policy's observation: state, operator embedding, grounding slots |
 | `docs/operator_embeddings.md` | every operator embedding condition (one-hot, random, text, multi-hot, trainable, compositional), with worked examples |
 | `docs/component_diagrams.md` | component map, one training episode, class diagram (`.html` renders them in a browser) |
+
+## Use of AI
+
+The code, documentation and analyses in this repository were created with AI assistance (Anthropic's Claude,
+through Claude Code), under strict human instruction, guidance and evaluation. The author sets the research
+questions and experiment designs, directs each change, and reviews, tests and evaluates every result commit by
+commit before it is merged.
