@@ -40,4 +40,7 @@ def test_coverage_counts_the_held_out_operators_units_seen_in_training():
     assert alone == pytest.approx(8 / 9)
     covered = level(overlap(["unstack", "pickup-raised"], held_out=["unstack-raised"]), "literals")
     assert covered.coverage["unstack-raised"] == 1.0
-    assert "coverage unstack-raised" in report(["unstack", "pickup-raised"], ["unstack-raised"])
+    text = report(["unstack", "pickup-raised"], ["unstack-raised"])
+    assert "coverage unstack-raised" in text
+    literals_row = next(line for line in text.splitlines() if line.strip().startswith("literals"))
+    assert "multi-hot (its similarity)" in literals_row and "lower bound" in literals_row

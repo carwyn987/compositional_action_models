@@ -220,7 +220,10 @@ class RepresentationOverlap(Experiment):
 
     The metrics that answer it, per level: the fraction of each skill's units that another training skill also has
     (skill shared; its mean over the skills) and the mean Jaccard similarity of pairs of skills (pair overlap); per
-    held-out operator, the fraction of its units the training skills have (coverage). They show that a policy could
+    held-out operator, the fraction of its units the training skills have (coverage). Which row to read depends on
+    the embedding: multi-hot shares literals only, so the literals row is its similarity; the compositional
+    encoders reuse predicates, atoms and literals at once, so for them the literals row is a lower bound (the
+    report's "reused by" column says this per row); identifiers share nothing. They show that a policy could
     reuse structure, not that it does. The hypothesis they serve: the more of a skill's literals other training
     skills share, the more a structured embedding can help it over an identifier (RQ1); and a held-out operator can
     only be carried out zero-shot from structure seen in training, coverage 1 at the literal level (RQ2, RQ3).

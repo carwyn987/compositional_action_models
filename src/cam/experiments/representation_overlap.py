@@ -26,6 +26,18 @@ Coarse levels are shared more than fine ones: most blocksworld skills mention cl
 literal in the same place with the same sign, few share a whole precondition, and no two skills have the same
 operator (otherwise they would be the same skill to a planner).
 
+Which level each embedding reuses. One-hot and random identifiers share nothing at any level. Multi-hot shares
+literals only: its positional features are exactly the literals level (plus a coarser feature per section and
+predicate, without arguments), so the literals row is its similarity, and to it precondition on-table(0) and add
+on-table(0) are unrelated. The compositional encoders reuse three levels at once: each predicate has one learned
+embedding (predicates), an atom gets the same vector wherever it appears, in either section and with either sign
+(atoms), and a literal contributes the same term to its section's sum (literals: the tree's AND and PRE/EFF, the slot
+and grid tokens). So for them the literals row is a lower bound, and the atoms and predicates rows are what they link
+on top. The sections row understates them: it counts a precondition or effect as shared only when the whole set is
+identical, but the tree's AND sums its literals before its final network, so sections that share most literals
+look alike to it, which the literals row's pair overlap reflects better. None of this says how similar the trained
+embeddings are; that is learned (review_runs.py section 6, and the RQ5 probes).
+
 The measures, at each level, over the skills given (the training skills):
     units         how many distinct units the skills have together
     shared units  the fraction of those units that at least two skills have
@@ -44,6 +56,14 @@ from itertools import combinations
 from cam.skills.registry import build_skill
 
 LEVELS = ("predicates", "atoms", "literals", "sections", "operators")
+# The operator embeddings that reuse each level's units (module docstring: which level each embedding reuses)
+REUSED_BY = {
+    "predicates": "compositional",
+    "atoms": "compositional",
+    "literals": "multi-hot (its similarity); compositional (a lower bound)",
+    "sections": "compositional, graded (this row: identical sets only)",
+    "operators": "none",
+}
 
 
 def operator_units(skill: str) -> dict[str, frozenset[str]]:
@@ -111,12 +131,18 @@ def report(skills, held_out=()) -> str:
     title = f"Representation overlap: {len(list(dict.fromkeys(skills)))} training skills"
     lines = [title + (f"; held out: {', '.join(held_out)}" if held_out else "")]
     header = f"  {'level':11s} {'units':>5s}  {'shared units':>12s}  {'skill shared':>12s}  {'pair overlap':>12s}"
-    lines.append(header + "".join(f"  {'coverage ' + skill:>{max(14, len(skill) + 9)}s}" for skill in held_out))
+    lines.append(header + "".join(f"  {'coverage ' + skill:>{max(14, len(skill) + 9)}s}" for skill in held_out)
+                 + "  reused by")
     for row in levels:
         lines.append(f"  {row.level:11s} {row.units:5d}  {row.shared_units:12.2f}  {row.mean_skill_shared:12.2f}  "
                      f"{row.pair_overlap:12.2f}"
-                     + "".join(f"  {row.coverage[skill]:>{max(14, len(skill) + 9)}.2f}" for skill in held_out))
+                     + "".join(f"  {row.coverage[skill]:>{max(14, len(skill) + 9)}.2f}" for skill in held_out)
+                     + f"  {REUSED_BY[row.level]}")
     literal_level = next(row for row in levels if row.level == "literals")
     lines.append("  skill shared, literals: " + ", ".join(f"{skill} {value:.2f}"
                                                           for skill, value in literal_level.skill_shared.items()))
+    lines.append("  how to read it: multi-hot shares literals only, so the literals row is its similarity; the compositional "
+                 "encoders reuse predicates, atoms and literals at once, so for them the literals row is a lower bound "
+                 "and the atoms and predicates rows are what they link on top; identifiers (one-hot, random) share "
+                 "nothing")
     return "\n".join(lines)
