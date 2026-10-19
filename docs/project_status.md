@@ -231,6 +231,12 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
   episodes given its own operator input and then another skill's (e.g. unstack-raised given unstack's). Unchanged
   success and behaviour mean the policy does not use the operator to tell the two apart. Works with every encoder,
   compositional ones included.
+- **`scripts/sample_repair_scenario.sh`:** a repair scenario with PPO in a few hours (steps `check`, `train`,
+  `repair`, `evaluate`). A one-hot policy trained on unstack alone is evaluated on unstack-raised with unstack's
+  exact embedding, and must fail (lifting on and on is not raising). A compositional-tree policy (no operator
+  name, which would carry "raised") trained on pickup, unstack and unstack-raised gets pickup-raised added and
+  trained alone: its zero-shot success and steps to threshold against pickup-raised from scratch, the
+  wrong-embedding control before and after, and whether each policy is stuck or slow.
 - **`scripts/start_tensorboard.sh`:** `LOGDIR=<folder> ./scripts/start_tensorboard.sh`.
 
 ### Infrastructure notes
