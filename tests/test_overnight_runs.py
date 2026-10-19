@@ -120,4 +120,7 @@ def test_the_command_line_chooses_the_experiment(tmp_path):
         return re.findall(r"^\s+\d+\. (\S+)", output, re.MULTILINE)
 
     assert plan("--experiment", "learnability") == ["Learnability"] * len(SKILL_REGISTRY)
+    static = subprocess.run([sys.executable, "scripts/overnight_runs.py", "--experiment", "overlap"],
+                            cwd=overnight_runs.ROOT, env=environment, capture_output=True, text=True, check=True).stdout
+    assert "Representation overlap: 13 training skills" in static and "Checks before starting" not in static
     assert set(plan()) == {"Learnability", "RQ1", "Repair"}

@@ -202,8 +202,11 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     `src/cam/experiments/research_experiments.py`: the docstring gives the question, design, controls and what
     to read; the attributes are the runner's settings (groups, skills, repairs, conditions, budgets). An
     environment variable named as a setting overrides it, and the runner lists the overrides. `learnability`:
-    each registered skill alone; `rq1`: one shared policy per condition on the training skills; `rq3-repair`:
-    rq1's policies continued with repaired operators;
+    each registered skill alone; `rq1`: one shared policy per operator embedding on the training skills;
+    `rq3-repair`: rq1's policies continued with repaired operators; `overlap`: how much of their operators'
+    structure the training skills share, at five levels from predicates to whole operators, and how much of each
+    held-out operator they cover (`src/cam/experiments/representation_overlap.py`; static, nothing trains). Every
+    experiment prints the same report for its own skills when it starts and saves it as `<OUT>/overlap.txt`;
   - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
     skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
   - **groups:** learnability (each skill alone, multi-hot; also the individually trained baseline for RQ4),

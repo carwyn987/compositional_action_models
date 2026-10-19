@@ -88,6 +88,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
+from cam.experiments.representation_overlap import report as overlap_report
 from cam.experiments.research_experiments import EXPERIMENTS, literals, untrained_literals
 from cam.skills.registry import SKILL_REGISTRY
 
@@ -755,6 +756,10 @@ def main() -> None:
         condition_options(condition)
     check_repair_modes()
     check_repairs()
+    overlap = overlap_report(BASE_SKILLS, REPAIRED)  # how much of their operators the skills share (static)
+    if not RUN_GROUPS:  # a static experiment (overlap): the report is all it does
+        say(overlap)
+        return
     runs = build_plan()
     if not runs:
         sys.exit(f"nothing to run for RUN_GROUPS={' '.join(RUN_GROUPS)}")
@@ -767,6 +772,7 @@ def main() -> None:
     if "repair" in RUN_GROUPS:
         for repair_from, repair_to in REPAIRS:
             say(f"  repair: {repair_from} -> {repair_to} ({repair_difference(repair_from, repair_to)})")
+    say(overlap)
     runner.print_plan()
     if DRY_RUN:
         for run in runs:
@@ -784,6 +790,7 @@ def main() -> None:
         except (OSError, ValueError):
             pass  # stale lock from a run that is gone
     lock.write_text(str(os.getpid()))
+    (OUT / "overlap.txt").write_text(overlap + "\n")
     signal.signal(signal.SIGINT, runner.interrupt)
     signal.signal(signal.SIGTERM, runner.interrupt)
     try:

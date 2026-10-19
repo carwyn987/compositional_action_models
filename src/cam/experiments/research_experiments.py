@@ -126,7 +126,9 @@ class RQ1(Experiment):
     sampling), AUC and final success. Compare per skill, not averaged: easy skills dominate a mean. If the identifier
     embeddings match the structured ones on every skill, the operator's structure bought nothing on training skills,
     which the literature predicts (docs/related_work.md); differences are most likely on skills whose literals other
-    training skills share. Check first, in the learnability results, that every training skill learns alone.
+    training skills share. The overlap report the runner prints first (<OUT>/overlap.txt; the overlap experiment)
+    gives each skill's shared fraction: compare the embeddings' gains on skills with high and with low sharing.
+    Check first, in the learnability results, that every training skill learns alone.
     """
 
     name = "rq1"
@@ -158,7 +160,8 @@ class RQ3Repair(Experiment):
     repair-hidden (the difference is what the policy read from the operator); TO's steps to threshold against its
     learnability run (the transfer gain); and what the other skills forgot. A pair is only informative where the rq1
     policy learned FROM and the skills that carry TO's literals, so check their final success in the rq1 run first.
-    The runner refuses to start if the training skills leave a literal of a repaired operator untrained. Operator
+    Coverage in the overlap report (printed first) says how much of TO the training skills have, and the runner
+    refuses to start if the training skills leave a literal of a repaired operator untrained. Operator
     embeddings: one of each kind (identity, literals, text, composition), and only isolated repairs, whose steps
     compare directly with learning from scratch; OPERATOR_EMBEDDINGS and REPAIR_MODES add the others at the cost of
     a longer plan.
@@ -172,8 +175,37 @@ class RQ3Repair(Experiment):
     repair_modes = ("isolated",)
 
 
+class RepresentationOverlap(Experiment):
+    """How much of their operators' structure do the training skills share, and how much of each held-out operator
+    do they cover?
+
+    Static: computed from the operators alone in under a second, nothing trains (src/cam/experiments/
+    representation_overlap.py describes exactly what is counted). Each operator is split into units at five
+    levels, from coarse to fine: the predicates it mentions, its atoms (predicate and arguments by parameter
+    position), its literals (atom, place in the operator and sign: the multi-hot features and the compositional
+    literal components), its whole precondition and effect, and the whole operator.
+
+    The metrics that answer it, per level: the fraction of each skill's units that another training skill also has
+    (skill shared; its mean over the skills) and the mean Jaccard similarity of pairs of skills (pair overlap); per
+    held-out operator, the fraction of its units the training skills have (coverage). They show that a policy could
+    reuse structure, not that it does. The hypothesis they serve: the more of a skill's literals other training
+    skills share, the more a structured embedding can help it over an identifier (RQ1); and a held-out operator can
+    only be carried out zero-shot from structure seen in training, coverage 1 at the literal level (RQ2, RQ3).
+    Every experiment prints the same report for its own skills when it starts, to read next to its results:
+
+        .venv/bin/python scripts/overnight_runs.py --experiment overlap
+        BASE_SKILLS="pickup unstack pickup-raised" REPAIRS="unstack:unstack-raised" \\
+            .venv/bin/python scripts/overnight_runs.py --experiment overlap
+    """
+
+    name = "overlap"
+    run_groups = ()
+    base_skills = TRAINING_SKILLS
+    repairs = RQ3Repair.repairs
+
+
 EXPERIMENTS: dict[str, type[Experiment]] = {
-    experiment.name: experiment for experiment in (Learnability, RQ1, RQ3Repair)
+    experiment.name: experiment for experiment in (Learnability, RQ1, RQ3Repair, RepresentationOverlap)
 }
 
 
