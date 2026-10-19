@@ -45,8 +45,8 @@ flowchart LR
         multiblock[&quot;fetch/fetch_multiblock_environment.py&lt;br/&gt;FetchMultiBlock-v0 (1-5 blocks)&quot;]
         annot[&quot;fetch/fetch_env_state_annotation_wrapper.py&lt;br/&gt;drops goal keys; info: environment_state (FetchState),&lt;br/&gt;objects, object_features&quot;]
         preds[&quot;fetch/fetch_predicate_evaluation_wrapper.py&lt;br/&gt;FETCH_PREDICATES → info: facts&lt;br/&gt;check_fetch_failure · FETCH_FRAME_PREDICATES&quot;]
-        skillenv[&quot;skill_environment.py: SkillEnvironment&lt;br/&gt;skill per reset · setup chain · grounding&lt;br/&gt;settled success · frame · failure · reward&quot;]
-        scripted[&quot;fetch/fetch_scripted_policies.py&lt;br/&gt;scripted pickup / putdown / stack / place-beside / push&quot;]
+        skillenv[&quot;skill_environment.py: SkillEnvironment&lt;br/&gt;skill per reset (round-robin / competence) · setup chain&lt;br/&gt;grounding · settled success · frame · failure · reward&quot;]
+        scripted[&quot;fetch/fetch_scripted_policies.py&lt;br/&gt;scripted pickup / pickup-raised / putdown / stack / place-beside / push&quot;]
         fetchrewards[&quot;fetch/fetch_rewards.py&lt;br/&gt;staged rewards per skill (shaped)&lt;br/&gt;FetchMotionReward (every skill)&quot;]
     end
 
@@ -77,7 +77,8 @@ flowchart LR
     subgraph training[&quot;cam.training&quot;]
         direction TB
         policyobs[&quot;policy_observation_wrapper.py&lt;br/&gt;observation · operator_embedding · grounding&quot;]
-        sb3[&quot;stable_baselines3_trainer.py&lt;br/&gt;SAC / PPO · success-rate, embedding-magnitude&lt;br/&gt;and composition weight decay callbacks&quot;]
+        sb3[&quot;stable_baselines3_trainer.py&lt;br/&gt;SAC / multi-task SAC / PPO · success-rate, embedding-magnitude,&lt;br/&gt;composition weight decay and resume warm-up callbacks&quot;]
+        mtsac[&quot;multi_task_sac.py&lt;br/&gt;MultiTaskSAC: an entropy temperature per skill&quot;]
         checkpoint[&quot;checkpointing.py&lt;br/&gt;atomic saves · PeriodicSaveCallback&quot;]
     end
 
@@ -95,7 +96,6 @@ flowchart LR
     subgraph planned[&quot;Planned&quot;]
         direction TB
         provider[&quot;PolicyProvider: FiLM / hypernetwork&quot;]
-        sampler[&quot;SkillSampler (competence-based)&quot;]
         learnedsetup[&quot;Setup by learned skill policies&quot;]
     end
 
@@ -148,6 +148,7 @@ flowchart LR
     policyobs --&gt; openc
     policyobs --&gt; groundenc
     sb3 -- trains on --&gt; policyobs
+    sb3 --&gt; mtsac
     sb3 --&gt; checkpoint
     metricscb --&gt; evaluate
     metricscb --&gt; curve
@@ -182,16 +183,15 @@ flowchart LR
 
     %% planned wiring
     provider -.-&gt; sb3
-    sampler -.-&gt; skillenv
     learnedsetup -.-&gt; skillenv
 
     classDef plannedStyle fill:#eeeeee,stroke:#999999,stroke-dasharray:5 5,color:#666666
-    class provider,sampler,learnedsetup plannedStyle
+    class provider,learnedsetup plannedStyle
 </pre>
 <h2>One training episode</h2>
 <pre class="mermaid">
 sequenceDiagram
-    participant A as SB3 (SAC / PPO)
+    participant A as SB3 (SAC / MT-SAC / PPO)
     participant O as PolicyObservationWrapper
     participant S as SkillEnvironment
     participant F as Predicate ∘ Annotation ∘ Fetch
@@ -199,7 +199,7 @@ sequenceDiagram
 
     A-&gt;&gt;O: reset()
     O-&gt;&gt;S: reset()
-    S-&gt;&gt;S: choose skill (option or next in turn), and one of its setup chains
+    S-&gt;&gt;S: choose skill (option, next in turn, or by competence), and one of its setup chains
     S-&gt;&gt;F: reset()
     F--&gt;&gt;S: obs, info{environment_state, objects, object_features, facts}
     loop each setup skill (e.g. pickup before putdown)
@@ -370,6 +370,8 @@ classDiagram
         +check_failure: callable
         +frame_predicates: frozenset
         +success_hold_steps: int
+        +competence_sampling: bool
+        +competence_shares() dict
         +reset(seed, options) tuple
         +step(action) tuple
     }
@@ -443,12 +445,20 @@ classDiagram
         &lt;&lt;module&gt;&gt;
         +train_stable_baselines3(env, algorithm, ...) model
     }
+    class SAC {
+        &lt;&lt;external&gt;&gt;
+    }
+    class MultiTaskSAC {
+        +skill_slots: dict
+        +skill_temperatures() dict
+    }
     class BaseCallback {
         &lt;&lt;external&gt;&gt;
     }
     class SuccessRateCallback
     class OperatorEmbeddingMagnitudeCallback
     class CompositionWeightDecayCallback
+    class ResumeWarmupCallback
     class PeriodicSaveCallback
 
     %% ---- evaluation ----
@@ -494,7 +504,9 @@ classDiagram
     BaseCallback &lt;|-- SuccessRateCallback
     BaseCallback &lt;|-- OperatorEmbeddingMagnitudeCallback
     BaseCallback &lt;|-- CompositionWeightDecayCallback
+    BaseCallback &lt;|-- ResumeWarmupCallback
     BaseCallback &lt;|-- PeriodicSaveCallback
+    SAC &lt;|-- MultiTaskSAC
     BaseCallback &lt;|-- MetricsCallback
 
     %% composition / aggregation
@@ -545,6 +557,8 @@ classDiagram
     stable_baselines3_trainer ..&gt; PolicyObservationWrapper : trains on
     stable_baselines3_trainer ..&gt; SuccessRateCallback
     stable_baselines3_trainer ..&gt; PeriodicSaveCallback
+    stable_baselines3_trainer ..&gt; ResumeWarmupCallback
+    stable_baselines3_trainer ..&gt; MultiTaskSAC : mtsac
     main ..&gt; stable_baselines3_trainer
     main ..&gt; TrainableOperatorEmbeddingExtractor : policy_kwargs
     main ..&gt; CompositionalPolicyFeaturesExtractor : policy_kwargs
