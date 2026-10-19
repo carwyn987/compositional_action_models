@@ -169,6 +169,11 @@ OPERATOR_EMBEDDING_OPTIONS = {
              f"the operator described in a paragraph, embedded by the {TEXT_BACKEND} text model"),
     "compositional-tree": (["--operator-encoder", "compositional", "--compositional-architecture", "tree"],
                            "the operator's structure, composed by learned functions following the PDDL syntax"),
+    # the same without the operator's name, which can carry a repair by itself ("pickup-raised" shares "raised" with
+    # "unstack-raised"): only the structure tells the policy which skill to do
+    "compositional-tree-no-name": (["--operator-encoder", "compositional", "--compositional-architecture", "tree",
+                                    "--compositional-name", "none"],
+                                   "the operator's structure without its name, composed along the PDDL syntax"),
     "compositional-slots": (["--operator-encoder", "compositional", "--compositional-architecture", "slots"],
                             "the operator's components as tokens, grouped by slot attention"),
     "compositional-geometric": (
