@@ -39,10 +39,11 @@ The text embedding condition with `--text-backend openai` reads the OpenAI key f
 ./main.py --run-directory outputs/<run>                      # resume a run
 ./scripts/run_skill.py --policy model --run-directory outputs/<run> --skill pickup --render
 
-DRY_RUN=1 ./scripts/start_overnight.sh                       # the overnight plan and its time estimate
-DEVICE=cuda ./scripts/start_overnight.sh                     # run it (inside tmux)
-RUN_GROUPS=learnability JOBS=6 ./scripts/start_overnight.sh  # one group, 6 runs at a time
-CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh   # settings: see overnight_runs.py
+./scripts/start_overnight.sh --list                          # the experiments: what each asks, and its settings
+DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq3-repair   # an experiment's plan and its time estimate
+DEVICE=cuda ./scripts/start_overnight.sh --experiment rq3-repair # run it (inside tmux)
+JOBS=6 ./scripts/start_overnight.sh --experiment learnability    # another experiment, 6 runs at a time
+CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.sh --experiment rq1   # override its settings
 ./scripts/review_runs.py outputs/overnight_<date>            # report: runs, conditions, curves, repairs
 ./scripts/watch_best_policies.py                             # the best trained policy per skill
 ./scripts/check_policy_progress.py outputs/<run>             # is a trained policy stuck, or slowly getting there?
@@ -51,8 +52,9 @@ CONDITIONS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_overnight.
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
 ```
 
-Each script's header and `--help` describe its options; the overnight runner's settings are environment
-variables listed in the header of `scripts/overnight_runs.py`. `main.py --help` lists the operator embedding
+Each script's header and `--help` describe its options; the overnight runner's settings are each experiment's
+(`src/cam/experiments/research_experiments.py`, or `--list`), and an environment variable of a setting's name
+overrides it for one run. `main.py --help` lists the operator embedding
 conditions (`--operator-encoder`, `--trainable-operator-embedding`, `--compositional-architecture`).
 
 ## Documentation
@@ -65,6 +67,14 @@ are reference.
 | `docs/research_focus.md` | the research questions (RQ1–RQ6): for each, the hypothesis, experiment, controls, metrics and interpretation |
 | `docs/project_status.md` | what the code does (environment, predicates, skills, success and failure, embeddings, training, metrics, scripts) and the results so far |
 | `docs/next_steps.md` | the single backlog: open issues, features, the next work for each research question; start a new session here |
+| `docs/related_work.md` | the closest prior work for each research question, what this project adds, and references |
 | `docs/policy_inputs.md` | the policy's observation: state, operator embedding, grounding slots |
 | `docs/operator_embeddings.md` | every operator embedding condition (one-hot, random, text, multi-hot, trainable, compositional), with worked examples |
 | `docs/component_diagrams.md` | component map, one training episode, class diagram (`.html` renders them in a browser) |
+
+## Use of AI
+
+The code, documentation and analyses in this repository were created with AI assistance (Anthropic's Claude,
+through Claude Code), under strict human instruction, guidance and evaluation. The author sets the research
+questions and experiment designs, directs each change, and reviews, tests and evaluates every result commit by
+commit before it is merged.
