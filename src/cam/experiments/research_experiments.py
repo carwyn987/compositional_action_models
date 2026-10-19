@@ -173,17 +173,27 @@ class RQ3RepairMinimal(RQ3Repair):
     zero-shot success, which one other context makes less likely. The controls and the metrics are RQ3Repair's
     (research_experiments.py).
 
-    Pairs, with the skills that carry what TO adds:
-      unstack -> unstack-raised     effect (not (raised ?o)) becomes (raised ?o): pickup-raised adds (raised ?o), and
-                                    pickup is its contrast (the same operator with (not (raised ?o)))
-      putdown -> place-beside       adds parameter ?u, precondition (on-table ?u) and effect (beside ?o ?u): both in
-                                    push-beside
-      push-left -> push-left-front  adds (not (at-front ?o)) and (at-front ?o): both in push-front
+    Pairs, each written with every training skill it relies on (relies_on): together they have every literal of
+    the operator on the right, so the repaired operator is made only of literals the policy has seen.
+      unstack, pickup, pickup-raised -> unstack-raised
+          FROM is unstack; effect (not (raised ?o)) becomes (raised ?o), which pickup-raised adds, and pickup is
+          its contrast (the same operator with (not (raised ?o)))
+      putdown, push-beside -> place-beside
+          FROM is putdown; adds parameter ?u, precondition (on-table ?u) and effect (beside ?o ?u), all in
+          push-beside
+      push-left, push-front -> push-left-front
+          FROM is push-left; adds precondition (not (at-front ?o)) and effect (at-front ?o), both in push-front
     """
 
     name = "rq3-repair-minimal"
     base_skills = ("pickup", "pickup-raised", "unstack", "putdown", "push-beside", "push-left", "push-front")
     repairs = (("unstack", "unstack-raised"), ("putdown", "place-beside"), ("push-left", "push-left-front"))
+    # each repaired operator (TO) -> the training skills it relies on, FROM first (documentation, checked by a test)
+    relies_on = {
+        "unstack-raised": ("unstack", "pickup", "pickup-raised"),
+        "place-beside": ("putdown", "push-beside"),
+        "push-left-front": ("push-left", "push-front"),
+    }
 
 
 class RQ3RepairMaximal(RQ3Repair):
@@ -193,12 +203,15 @@ class RQ3RepairMaximal(RQ3Repair):
     trained in several pushes and combined in the other three diagonals: the most favourable case for zero-shot
     transfer, and the longest rq1 runs. The controls and the metrics are RQ3Repair's (research_experiments.py).
 
-    Pairs:
-      push-left -> push-left-front  adds (not (at-front ?o)) and (at-front ?o): in push-front and the other diagonals
+    Pairs, each written with every training skill it relies on (relies_on):
+      push-left, push-front, push-right-front, push-left-back, push-right-back -> push-left-front
+          FROM is push-left; adds precondition (not (at-front ?o)) and effect (at-front ?o), in push-front and in
+          the other diagonals, which also combine a side and a front or back region
     """
 
     name = "rq3-repair-maximal"
     base_skills = TRAINING_SKILLS
+    relies_on = {"push-left-front": ("push-left", "push-front", "push-right-front", "push-left-back", "push-right-back")}
     repairs = (
         ("push-left", "push-left-front"),
         # TODO: enable stack -> place-beside, a pair with little overlap (stack and place-beside share few literals,

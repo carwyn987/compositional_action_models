@@ -25,3 +25,19 @@ def test_a_literal_counts_as_trained_only_with_its_place_sign_and_arguments():
     assert untrained_literals("push-left-front", ["push-left"]) == ["effect (at-front ?o)",
                                                                     "precondition (not (at-front ?o))"]
     assert untrained_literals("push-left-front", ["push-left", "push-front"]) == []
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("name", ["rq3-repair-minimal", "rq3-repair-maximal"])
+def test_each_repair_relies_on_training_skills_that_have_every_literal_of_the_repaired_operator(name):
+    """The skills a repair is documented to rely on are training skills, start with FROM, and between them have every
+    literal of TO; without them (the control, FROM alone) a literal is missing."""
+    from cam.experiments.research_experiments import EXPERIMENTS, untrained_literals
+
+    experiment = EXPERIMENTS[name]
+    assert set(experiment.relies_on) == {to for _, to in experiment.repairs}
+    for repair_from, repair_to in experiment.repairs:
+        skills = experiment.relies_on[repair_to]
+        assert skills[0] == repair_from and set(skills) <= set(experiment.base_skills)
+        assert untrained_literals(repair_to, skills) == []
+        assert untrained_literals(repair_to, [repair_from]) != []
