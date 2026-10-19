@@ -3,8 +3,14 @@
 Each reads the moved block from the grounded action's first argument (stack: the
 base block from the second) and the scene from info["environment_state"]
 (FetchState) and info["facts"]. Every reward is staged: each stage has dense
-progress terms (the change since the previous step, clipped) and a one-time
-bonus, and every term is reported as a named reward component.
+progress terms (the change since the previous step) and a one-time bonus, and
+every term is reported as a named reward component.
+
+Progress terms are not clipped per step, so over an episode each sums to the net
+progress, and moving back and forth earns nothing. Clipped, a fast move back would
+be charged less than the slow move forward earned: holding a block and lifting it
+slowly, then lowering it fast, would earn about 25 from pickup's lift term per
+episode against an honest 8, as much as a success, without ever succeeding.
 """
 
 from collections import deque
@@ -139,9 +145,6 @@ class FetchPickupRewardConfig:
     # 7. Complete pickup
     success_bonus: float = 15.0
 
-    # Prevent single noisy transitions from producing huge rewards.
-    max_position_progress: float = 0.025
-    max_lift_fraction_progress: float = 0.25
 
 
 @dataclass
@@ -221,7 +224,7 @@ class FetchPickupReward(RewardFunction):
         # 1. Approach the block: reward reduced distance, in every stage, so moving away again (e.g. once the stage
         #    bonuses are earned) costs what approaching earned. Being near the block earns nothing by itself.
         if self.previous_distance is not None:
-            progress = np.clip(self.previous_distance - distance, -cfg.max_position_progress, cfg.max_position_progress)
+            progress = self.previous_distance - distance
             components["reach"] = cfg.reach_progress_weight * float(progress)
 
         # 2. One-time reward for becoming aligned over the block.
@@ -232,9 +235,7 @@ class FetchPickupReward(RewardFunction):
         # 3. Reward lowering toward the grasp pose.
         if self.above_earned and not self.grasp_pose_earned:
             if self.previous_grasp_error is not None:
-                progress = np.clip(
-                    self.previous_grasp_error - grasp_error, -cfg.max_position_progress, cfg.max_position_progress
-                )
+                progress = self.previous_grasp_error - grasp_error
                 components["descend"] = cfg.descend_progress_weight * float(progress)
             if at_grasp_pose:
                 components["descend"] += cfg.grasp_pose_bonus
@@ -243,7 +244,7 @@ class FetchPickupReward(RewardFunction):
         # 4. Reward closing only after reaching the grasp pose.
         if self.grasp_pose_earned and not self.grip_earned:
             if self.previous_gripper_width is not None:
-                close_progress = np.clip(self.previous_gripper_width - gripper_width, -0.02, 0.02)
+                close_progress = self.previous_gripper_width - gripper_width
                 components["close"] = cfg.close_progress_weight * float(close_progress)
             if gripping_now:
                 components["grip"] = cfg.grip_bonus
@@ -251,11 +252,7 @@ class FetchPickupReward(RewardFunction):
 
         # 5. Reward upward block movement after gripping.
         if self.grip_earned or lift > 0.0:
-            lift_progress = np.clip(
-                lift_fraction - self.previous_lift_fraction,
-                -cfg.max_lift_fraction_progress,
-                cfg.max_lift_fraction_progress,
-            )
+            lift_progress = lift_fraction - self.previous_lift_fraction
             components["lift"] = cfg.lift_progress_weight * float(lift_progress)
         if lift_off_now and not self.lift_off_earned:
             components["lift_off"] = cfg.lift_off_bonus
@@ -325,7 +322,6 @@ class FetchStackRewardConfig:
     # 5. Complete stack
     success_bonus: float = 15.0
 
-    max_position_progress: float = 0.025
 
 
 @dataclass
@@ -368,11 +364,10 @@ class FetchStackReward(RewardFunction):
         return Predicate("on", (block_name, base_name)) in facts
 
     def progress(self, previous: float | None, current: float, weight: float) -> float:
-        """weight x the reduction of a gap since the previous step, clipped."""
+        """weight x the reduction of a gap since the previous step."""
         if previous is None:
             return 0.0
-        limit = self.config.max_position_progress
-        return weight * float(np.clip(previous - current, -limit, limit))
+        return weight * float(previous - current)
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -434,7 +429,7 @@ class FetchStackReward(RewardFunction):
         if placed:
             if self.previous_gripper_width is not None:
                 components["release"] = cfg.release_progress_weight * float(
-                    np.clip(gripper_width - self.previous_gripper_width, -0.02, 0.02)
+                    (gripper_width - self.previous_gripper_width)
                 )
             if released and not self.release_earned:
                 components["release"] += cfg.release_bonus
@@ -506,7 +501,6 @@ class FetchPutdownRewardConfig:
     descend_progress_weight: float = 20.0
     descend_dense_weight: float = 0.10
     descend_dense_sharpness: float = 15.0
-    max_height_progress: float = 0.025
 
     # 1b. Place it gently: penalize descending (or dropping) faster than this per-step speed, so the block
     #     is lowered under control rather than slammed or let fall (a full-speed slam is ~0.03 m/step)
@@ -516,7 +510,6 @@ class FetchPutdownRewardConfig:
     # 2. Keep the block square (faces axis-aligned); squareness is in (0, 1], 1 for an un-rotated block
     square_progress_weight: float = 6.0
     square_sharpness: float = 6.0
-    max_square_progress: float = 0.10
     square_land_bonus: float = 3.0
 
     # 3. Do not open the gripper while the block is still high (that drops it instead of placing it)
@@ -593,7 +586,7 @@ class FetchPutdownReward(RewardFunction):
         # 1. Lower the block toward the table until it rests there.
         if not on_table:
             if self.previous_height is not None:
-                progress = np.clip(self.previous_height - height, -cfg.max_height_progress, cfg.max_height_progress)
+                progress = self.previous_height - height
                 components["descend"] += cfg.descend_progress_weight * float(progress)
             components["descend"] += cfg.descend_dense_weight * float(np.exp(-cfg.descend_dense_sharpness * height))
 
@@ -605,7 +598,7 @@ class FetchPutdownReward(RewardFunction):
         # 2. Reward becoming more square, and a bonus scaled by squareness when it first comes to rest.
         if self.previous_squareness is not None:
             components["square"] += cfg.square_progress_weight * float(
-                np.clip(square - self.previous_squareness, -cfg.max_square_progress, cfg.max_square_progress)
+                square - self.previous_squareness
             )
         if on_table and not self.square_land_earned:
             components["square"] += cfg.square_land_bonus * square
@@ -624,7 +617,7 @@ class FetchPutdownReward(RewardFunction):
         if on_table:
             if self.previous_gripper_width is not None:
                 components["release"] = cfg.release_progress_weight * float(
-                    np.clip(gripper_width - self.previous_gripper_width, -0.02, 0.02)
+                    (gripper_width - self.previous_gripper_width)
                 )
             if released and not self.release_earned:
                 components["release"] += cfg.release_bonus
@@ -656,7 +649,6 @@ class FetchPushRewardConfig:
     push_progress_weight: float = 30.0
     # 3. Complete push
     success_bonus: float = 15.0
-    max_position_progress: float = 0.025
 
 
 @dataclass
@@ -688,7 +680,6 @@ class FetchPushReward(RewardFunction):
         direction = to_goal / max(goal_distance, 1e-6)
         behind = np.array([*(block[:2] - cfg.behind_offset * direction), block[2]])
         reach = float(np.linalg.norm(gripper - behind))
-        limit = cfg.max_position_progress
 
         components = {
             "time": -cfg.time_penalty,
@@ -701,14 +692,14 @@ class FetchPushReward(RewardFunction):
         # 1. Get behind the block.
         if not self.behind_earned:
             if self.previous_reach is not None:
-                components["reach"] = cfg.reach_progress_weight * float(np.clip(self.previous_reach - reach, -limit, limit))
+                components["reach"] = cfg.reach_progress_weight * float(self.previous_reach - reach)
             if reach <= cfg.behind_tolerance:
                 components["behind"] = cfg.behind_bonus
                 self.behind_earned = True
         # 2. Move the block toward its goal.
         if self.previous_goal_distance is not None:
             components["push"] = cfg.push_progress_weight * float(
-                np.clip(self.previous_goal_distance - goal_distance, -limit, limit)
+                self.previous_goal_distance - goal_distance
             )
         # 3. One-time terminal success reward.
         if success and not self.success_earned:

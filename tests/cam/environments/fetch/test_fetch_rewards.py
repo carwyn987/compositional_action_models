@@ -342,3 +342,24 @@ def test_raised_lift_peaks_in_the_band_and_stopping_where_wanted_earns_the_settl
     pickup = components(FetchPickupReward, [0.25, 0.33, 0.33, 0.40, 0.40])
     assert pickup[4]["lift"] == 0 and pickup[3]["lift"] == 0  # one-sided: nothing above its target
     assert [c["settle"] > 0 for c in pickup] == [False, False, False, False, True]  # at rest, below or above the band
+
+
+@pytest.mark.unit
+def test_lifting_slowly_and_lowering_fast_earns_nothing_from_the_lift():
+    """Holding the block, up 1 cm per step to pickup's 6 cm target and back down in 2 steps, three times: the lift
+    term sums to the net change, 0. Clipped per step at a quarter of the target (the control, on the same steps),
+    the fast way down is charged less than the slow way up earned, and every cycle pays."""
+    cycle = [0.01 * k for k in range(1, 7)] + [0.03, 0.0]
+    heights = [0.0] + cycle * 3
+    reward = FetchPickupReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    reward.grip_earned = True
+    lift = 0.0
+    for z in heights:
+        block = BLOCK0 + [0.0, 0.0, z]
+        info = {"environment_state": FetchState(block.copy(), 0.048, {"block0": block}),
+                "facts": frozenset({Predicate("holding", ("block0",))})}
+        lift += reward(PICKUP_BLOCK0, np.zeros(4), info, success=False)[1]["lift"]
+    fractions = np.clip(np.array(heights) / 0.06, 0.0, 1.0)
+    clipped = 8.0 * np.clip(np.diff(fractions), -0.25, 0.25).sum()
+    assert lift == pytest.approx(0.0, abs=1e-6) and clipped > 10
