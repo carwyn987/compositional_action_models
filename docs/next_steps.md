@@ -52,7 +52,7 @@ How changes are made here (keep doing this):
 
 | what the report shows | likely cause | next step |
 | --- | --- | --- |
-| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Look at its `failure` reasons in the logs and `watch_best_policies.py`. For the pushes, try `--max-steps-per-episode 150` (the gentle scripted diagonal needs ~105–120 steps). If failures dominate, revisit the thresholds (§3.2). |
+| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Check whether its policy is stuck or only slow (`check_policy_progress.py`: slow calls for a longer step limit, stuck for a reward change), look at its `failure` reasons in the logs, and watch it (`watch_best_policies.py`). For the pushes, try `--max-steps-per-episode 150` (the gentle scripted diagonal needs ~105–120 steps). If failures dominate, revisit the thresholds (§3.2). |
 | Many episodes end in **failure** (`disturbed`, `excessive force`, `dropped`) | constraints too strict for exploration, or a real behaviour problem | Watch the policy. Disturbance is 3 cm, force 500 N (penalty above 100 N); relax only if the behaviour is acceptable. |
 | **RQ1** conditions are indistinguishable | one seed, or too small a budget (13 skills in 500k steps is ~40k each) | 3+ seeds, `RQ1_STEPS=1000000`; then add confidence intervals (§4.1). |
 | A **compositional** condition lags | composition scale (watch `operator_embedding_magnitude_before_normalization/*`) or capacity | Tune `--composition-weight-decay`; compare tree / slots / geometric. |

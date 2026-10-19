@@ -39,6 +39,7 @@ DRY_RUN=1 ./scripts/start_overnight.sh                       # the overnight pla
 DEVICE=cuda ./scripts/start_overnight.sh                     # run it (inside tmux)
 ./scripts/review_runs.py outputs/overnight_<date>            # report: runs, conditions, curves, repairs
 ./scripts/watch_best_policies.py                             # the best trained policy per skill
+./scripts/check_policy_progress.py outputs/<run>             # is a trained policy stuck, or slowly getting there?
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
 ```
 

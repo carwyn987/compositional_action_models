@@ -215,6 +215,10 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
 - **`scripts/watch_best_policies.py`:** for each skill, play the best trained policy in a folder of runs (the
   newest overnight folder by default), even while it is still training.
+- **`scripts/check_policy_progress.py`:** is a trained policy stuck, or slowly getting to its goal? Plays each
+  skill of the given runs past the training step limit (300 steps) and gives each episode a verdict (success,
+  failed, progressing, stuck), with its distance to the goal, whether the block is gripped, and how much the
+  policy still explores where it ends up.
 - **`scripts/start_tensorboard.sh`:** `LOGDIR=<folder> ./scripts/start_tensorboard.sh`.
 
 ### Infrastructure notes
