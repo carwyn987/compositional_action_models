@@ -21,7 +21,7 @@ import numpy as np
 from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
-    AT_REST_DISTANCE,
+    SETTLE_DISTANCE,
     BESIDE_DISTANCE,
     OPEN_FINGER_WIDTH,
     MAX_GRIPPER_FORCE,
@@ -138,8 +138,9 @@ class FetchPickupRewardConfig:
     lift_off_bonus: float = 2.0
     lift_progress_weight: float = 8.0
 
-    # 6. Settle: once, the first step the held block is at rest where the skill wants it (in the raised band for the
-    #    raised variants, below it for pickup and unstack), so stopping there is rewarded before success (5 steps)
+    # 6. Settle: once, the first step the held block has settled where the skill wants it (in the raised band for the
+    #    raised variants, below it for pickup and unstack): risen or sunk less than SETTLE_DISTANCE over its last 3
+    #    steps, so stopping there is rewarded before success (5 steps)
     settle_bonus: float = 3.0
 
     # 7. Complete pickup
@@ -176,7 +177,7 @@ class FetchPickupReward(RewardFunction):
         self.lift_off_earned = False
         self.settle_earned = False
         self.success_earned = False
-        self.previous_object_position: np.ndarray | None = None
+        self.recent_object_positions: deque = deque(maxlen=3)  # the settle bonus's window
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -261,8 +262,9 @@ class FetchPickupReward(RewardFunction):
         # 6. One-time reward for stopping the held block where the skill wants it.
         held = Predicate("holding", (block,)) in info["facts"]
         in_place = (Predicate("raised", (block,)) in info["facts"]) == cfg.two_sided_lift
-        at_rest = (self.previous_object_position is not None
-                   and float(np.linalg.norm(object_pos - self.previous_object_position)) < AT_REST_DISTANCE)
+        self.recent_object_positions.append(object_pos)
+        at_rest = (len(self.recent_object_positions) == self.recent_object_positions.maxlen
+                   and abs(self.recent_object_positions[-1][2] - self.recent_object_positions[0][2]) < SETTLE_DISTANCE)
         if held and in_place and at_rest and not self.settle_earned:
             components["settle"] = cfg.settle_bonus
             self.settle_earned = True
@@ -272,7 +274,6 @@ class FetchPickupReward(RewardFunction):
             components["success"] = cfg.success_bonus
             self.success_earned = True
 
-        self.previous_object_position = object_pos
         self.previous_distance = distance
         self.previous_grasp_error = grasp_error
         self.previous_gripper_width = gripper_width

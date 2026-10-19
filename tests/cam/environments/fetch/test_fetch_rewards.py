@@ -322,8 +322,9 @@ def test_exploring_near_the_block_scores_above_doing_nothing():
 @pytest.mark.unit
 def test_raised_lift_peaks_in_the_band_and_stopping_where_wanted_earns_the_settle_bonus_once():
     """pickup-raised's lift term peaks at the middle of the raised band (33 cm): rising to it earns, overshooting to
-    40 cm costs; the first step the held block is at rest in the band earns the settle bonus, once. pickup (the
-    control) keeps its one-sided term, which is 0 above its 6 cm target, and settles below the band, not in it."""
+    40 cm costs; the first step the held block has settled in the band (3 steps without rising or sinking) earns the
+    settle bonus, once. pickup (the control) keeps its one-sided term, which is 0 above its 6 cm target, and settles
+    below the band, not in it."""
     def held_at(z, raised):
         block = np.array([1.3, 0.7, 0.425 + z])
         facts = {Predicate("holding", ("block0",))} | ({Predicate("raised", ("block0",))} if raised else set())
@@ -335,13 +336,13 @@ def test_raised_lift_peaks_in_the_band_and_stopping_where_wanted_earns_the_settl
         reward.grip_earned = True
         return [reward(PICKUP_BLOCK0, np.zeros(4), held_at(z, 0.30 <= z <= 0.36), False)[1] for z in heights]
 
-    raised = components(FetchPickupRaisedReward, [0.25, 0.33, 0.33, 0.33, 0.40])
-    assert raised[1]["lift"] > 0 and raised[1]["settle"] == 0  # rising, still moving
-    assert raised[2]["settle"] == FetchPickupRaisedReward().config.settle_bonus and raised[3]["settle"] == 0
-    assert raised[4]["lift"] < 0  # overshooting the band
-    pickup = components(FetchPickupReward, [0.25, 0.33, 0.33, 0.40, 0.40])
-    assert pickup[4]["lift"] == 0 and pickup[3]["lift"] == 0  # one-sided: nothing above its target
-    assert [c["settle"] > 0 for c in pickup] == [False, False, False, False, True]  # at rest, below or above the band
+    raised = components(FetchPickupRaisedReward, [0.25, 0.33, 0.33, 0.33, 0.33, 0.40])
+    assert raised[1]["lift"] > 0 and raised[2]["settle"] == 0  # rising, not settled yet
+    assert raised[3]["settle"] == FetchPickupRaisedReward().config.settle_bonus and raised[4]["settle"] == 0
+    assert raised[5]["lift"] < 0  # overshooting the band
+    pickup = components(FetchPickupReward, [0.25, 0.33, 0.33, 0.33, 0.40, 0.40, 0.40])
+    assert pickup[4]["lift"] == 0 and pickup[1]["lift"] == 0  # one-sided: nothing above its target
+    assert [c["settle"] > 0 for c in pickup] == [False] * 6 + [True]  # settled above the band, not in it
 
 
 @pytest.mark.unit

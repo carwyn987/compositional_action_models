@@ -11,9 +11,9 @@ task over one or more skills. Each episode is one grounded action of one skill
            preconditions hold
     step   the episode ends (terminated) once the grounding's effects have held for
            success_hold_steps consecutive steps (settled success: the skill must stop in
-           its goal state, not pass through it), with the scene at rest on each of those steps
-           (at_rest: e.g. the moved block no longer moving, so lifting on and on through a
-           height band is not stopping in it) and every fact over frame_predicates
+           its goal state, not pass through it), with the scene settled over those steps
+           (at_rest: e.g. the moved block's net movement over them small, so lifting on and on
+           through a height band is not stopping in it) and every fact over frame_predicates
            that the action does not mention unchanged since the episode started;
            the reward comes from the skill's reward function (SparseReward,
            1.0 on success and 0.0 otherwise, unless another is given) plus the
@@ -83,17 +83,17 @@ class SkillEnvironment(gym.Wrapper):
         shared_reward: RewardFunction | None = None,
         failure_penalty: float = 0.0,
         competence_sampling: bool = False,
-        at_rest: Callable[[GroundedSymbolicActionModel, dict, dict], bool] | None = None,
+        at_rest: Callable[[GroundedSymbolicActionModel, list[dict]], bool] | None = None,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
         # Checks every step whether the episode has failed: (grounded action, info at the episode's start, info
         # now) -> the reason if it has, None if it has not. A reason makes the step a failure (episode ends).
         self.check_failure = check_failure
-        # (grounded action, info at the previous step, info now) -> whether the scene is at rest; settled success
-        # needs it on every step the effects hold (None: always)
+        # (grounded action, the infos of the last success_hold_steps steps the effects held, oldest first) -> whether
+        # the scene settled over them; settled success needs it (None: always)
         self.at_rest = at_rest
-        self.previous_info: dict = {}
+        self.held_infos: deque = deque(maxlen=max(success_hold_steps, 1))
         self.shared_reward = shared_reward  # reward terms added for every skill
         self.failure_penalty = failure_penalty  # subtracted on the step a failure ends the episode
         self.start_info: dict = {}
@@ -151,7 +151,7 @@ class SkillEnvironment(gym.Wrapper):
             self.grounded_action_model = grounded
             self.steps_effects_held = 0
             self.start_facts, self.start_info = info["facts"], info
-            self.previous_info = info
+            self.held_infos.clear()
             if self.shared_reward is not None:
                 self.shared_reward.reset(grounded, info)
             self.reward_functions[self.skill.name].reset(grounded, info)
@@ -170,11 +170,14 @@ class SkillEnvironment(gym.Wrapper):
             self.grounded_action_model.effects_hold(info["facts"])
             and self.grounded_action_model.frame_holds(self.start_facts, info["facts"], self.frame_predicates)
             and not failed
-            and (self.at_rest is None or self.at_rest(self.grounded_action_model, self.previous_info, info))
         )
-        self.previous_info = info
         self.steps_effects_held = self.steps_effects_held + 1 if held else 0
-        success = self.steps_effects_held >= self.success_hold_steps
+        if held:
+            self.held_infos.append(info)
+        else:
+            self.held_infos.clear()
+        success = self.steps_effects_held >= self.success_hold_steps and (
+            self.at_rest is None or self.at_rest(self.grounded_action_model, list(self.held_infos)))
         reward_function = self.reward_functions[self.skill.name]
         reward, components = reward_function(self.grounded_action_model, action, info, success)
         if self.shared_reward is not None:

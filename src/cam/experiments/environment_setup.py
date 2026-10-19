@@ -14,7 +14,7 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     FETCH_PREDICATE_ARITIES,
     FetchPredicateEvaluationWrapper,
     check_fetch_failure,
-    moved_block_at_rest,
+    moved_block_settled,
 )
 from cam.environments.fetch.fetch_rewards import FAILURE_PENALTY, FETCH_SHAPED_REWARDS, FetchMotionReward
 from cam.environments.fetch.fetch_scripted_policies import (
@@ -160,7 +160,7 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 reward_functions,
                 success_hold_steps=config.get("success_hold_steps", 1),  # configs saved before the option: 1
                 check_failure=check_fetch_failure if config.get("failures", True) else None,
-                at_rest=moved_block_at_rest,  # settled success: the moved block stopped, not passing through
+                at_rest=moved_block_settled,  # settled success: the moved block stopped, not passing through
                 frame_predicates=FETCH_FRAME_PREDICATES,
                 # shaped rewards: motion penalties for every skill, and a penalty on failure
                 shared_reward=(FetchMotionReward() if config["reward"] == "shaped" and config.get("motion_penalties", True)

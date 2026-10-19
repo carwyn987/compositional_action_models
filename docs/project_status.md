@@ -54,8 +54,9 @@ The regions are global, so pushes have fixed goals.
 
 ### Success, failure and motion penalties
 **Success is settled and respects the frame:** the effects must hold for `--success-hold-steps` (default 5)
-consecutive steps with the moved block at rest on each (moving under 2 mm per step, `AT_REST_DISTANCE`), so a
-skill must stop in its goal state (a block lifted on and on through the raised band has not stopped in it), and
+consecutive steps with the moved block settled over them (rising or sinking less than 1 cm net,
+`SETTLE_DISTANCE`), so a skill must stop in its goal state: a block lifted on and on fast enough to reach the
+raised band within an episode has not stopped in it, while an exploring policy's jitter mostly cancels out; and
 every fact the action does not mention must keep its value from the episode's start (the STRIPS frame
 assumption, checked over `on-table`, `on`, `clear`, `holding`, `gripper-empty`; the geometric predicates change
 as side effects and are left out). So unstack(?o ?u) must leave `(on-table ?u)` true: lifting both blocks,
