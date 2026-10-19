@@ -479,7 +479,7 @@ classDiagram
     %% ---- evaluation ----
     class MetricsCallback {
         +skill_names: list
-        +eval_interval: int
+        +train_eval_interval: int
         +stop_skills: list
     }
     class evaluation {

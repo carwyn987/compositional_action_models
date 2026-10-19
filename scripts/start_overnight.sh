@@ -20,7 +20,7 @@
 # (tmux new -s overnight; detach with Ctrl+B then D; reattach with tmux attach -t overnight).
 # Ctrl+C stops the current run after it saves; running the same command again continues where it stopped.
 # Arguments other than --no-tests (--experiment NAME, --list) and the settings of overnight_runs.py (environment
-# variables: OUT, JOBS, DEVICE, SEEDS, CONDITIONS, ...; see its header) pass through, e.g.
+# variables: OUT, JOBS, DEVICE, SEEDS, OPERATOR_EMBEDDINGS, ...; see its header) pass through, e.g.
 #   SEEDS="0 1" ./scripts/start_overnight.sh --experiment rq3-repair
 
 set -euo pipefail
@@ -73,7 +73,7 @@ if [[ "${DRY_RUN:-0}" != "1" ]]; then
     echo "commit    $(git rev-parse HEAD)"
     echo "changes   ${changes:-none}"
     echo "arguments ${arguments[*]:-none (the default experiment)}"
-    echo "settings  $(env | grep -E '^(OUT|RUN_GROUPS|ALGORITHM|SKILL_SAMPLING|SEEDS|CONDITIONS|ALIAS_CONDITIONS|TEXT_BACKEND|BASE_SKILLS|REPAIRS|REPAIR_MODES|REPAIR_EVAL_INTERVAL|LEARN_STEPS|RQ1_STEPS|RQ1_BUDGET_MARGIN|REPAIR_STEPS|EVAL_INTERVAL|EVAL_EPISODES|SAVE_INTERVAL|DEVICE|JOBS|THREADS)=' | tr '\n' ' ')"
+    echo "settings  $(env | grep -E '^(OUT|RUN_GROUPS|ALGORITHM|SKILL_SAMPLING|SEEDS|OPERATOR_EMBEDDINGS|REPAIR_HIDDEN_EMBEDDINGS|TEXT_BACKEND|BASE_SKILLS|REPAIRS|REPAIR_MODES|REPAIR_EVAL_INTERVAL|LEARN_STEPS|RQ1_STEPS|RQ1_BUDGET_MARGIN|REPAIR_STEPS|TRAIN_EVAL_INTERVAL|EVAL_EPISODES|SAVE_INTERVAL|DEVICE|JOBS|THREADS)=' | tr '\n' ' ')"
   } > "${OUT}/run_info.txt"
 fi
 

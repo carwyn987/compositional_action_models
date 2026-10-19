@@ -3,7 +3,7 @@
     ./scripts/start_overnight.sh --experiment rq3-repair     # run one (the usual way, inside tmux)
     .venv/bin/python scripts/overnight_runs.py --list        # every experiment: what it asks, and its settings
 
-An experiment is a class. Its docstring says what it asks, how, and what to read in the results; its attributes are
+An experiment is a class. Its docstring says what it asks, how, and which metrics answer it; its attributes are
 the settings of the overnight runner (scripts/overnight_runs.py), each named as the setting in lower case. An
 environment variable named as the setting overrides it for one invocation (e.g. SEEDS="0 1 2" to replicate); the
 runner lists the overrides it used, and start_overnight.sh records them in run_info.txt.
@@ -13,35 +13,69 @@ from cam.skills.registry import SKILL_REGISTRY, build_skill
 
 
 class Experiment:
-    """The training protocol, shared by every experiment unless it sets otherwise."""
+    """The training protocol, shared by every experiment unless it sets otherwise.
+
+    The settings of every run group are here, not only in the experiments that use them: an experiment can run
+    several groups (rq3-repair runs learnability, rq1 and repair runs), and the runner reads each group's settings
+    from whichever experiment it runs. Settings of a group an experiment does not run are unused.
+
+    Every run records the same metrics (metrics.json, summarized by review_runs.py), since computing them costs
+    little next to training: each skill's success rate at every evaluation (deterministic and stochastic), its
+    zero-shot success (its first evaluation), the steps and episodes until it reaches the success threshold (in all
+    training steps, and in the skill's own), AUC (its mean success over the run), its final success, and, after a
+    skill is added or repaired, how much the other skills forgot. Each experiment's docstring names the metrics that
+    answer its question.
+    """
 
     name: str
     run_groups: tuple[str, ...]  # the runner's groups, from: learnability, rq1, repair
     base_skills: tuple[str, ...]  # the training skills; held-out operators (repairs' TO) only appear in repair runs
-    repairs: tuple[tuple[str, str], ...] = ()  # (FROM, TO): each rq1 run continued with FROM replaced by TO
-    conditions: tuple[str, ...] = (  # operator embedding conditions (CONDITION_OPTIONS in the runner)
-        "one-hot", "random", "multi-hot-trainable", "text",
-        "compositional-tree", "compositional-slots", "compositional-geometric",
-    )
-    alias_conditions: tuple[str, ...] = ("one-hot", "random")  # conditions that also get the repair-hidden control
-    repair_modes: tuple[str, ...] = ("isolated", "retain")  # main.py --repair-mode
     seeds: tuple[int, ...] = (0,)
     algorithm: str = "mtsac"  # main.py --algorithm: sac; mtsac, SAC with a separate entropy temperature per skill; ppo
     # main.py --skill-sampling: round-robin, or competence: skills with low recent success get more of the training
-    # episodes (the same rule for every condition)
+    # episodes (the same rule for every operator embedding)
     skill_sampling: str = "competence"
-    text_backend: str = "openai"  # the text condition and compositional name embeddings; mock: offline, no meaning
+    text_backend: str = "openai"  # the text embedding and compositional name embeddings; mock: offline, no meaning
+    eval_episodes: int = 20  # episodes per skill in each evaluation, deterministic and stochastic
+    save_interval: int = 50_000
+
+    # Learnability runs: each skill alone.
     learn_steps: int = 150_000  # a learnability run's steps
-    # an rq1 run's steps, or "auto": rq1_budget_margin x the sum over base_skills of the steps each needed alone to
-    # reach the threshold in its learnability run (one that never did counts as learn_steps); rq1 runs then wait
-    # for the learnability runs
+    # The operator embedding a learnability run's policy sees (one of the runner's OPERATOR_EMBEDDING_OPTIONS). One
+    # skill alone always sees the same embedding, so the choice should not matter; multi-hot is fixed and cheap.
+    learnability_embedding: str = "multi-hot"
+    train_eval_interval: int = 50_000  # how often a learnability or rq1 run evaluates every skill
+
+    # Rq1 runs: one shared policy on base_skills per operator embedding and seed (also the policies repairs continue).
+    # The operator embeddings to compare, each the input that tells the shared policy which skill to perform (the
+    # runner's OPERATOR_EMBEDDING_OPTIONS): identifiers (one-hot, random) against the operator's literals (multi-hot,
+    # text, compositional).
+    operator_embeddings: tuple[str, ...] = (
+        "one-hot", "random", "multi-hot-trainable", "text",
+        "compositional-tree", "compositional-slots", "compositional-geometric",
+    )
+    # An rq1 run's steps, or "auto": set from the learnability runs, rq1_budget_margin x the sum over base_skills of the
+    # steps each needed alone to reach the threshold (one that never did counts as learn_steps). rq1 runs then wait for
+    # the learnability runs.
     rq1_steps: int | str = 500_000
+    # rq1_steps="auto" only: how much more than the sum of its skills' steps alone a shared policy gets. It splits its
+    # steps over the skills and they can interfere, so the bare sum would shortchange it; 1.5 is 50% headroom.
     rq1_budget_margin: float = 1.5
+
+    # Repair runs: each rq1 run continued with FROM replaced by TO.
+    repairs: tuple[tuple[str, str], ...] = ()  # (FROM, TO) pairs
+    # How a repair run trains (main.py --repair-mode): isolated trains only TO, and evaluates the others without
+    # training them, so its steps to threshold compare directly with learning TO from scratch; retain trains every
+    # skill, until TO is at the threshold and the others are back at their level before: the cost of a repair
+    # without forgetting.
+    repair_modes: tuple[str, ...] = ("isolated", "retain")
+    # The operator embeddings that also get the repair-hidden control: a second repair run in which TO is encoded
+    # exactly as FROM (main.py --operator-identity-aliases), so the policy cannot see the repair. If it succeeds
+    # zero-shot anyway, FROM's behaviour already satisfies TO and the pair tests nothing. Only identifier embeddings
+    # (one-hot, random) can encode one operator as another.
+    repair_hidden_embeddings: tuple[str, ...] = ("one-hot", "random")
     repair_steps: int = 150_000  # a repair run's most steps
     repair_eval_interval: int = 10_000  # how often a repair run evaluates every skill
-    eval_interval: int = 50_000
-    eval_episodes: int = 20
-    save_interval: int = 50_000
 
     @classmethod
     def settings(cls) -> dict[str, object]:
@@ -61,13 +95,17 @@ TRAINING_SKILLS = (
 class Learnability(Experiment):
     """Can each skill be learned alone, and how fast?
 
-    Every registered skill trained alone by its own policy (multi-hot embedding) for learn_steps steps. A skill that
-    can't be learned alone makes every result that uses it meaningless, so this is the gate for the other
+    Every registered skill trained alone by its own policy (learnability_embedding) for learn_steps steps. A skill
+    that can't be learned alone makes every result that uses it meaningless, so this is the gate for the other
     experiments. Its steps to threshold are also the from-scratch baseline for a repair's transfer gain, the
     individually trained policies of RQ4, and what rq1_steps="auto" adds up.
 
-    Read: review_runs.py sections 1-3 (steps to threshold and final success per skill); for a skill that doesn't
-    learn, the failure reasons in its log (docs/next_steps.md §2).
+    The metrics that answer it: each skill's deterministic steps to threshold and final success. A learnable skill
+    reaches the threshold (review_runs.py section 2 shows a number of steps, not "never") and its curve (section 3)
+    ends near 1. If a skill stays low, watch its policy (watch_best_policies.py --folder <OUT>/learnability) to see
+    where it stops, and cross-reference the failure reasons in its log (<OUT>/logs/learnability_<skill>.log,
+    "episode failed"): mostly failures point at the constraints (thresholds, penalties), mostly time-outs at the
+    reward or the step limit (docs/next_steps.md §2).
     """
 
     name = "learnability"
@@ -78,13 +116,17 @@ class Learnability(Experiment):
 class RQ1(Experiment):
     """RQ1: does conditioning on the operator's structure help a shared multi-skill policy?
 
-    One shared policy on the training skills per operator embedding condition and seed, each with the same budget:
-    conditions that only tell the policy which skill to do (one-hot, random) against conditions that show the
-    operator's literals (multi-hot, text, compositional). Compared per skill and condition on steps to threshold
-    (in all steps and on the skill), AUC and final success. The learnability runs go first: a skill that can't be
-    learned alone says nothing about the conditions.
+    One shared policy on the training skills per operator embedding and seed, each with the same budget: embeddings
+    that only tell the policy which skill to do (one-hot, random) against embeddings that show the operator's
+    literals (multi-hot, text, compositional). The learnability runs go first: a skill that can't be learned alone
+    says nothing about the embeddings.
 
-    Read: review_runs.py sections 1-4. One seed shows anecdotes; a claim needs SEEDS="0 1 2" or more.
+    The metrics that answer it, per skill and embedding, across seeds (one seed is an anecdote; a claim needs
+    SEEDS="0 1 2" or more): steps to threshold in the skill's own steps (comparable across skills and skill
+    sampling), AUC and final success. Compare per skill, not averaged: easy skills dominate a mean. If the identifier
+    embeddings match the structured ones on every skill, the operator's structure bought nothing on training skills,
+    which the literature predicts (docs/related_work.md); differences are most likely on skills whose literals other
+    training skills share. Check first, in the learnability results, that every training skill learns alone.
     """
 
     name = "rq1"
@@ -98,16 +140,11 @@ class RQ3Repair(Experiment):
     Each repaired operator (TO) is held out of training, and every one of its literals (precondition or effect,
     sign, predicate and arguments) is trained in another skill: only the combination is new. So this measures how
     much a policy learns about a behaviour from one literal in one place of the operator. Each rq1 policy (one per
-    condition and seed) is continued with FROM replaced by TO, training only TO (repair mode isolated):
-      - zero-shot: TO's success at the swap, before any training on it;
-      - steps to threshold on TO, against learning TO from scratch (its learnability run): the transfer gain;
-      - forgetting: the other skills, evaluated and not trained, before and after.
+    operator embedding and seed) is continued with FROM replaced by TO, training only TO (repair mode isolated).
     Controls:
-      - repair-hidden (alias_conditions): TO gets exactly FROM's embedding. If it succeeds zero-shot, FROM's
+      - repair-hidden (repair_hidden_embeddings): TO gets exactly FROM's embedding. If it succeeds zero-shot, FROM's
         behaviour already satisfies TO, and the pair tests nothing (review_runs.py flags it: REPAIR INVALID);
       - one-hot gives TO an index no training used: its zero-shot success is what the state alone gives.
-    A pair is only informative where the rq1 policy learned FROM and the skills that carry TO's literals: check
-    their final success in the rq1 run first.
 
     Pairs:
       unstack -> unstack-raised     effect (not (raised ?o)) becomes (raised ?o): the change from pickup to
@@ -116,18 +153,22 @@ class RQ3Repair(Experiment):
                                     literals at once, so read it as a new-skill test
       push-left -> push-left-front  adds (at-front ?o) and (not (at-front ?o)), trained in push-front and in the
                                     other diagonals
-    The runner refuses to start if the training skills leave a literal of a repaired operator untrained.
 
-    Conditions: one of each kind (identity, literals, text, composition), and only isolated repairs, whose steps
-    compare directly with learning from scratch; CONDITIONS and REPAIR_MODES add the others at the cost of a longer
-    plan. Read: review_runs.py section 5.
+    The metrics that answer it (review_runs.py section 5): TO's zero-shot success at the swap, repair-visible against
+    repair-hidden (the difference is what the policy read from the operator); TO's steps to threshold against its
+    learnability run (the transfer gain); and what the other skills forgot. A pair is only informative where the rq1
+    policy learned FROM and the skills that carry TO's literals, so check their final success in the rq1 run first.
+    The runner refuses to start if the training skills leave a literal of a repaired operator untrained. Operator
+    embeddings: one of each kind (identity, literals, text, composition), and only isolated repairs, whose steps
+    compare directly with learning from scratch; OPERATOR_EMBEDDINGS and REPAIR_MODES add the others at the cost of
+    a longer plan.
     """
 
     name = "rq3-repair"
     run_groups = ("learnability", "rq1", "repair")
     base_skills = TRAINING_SKILLS
     repairs = (("unstack", "unstack-raised"), ("stack", "place-beside"), ("push-left", "push-left-front"))
-    conditions = ("compositional-tree", "one-hot", "multi-hot-trainable", "text")
+    operator_embeddings = ("compositional-tree", "one-hot", "multi-hot-trainable", "text")
     repair_modes = ("isolated",)
 
 

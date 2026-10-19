@@ -40,7 +40,7 @@ def test_learnability_steps_read_each_skills_result_and_name_the_missing(tmp_pat
 def test_rq1_runs_wait_for_the_learnability_runs_only_with_an_automatic_budget(monkeypatch, auto):
     """Control: with a fixed RQ1_STEPS the rq1 runs start without waiting. With RQ1_STEPS=auto each rq1 run waits for
     the learnability run of every base skill, whose results set its budget."""
-    for name, value in (("RUN_GROUPS", ["learnability", "rq1"]), ("CONDITIONS", ["one-hot"]), ("SEEDS", [0]),
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1"]), ("OPERATOR_EMBEDDINGS", ["one-hot"]), ("SEEDS", [0]),
                         ("BASE_SKILLS", ["pickup", "putdown"]), ("REPAIRS", []), ("REPAIRED", []), ("RQ1_AUTO", auto)):
         monkeypatch.setattr(overnight_runs, name, value)
     (rq1,) = [run for run in overnight_runs.build_plan() if run.group == "rq1"]
@@ -62,7 +62,7 @@ def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
     for run in runs:
         runner.set_rq1_budget(run)
     expected = overnight_runs.rq1_budget({"pickup": 100_000, "putdown": 50_000}, overnight_runs.RQ1_BUDGET_MARGIN,
-                                         overnight_runs.LEARN_STEPS, overnight_runs.EVAL_INTERVAL)
+                                         overnight_runs.LEARN_STEPS, overnight_runs.TRAIN_EVAL_INTERVAL)
     assert [(run.steps, run.command[-1]) for run in runs] == [(expected, str(expected))] * 2
 
 
@@ -70,7 +70,7 @@ def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
 def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypatch):
     """Runs start in plan order, so the most informative come first: whether each skill can be learned, then every
     condition's rq1 result, then the repairs (which wait for their rq1 run anyway)."""
-    for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("CONDITIONS", ["one-hot", "text"]),
+    for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("OPERATOR_EMBEDDINGS", ["one-hot", "text"]),
                         ("SEEDS", [0]), ("BASE_SKILLS", ["pickup", "putdown", "stack"]),
                         ("REPAIRS", [("stack", "place-beside")]), ("REPAIRED", ["place-beside"]),
                         ("REPAIR_MODES", ["isolated"]), ("RQ1_AUTO", False)):
@@ -98,14 +98,14 @@ def test_settings_come_from_the_experiment_unless_set_in_the_environment(monkeyp
     override; machine settings (JOBS) are not the experiment's."""
     monkeypatch.setattr(overnight_runs, "EXPERIMENT", EXPERIMENTS["rq3-repair"])
     monkeypatch.setattr(overnight_runs, "OVERRIDES", {})
-    for name in ("CONDITIONS", "REPAIRS", "JOBS"):
+    for name in ("OPERATOR_EMBEDDINGS", "REPAIRS", "JOBS"):
         monkeypatch.delenv(name, raising=False)
     assert overnight_runs.setting("REPAIRS") == "unstack:unstack-raised stack:place-beside push-left:push-left-front"
-    assert overnight_runs.setting("CONDITIONS") == "compositional-tree one-hot multi-hot-trainable text"
-    monkeypatch.setenv("CONDITIONS", "one-hot")
+    assert overnight_runs.setting("OPERATOR_EMBEDDINGS") == "compositional-tree one-hot multi-hot-trainable text"
+    monkeypatch.setenv("OPERATOR_EMBEDDINGS", "one-hot")
     monkeypatch.setenv("JOBS", "3")
-    assert overnight_runs.setting("CONDITIONS") == "one-hot" and overnight_runs.setting("JOBS", "2") == "3"
-    assert overnight_runs.OVERRIDES == {"CONDITIONS": "one-hot"}
+    assert overnight_runs.setting("OPERATOR_EMBEDDINGS") == "one-hot" and overnight_runs.setting("JOBS", "2") == "3"
+    assert overnight_runs.OVERRIDES == {"OPERATOR_EMBEDDINGS": "one-hot"}
 
 
 @pytest.mark.unit
