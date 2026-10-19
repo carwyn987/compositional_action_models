@@ -21,7 +21,11 @@ provides the tools.
 This project conditions one continuous-control policy on the structure of a PDDL action model
 (preconditions, add and delete effects, typed parameters bound to grounding slots) and asks whether that
 structure buys sample efficiency, transfer to new skills, and repair when the action model is edited.
-No prior work found does this; each neighbouring line stops one step short.
+No prior work found does this; each neighbouring line stops one step short. Established nearby: structured,
+entity- and goal-conditioned policies beat MLPs in manipulation (Zhou et al. 2024), symbolic operators can be
+coupled to learned skills (Silver et al. 2022; Garrett et al. 2021), and hypernetworks generate controllers for
+unseen task parameters (Rezaei-Shoshtari et al. 2023; Beck et al. 2022). Not established: a zero-shot mapping
+from unseen combinations of preconditions and effects to the physical behaviour they require.
 
 ## RQ1: operator structure vs arbitrary identifiers
 
@@ -34,13 +38,19 @@ similar descriptions. LEAGUE (Cheng & Xu 2023) and Silver et al. (2022) learn on
 operator effects as reward and operator parameters as state abstraction. Ada (Wong et al. 2024) learns a
 shared controller conditioned on subgoal predicate conjunctions (effects only) in discrete domains. DECSTR
 (Akakzia et al. 2021) conditions a Fetch block-manipulation policy on binary predicate goal vectors.
+Entity-structured policies (Deep Sets, graphs, self-attention) learn simulated manipulation with less data than
+MLPs (Zhou et al. 2024), but their conditioning is entities and subgoals, not an action model. Policy sketches
+reuse named subpolicies across tasks (Andreas et al. 2017), and compositional language abstractions beat
+non-compositional ones (Jiang et al. 2019).
 
 **This project.** The conditioning input is the full action model, including preconditions and delete
 effects, and success is checked against its semantics (effects settle and the STRIPS frame holds). The
 conditions form a controlled ladder on one architecture, budget and seed set: one-hot, random, learnable,
 text embedding of the operator, multi-hot over literals, and learnable compositional encoders. The prior
 results above predict small differences on training skills; RQ1 is the baseline that RQ2 and RQ3 are
-measured against.
+measured against. One-hot and multi-hot are different priors, not equal-capacity embeddings: a learned layer
+on multi-hot is an additive lookup over literal features, while one on a random code is a learned map from an
+arbitrary identifier.
 
 ## RQ2: learning a new skill faster, or zero-shot
 
@@ -51,7 +61,10 @@ compositions (Nangue Tasse et al. 2020, 2024), parameterized instructions with a
 (Schaul et al. 2015; Barreto et al. 2017; Borsa et al. 2019). Modular and compositional architectures transfer
 to unseen task combinations in manipulation (Devin et al. 2017; Mendez et al. 2022a, 2022b). The multi-hot
 literal encoding is an attribute representation in the sense of attribute-based zero-shot learning (Lampert
-et al. 2009).
+et al. 2009). Structured policies also generalize to more objects and new combinations of familiar
+subtasks (Zhou et al. 2024). None of these shows generalization to new literals or unseen predicates: held-out
+combinations of seen literals are the clean test, and an unseen predicate is beyond what a learned predicate
+lookup can support.
 
 **This project.** The specification is an action model rather than a goal, formula or instruction: it
 carries the context in which the skill applies (preconditions) and what must not change (delete effects,
@@ -67,14 +80,19 @@ model edits (Chakraborti et al. 2017; Sreedharan et al. 2019). SPOTTER (Sarathy 
 (Goel et al. 2022) and Thierauf & Scheutz (2024) learn new operators or executors with RL when the symbolic
 model fails. Specification-conditioned policies can be re-targeted by a new specification, and language
 corrections can steer a robot's behaviour (Sharma et al. 2022; Shi et al. 2024). LLM-generated PDDL models
-need correction after the fact (Guan et al. 2023).
+need correction after the fact (Guan et al. 2023). In task and motion planning, symbolic operators are lossy
+abstractions of continuous transitions (Garrett et al. 2021). Successor features transfer to a changed reward
+under fixed dynamics (Barreto et al. 2017), but an edited precondition or effect is not a change of reward
+weights.
 
 **This project.** The missing direction: given an edited action model, does the edit reach the trained
 low-level skill through its conditioning, zero-shot or with fewer steps? Repair pairs differ by one or two
 literals (`unstack` → `unstack-raised`, `push-left` → `push-left-front`). Controls separate "the structure
 carried the edit" from "the task was easy": repair-hidden (the policy sees the original operator), identifier
 conditions, and the invalid-repair check (the original behaviour must fail the repaired operator); the
-comparison with learning the repaired operator from scratch gives the transfer gain.
+comparison with learning the repaired operator from scratch gives the transfer gain. A repair that only corrects
+the model (e.g. a precondition that changes when the skill applies, not how it moves) should leave behaviour
+unchanged, so only repairs that need physically different behaviour can show the edit reaching the skill.
 
 ## RQ4: generating policies from operator embeddings
 
@@ -83,16 +101,19 @@ conditioning mechanism. Hypernetworks generate weights from a task embedding (Ha
 al. 2020), from MDP parameters for zero-shot transfer (Rezaei-Shoshtari et al. 2023), from task
 specifications (HyPoGen, Ren et al. 2025), and from text or instructions (TeNet, Bighashdel & Luck 2026; DISC,
 Ren et al. 2026). DISC argues that a generated policy cannot shortcut the instruction through the
-observation.
+observation. Initialization strongly affects how reliably RL hypernetworks train (Beck et al. 2022).
 
 **This project.** Only the conditioning source (an action model) and the comparison against individually
 trained per-skill policies are specific to it. FiLM and hypernetwork conditioning are best treated as
 ablations of how the operator embedding enters the policy in RQ1–RQ3, not as a contribution of their own.
+Generated and individually trained policies are compared by their actions on shared probe states and their
+returns, not their weights, which are not identifiable under hidden-unit permutations.
 
 ## RQ5: do learned embeddings encode operator structure?
 
 **Closest work.** Linear probes (Alain & Bengio 2017) with control tasks for selectivity (Hewitt & Liang
-2019; Belinkov 2022); probes for human concepts in an RL agent (McGrath et al. 2022); analyses of learned
+2019; Belinkov 2022); amnesic probing, which separates information present in a representation from
+information used, by intervention (Elazar et al. 2021); probes for human concepts in an RL agent (McGrath et al. 2022); analyses of learned
 task and skill embedding spaces (von Oswald et al. 2020; Hausman et al. 2018). Konidaris et al. (2018) learn
 symbols from skills.
 
@@ -110,7 +131,9 @@ operator learning that models only the effects needed for planning (Kumar et al.
 **This project.** The operator-conditioned policy is used as an instrument to audit its own action model:
 remove or alter one literal and measure the change in behaviour on fixed probe states. Sensitivity shows what
 the policy uses, not what the world requires, so the method is evaluated on injected faults with known
-ground truth (an implied precondition, a wrong effect).
+ground truth (an implied precondition, a wrong effect). Following Elazar et al. (2021), sensitivity is measured
+by intervening on the symbolic input with the observation and grounding fixed, and compared with irrelevant
+edits: RQ5 asks whether operator structure is recoverable, RQ6 whether it is used.
 
 ## Operator-level hindsight relabeling
 
@@ -132,7 +155,9 @@ results with stratified bootstrap confidence intervals (Agarwal et al. 2021). An
 ignore its conditioning and identify the task from the observation (shortcut learning, Geirhos et al. 2020;
 the observation leakage that motivates DISC), which the wrong-embedding control in `docs/next_steps.md`
 tests: a policy that identifies the skill from the state or the grounding does not change behaviour when
-given another skill's operator.
+given another skill's operator. For training, SAC (Haarnoja et al. 2018) with hindsight relabeling
+(Andrychowicz et al. 2017) is the strong baseline for sparse, goal-relabelable Fetch tasks, though not evidence
+that SAC beats PPO on every skill.
 
 ## References
 
@@ -140,21 +165,26 @@ given another skill's operator.
 - Aineto, Jiménez, Onaindia. Learning action models with minimal observability. Artificial Intelligence 275, 2019. https://doi.org/10.1016/j.artint.2019.05.003
 - Akakzia, Colas, Oudeyer, Chetouani, Sigaud. Grounding Language to Autonomously-Acquired Skills via Goal Generation (DECSTR). ICLR 2021. https://arxiv.org/abs/2006.07185
 - Alain, Bengio. Understanding intermediate layers using linear classifier probes. ICLR 2017 workshop. https://arxiv.org/abs/1610.01644
+- Andreas, Klein, Levine. Modular Multitask Reinforcement Learning with Policy Sketches. ICML 2017. https://proceedings.mlr.press/v70/andreas17a.html
 - Andrychowicz et al. Hindsight Experience Replay. NeurIPS 2017. https://arxiv.org/abs/1707.01495
 - Barreto et al. Successor Features for Transfer in Reinforcement Learning. NeurIPS 2017. https://arxiv.org/abs/1606.05312
+- Beck, Jackson, Vuorio, Whiteson. Hypernetworks in Meta-Reinforcement Learning. CoRL 2022. https://proceedings.mlr.press/v205/beck23a.html
 - Belinkov. Probing Classifiers: Promises, Shortcomings, and Advances. Computational Linguistics 48(1), 2022. https://doi.org/10.1162/coli_a_00422
 - Bighashdel, Luck. TeNet: Text-to-Network for Compact Policy Synthesis. arXiv 2026. https://arxiv.org/abs/2601.15912
 - Borsa et al. Universal Successor Features Approximators. ICLR 2019. https://arxiv.org/abs/1812.07626
 - Chakraborti, Sreedharan, Zhang, Kambhampati. Plan Explanations as Model Reconciliation. IJCAI 2017. https://www.ijcai.org/proceedings/2017/23
 - Cheng, Xu. LEAGUE: Guided Skill Learning and Abstraction for Long-Horizon Manipulation. RA-L 2023. https://arxiv.org/abs/2210.12631
 - Devin, Gupta, Darrell, Abbeel, Levine. Learning Modular Neural Network Policies for Multi-Task and Multi-Robot Transfer. ICRA 2017. https://doi.org/10.1109/ICRA.2017.7989250
+- Elazar, Ravfogel, Jacovi, Goldberg. Amnesic Probing: Behavioral Explanation with Amnesic Counterfactuals. TACL 9, 2021. https://doi.org/10.1162/tacl_a_00359
 - Eysenbach, Geng, Levine, Salakhutdinov. Rewriting History with Inverse RL: Hindsight Inference for Policy Improvement. NeurIPS 2020. https://arxiv.org/abs/2002.11089
+- Garrett, Chitnis, Holladay, Kim, Silver, Kaelbling, Lozano-Pérez. Integrated Task and Motion Planning. Annual Review of Control, Robotics, and Autonomous Systems 4, 2021. https://arxiv.org/abs/2010.01083
 - Geirhos et al. Shortcut learning in deep neural networks. Nature Machine Intelligence 2020. https://doi.org/10.1038/s42256-020-00257-z
 - Goel, Shukla, Sarathy, Scheutz, Sinapov. RAPid-Learn: A Framework for Learning to Recover for Handling Novelties in Open-World Environments. ICDL 2022. https://arxiv.org/abs/2206.12493
 - Gragera, Fuentetaja, García-Olaya, Fernández. A Planning Approach to Repair Domains with Incomplete Action Effects. ICAPS 2023. https://ojs.aaai.org/index.php/ICAPS/article/view/27190
 - Greydanus, Koul, Dodge, Fern. Visualizing and Understanding Atari Agents. ICML 2018. https://proceedings.mlr.press/v80/greydanus18a.html
 - Guan, Valmeekam, Sreedharan, Kambhampati. Leveraging Pre-trained Large Language Models to Construct and Utilize World Models for Model-based Task Planning. NeurIPS 2023. https://arxiv.org/abs/2305.14909
 - Ha, Dai, Le. HyperNetworks. ICLR 2017. https://arxiv.org/abs/1609.09106
+- Haarnoja, Zhou, Abbeel, Levine. Soft Actor-Critic: Off-Policy Maximum Entropy Deep Reinforcement Learning with a Stochastic Actor. ICML 2018. https://proceedings.mlr.press/v80/haarnoja18b.html
 - Hausman, Springenberg, Wang, Heess, Riedmiller. Learning an Embedding Space for Transferable Robot Skills. ICLR 2018. https://mlanthology.org/iclr/2018/hausman2018iclr-learning
 - Hendawy, Peters, D'Eramo. Multi-Task Reinforcement Learning with Mixture of Orthogonal Experts (MOORE). ICLR 2024. https://arxiv.org/abs/2311.11385
 - Hewitt, Liang. Designing and Interpreting Probes with Control Tasks. EMNLP-IJCNLP 2019. https://doi.org/10.18653/v1/D19-1275
@@ -199,3 +229,4 @@ given another skill's operator.
 - Wong, Mao, Sharma, Siegel, Feng, Korneev, Tenenbaum, Andreas. Learning adaptive planning representations with natural language guidance (Ada). ICLR 2024. https://arxiv.org/abs/2312.08566
 - Yang, Xu, Wu, Wang. Multi-Task Reinforcement Learning with Soft Modularization. NeurIPS 2020. https://papers.nips.cc/paper/2020/hash/32cfdce9631d8c7906e8e9d6e68b514b-Abstract.html
 - Yu et al. Meta-World: A Benchmark and Evaluation for Multi-Task and Meta Reinforcement Learning. CoRL 2019. https://arxiv.org/abs/1910.10897
+- Zhou, Kumar, Finn, Rajeswaran. Policy Architectures for Compositional Generalization in Control. Reinforcement Learning Journal 5, 2024 (RLC 2024). https://rlj.cs.umass.edu/2024/papers/Paper327.html
