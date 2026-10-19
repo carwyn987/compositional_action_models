@@ -116,8 +116,8 @@ more than `DROP_HEIGHT`, 2 cm, above its support), or another block was **distur
 
 **Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`): action changes
 (smoothness), the moved block's acceleration, any movement of the other blocks, and the **gripper force**
-above `SAFE_GRIPPER_FORCE` (100 N), counted up to 500 N: at most 2 per step, so pressing until it fails
-costs at most twice the failure, and a shorter bump less than one. The gripper force is the net contact force
+above `SAFE_GRIPPER_FORCE` (100 N), counted up to 500 N: at most 0.2 per step, so pressing until it fails
+costs a tenth of the failure. The gripper force is the net contact force
 on the gripper and fingers, read from MuJoCo (`FetchState.gripper_force`, with the last 10 steps' magnitudes
 in `gripper_force_history`): a grasp's squeeze cancels out, so it measures pressing on a block or the table,
 pushing, ramming, and a carried block's weight (~20 N). Lifting and placing peak around 55 N, steady pushing
@@ -127,6 +127,12 @@ exploration bumps the table for a few steps at a time, which is why the penalty 
 steps. This matters for moving to real robots, whose grippers such forces would damage. Grasping skills therefore
 succeed only once the block is lifted and held, and placing skills only once it is released, gently, without
 disturbing anything else.
+
+The motion penalties are light on purpose: they grow with exploration noise wherever the gripper touches
+something, and with ten times these weights (2026-10-14 run) an exploring policy did better keeping away from the
+blocks than trying (scripted pickup with noise σ = 0.6: −7.4 against −0.2 for doing nothing; now −1.9 against
+−4.2). Every shaped reward also costs 0.05 per step: 5 over a 100-step episode, half a failure, so waiting is
+not free and failing early never pays.
 
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 

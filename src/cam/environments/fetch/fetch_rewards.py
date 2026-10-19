@@ -32,13 +32,14 @@ FAILURE_PENALTY = 10.0  # subtracted when an episode fails (a block dropped or k
 
 @dataclass(frozen=True)
 class FetchMotionRewardConfig:
-    smoothness_penalty: float = 0.005  # per unit squared of change between consecutive actions
-    acceleration_penalty: float = 500.0  # per (m/step^2)^2 of the moved block's acceleration
-    disturbance_penalty: float = 20.0  # per metre the other blocks move
-    # per newton of net gripper contact force from SAFE_ to MAX_GRIPPER_FORCE: at most FAILURE_PENALTY /
-    # FORCE_FAILURE_STEPS (2) per step, so pressing until it fails costs at most twice a failure, and a shorter
-    # bump less than one (a larger penalty would make failing on purpose the cheaper way out)
-    force_penalty: float = 0.005
+    # Light on purpose: these terms grow with exploration noise, wherever the gripper touches something, so heavier
+    # weights teach an exploring policy to keep away from the blocks before it ever finds a success.
+    smoothness_penalty: float = 0.0005  # per unit squared of change between consecutive actions
+    acceleration_penalty: float = 50.0  # per (m/step^2)^2 of the moved block's acceleration
+    disturbance_penalty: float = 2.0  # per metre the other blocks move
+    # per newton of net gripper contact force from SAFE_ to MAX_GRIPPER_FORCE: at most 0.2 per step, so a press that
+    # lasts until it fails (FORCE_FAILURE_STEPS) costs a tenth of the failure itself
+    force_penalty: float = 0.0005
 
 
 @dataclass
@@ -50,11 +51,11 @@ class FetchMotionReward(RewardFunction):
         disturbance   how far the other blocks moved this step: any knock is penalized (moving one more than
                       DISTURB_DISTANCE from its start also ends the episode as a failure)
         force         net contact force on the gripper above SAFE_GRIPPER_FORCE (100 N), counted up to
-                      MAX_GRIPPER_FORCE (500 N): at most 2 per step. One-step contact spikes reach tens of kN in
-                      simulation; uncapped, one would cost hundreds of points, far more than success earns,
-                      and exploring would score worse than doing nothing. Above MAX_GRIPPER_FORCE for
+                      MAX_GRIPPER_FORCE (500 N): at most 0.2 per step. One-step contact spikes reach tens of kN
+                      in simulation; uncapped, one would cost tens of points, more than success earns, and
+                      exploring would score worse than doing nothing. Above MAX_GRIPPER_FORCE for
                       FORCE_FAILURE_STEPS consecutive steps the episode fails. Required for real robots.
-    A full-speed scripted episode costs about 0.05-1.3; throwing a block costs several points per step.
+    A full-speed scripted episode costs about 0.005-0.13; throwing a block costs some tenths of a point per step.
     """
 
     config: FetchMotionRewardConfig = field(default_factory=FetchMotionRewardConfig)
@@ -98,7 +99,7 @@ class FetchMotionReward(RewardFunction):
 @dataclass(frozen=True)
 class FetchPickupRewardConfig:
     # General costs
-    time_penalty: float = 0.01
+    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
     action_l2_penalty: float = 0.001
 
     # 1. Approach object
@@ -276,7 +277,7 @@ class FetchUnstackReward(FetchPickupReward):
 @dataclass(frozen=True)
 class FetchStackRewardConfig:
     # General costs
-    time_penalty: float = 0.01
+    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
     action_l2_penalty: float = 0.001
 
     # 1. Carry: raise the held block until its bottom clears the base's top by carry_clearance
@@ -474,7 +475,7 @@ class FetchPlaceBesideReward(FetchStackReward):
 @dataclass(frozen=True)
 class FetchPutdownRewardConfig:
     # General costs
-    time_penalty: float = 0.01
+    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
     action_l2_penalty: float = 0.001
 
     # 1. Lower the block toward the table
@@ -620,7 +621,7 @@ class FetchPutdownReward(RewardFunction):
 
 @dataclass(frozen=True)
 class FetchPushRewardConfig:
-    time_penalty: float = 0.01
+    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
     action_l2_penalty: float = 0.001
     # 1. Get behind the block (opposite its goal), at its height
     behind_offset: float = 0.055  # gripper centre behind the block centre
