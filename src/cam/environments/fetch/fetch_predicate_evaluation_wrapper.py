@@ -213,6 +213,21 @@ def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None
                 None)
 
 
+# Settled success needs the moved block (first argument) to move less than this per step on every step the effects
+# hold, so a block passing slowly through a goal region (e.g. lifted on and on through the raised band) has not
+# stopped there. Held blocks jitter well under it.
+AT_REST_DISTANCE = 0.002
+
+
+def moved_block_at_rest(grounded_action_model, previous_info: dict, info: dict) -> bool:
+    """The moved block (first argument) moved less than AT_REST_DISTANCE since the previous step
+    (SkillEnvironment's at_rest)."""
+    block = grounded_action_model.arguments[0]
+    before = previous_info["environment_state"].block_positions[block]
+    now = info["environment_state"].block_positions[block]
+    return float(np.linalg.norm(np.asarray(now) - np.asarray(before))) < AT_REST_DISTANCE
+
+
 def check_fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
     """Checks whether the episode has failed in this step: returns the reason if it has, None if it has not.
     Called on every step by SkillEnvironment (its check_failure); a returned reason makes the step a failure,

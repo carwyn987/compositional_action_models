@@ -102,7 +102,8 @@ centre at z = 0.425, and a block stacked on another has its centre at 0.475.
 | `at-left/right/front/back(b)` | on the table, **10–18 cm** from the centre of the reset area (1.34, 0.75) in that direction (front = toward the robot, left = +y) |
 
 **Success is settled and respects the frame:** the effects must hold for `--success-hold-steps` (default 5)
-consecutive steps, and every fact the action does not mention must keep its value from the episode's start
+consecutive steps with the moved block at rest on each (moving under 2 mm per step, `AT_REST_DISTANCE`: a block
+lifted on and on through the raised band has not stopped in it), and every fact the action does not mention must keep its value from the episode's start
 (the STRIPS frame assumption, checked over `on-table`, `on`, `clear`, `holding`, `gripper-empty`; the
 geometric predicates change as side effects and are left out). So unstack(?o ?u) must leave `(on-table ?u)`
 true: lifting both blocks is not an unstack.
