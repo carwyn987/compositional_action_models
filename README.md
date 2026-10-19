@@ -40,6 +40,7 @@ DEVICE=cuda ./scripts/start_overnight.sh                     # run it (inside tm
 ./scripts/review_runs.py outputs/overnight_<date>            # report: runs, conditions, curves, repairs
 ./scripts/watch_best_policies.py                             # the best trained policy per skill
 ./scripts/check_policy_progress.py outputs/<run>             # is a trained policy stuck, or slowly getting there?
+./scripts/wrong_embedding_control.py outputs/<run> --skill unstack-raised --as unstack   # does it read the operator?
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
 ```
 

@@ -227,6 +227,10 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
   skill of the given runs past the training step limit (300 steps) and gives each episode a verdict (success,
   failed, progressing, stuck), with its distance to the goal, whether the block is gripped, and how much the
   policy still explores where it ends up.
+- **`scripts/wrong_embedding_control.py`:** the wrong-embedding control: plays a run's policy on one skill's
+  episodes given its own operator input and then another skill's (e.g. unstack-raised given unstack's). Unchanged
+  success and behaviour mean the policy does not use the operator to tell the two apart. Works with every encoder,
+  compositional ones included.
 - **`scripts/start_tensorboard.sh`:** `LOGDIR=<folder> ./scripts/start_tensorboard.sh`.
 
 ### Infrastructure notes
