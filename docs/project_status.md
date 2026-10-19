@@ -94,12 +94,12 @@ not free and failing early never pays.
 
 | skill | operator | setup | scripted policy | shaped reward |
 | --- | --- | --- | --- | --- |
-| pickup(?o) | classic blocksworld + `(not (raised ?o))`: hold it low | – | approach, descend, close, lift | staged pickup |
+| pickup(?o) | classic blocksworld + `(not (raised ?o))`: hold it low | – | approach, descend, close, lift | staged pickup, ending with a settle bonus (held at rest, below the raised band) |
 | putdown(?o) | classic | pickup **or** pickup-raised (random per episode) | lower, open | staged putdown (gentle descent, square) |
 | stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack |
 | unstack(?o ?u) | classic + `(not (raised ?o))` | pickup, stack | pickup motion | pickup's stages, lift from the block below |
-| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift target 33 cm |
-| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift target 28 cm above the base rest |
+| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift peaking at 33 cm (overshooting costs), settle bonus in the band |
+| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift peaking 28 cm above the base rest (overshooting costs), settle bonus in the band |
 | place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u along x | stack's stages, target ring around ?u |
 | push-left/right/front/back(?o) | pre `on-table`, `clear`, `gripper-empty`, `(not (at-X ?o))`; eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | reach behind, push progress |
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | as push, both regions | – | two straight pushes | as push |

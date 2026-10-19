@@ -15,6 +15,7 @@ import numpy as np
 from cam.domain.symbols import Predicate
 from cam.environments.fetch.fetch_multiblock_environment import BLOCK_HALF_SIZE
 from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
+    AT_REST_DISTANCE,
     BESIDE_DISTANCE,
     OPEN_FINGER_WIDTH,
     MAX_GRIPPER_FORCE,
@@ -123,11 +124,19 @@ class FetchPickupRewardConfig:
 
     # 5. Lift object (off the table; for unstack, off the block below)
     target_lift: float = 0.06
+    # False: the lift term rewards rising toward target_lift and nothing above it (pickup and unstack may stop
+    # anywhere below the raised band). True: it peaks at target_lift and falls on both sides, so overshooting costs
+    # what rising earned (the raised variants, which must stop in the band)
+    two_sided_lift: bool = False
     lift_off_height: float = 0.010
     lift_off_bonus: float = 2.0
     lift_progress_weight: float = 8.0
 
-    # 6. Complete pickup
+    # 6. Settle: once, the first step the held block is at rest where the skill wants it (in the raised band for the
+    #    raised variants, below it for pickup and unstack), so stopping there is rewarded before success (5 steps)
+    settle_bonus: float = 3.0
+
+    # 7. Complete pickup
     success_bonus: float = 15.0
 
     # Prevent single noisy transitions from producing huge rewards.
@@ -137,7 +146,7 @@ class FetchPickupRewardConfig:
 
 @dataclass
 class FetchPickupReward(RewardFunction):
-    """Staged pickup shaping: approach, get above, descend, close, lift, success.
+    """Staged pickup shaping: approach, get above, descend, close, lift, settle, success.
 
     Progress terms reward the change since the previous step; each stage's bonus
     is paid once per episode. The lift is measured from rest_height (the table).
@@ -162,7 +171,9 @@ class FetchPickupReward(RewardFunction):
         self.grasp_pose_earned = False
         self.grip_earned = False
         self.lift_off_earned = False
+        self.settle_earned = False
         self.success_earned = False
+        self.previous_object_position: np.ndarray | None = None
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -180,7 +191,10 @@ class FetchPickupReward(RewardFunction):
         # Includes XY alignment so moving sideways away from the block is penalized.
         grasp_error = float(np.sqrt(xy_distance**2 + grasp_z_error**2))
         lift = max(0.0, float(object_pos[2] - self.lift_reference))
-        lift_fraction = float(np.clip(lift / max(cfg.target_lift, 1e-6), 0.0, 1.0))
+        if cfg.two_sided_lift:  # 1 at the target height, less above and below it
+            lift_fraction = 1.0 - abs(lift - cfg.target_lift) / max(cfg.target_lift, 1e-6)
+        else:
+            lift_fraction = float(np.clip(lift / max(cfg.target_lift, 1e-6), 0.0, 1.0))
 
         above_now = xy_distance <= cfg.above_xy_tolerance and z_clearance >= cfg.above_min_clearance
         at_grasp_pose = xy_distance <= cfg.grasp_xy_tolerance and grasp_z_error <= cfg.grasp_z_tolerance
@@ -200,6 +214,7 @@ class FetchPickupReward(RewardFunction):
             "grip": 0.0,
             "lift_off": 0.0,
             "lift": 0.0,
+            "settle": 0.0,
             "success": 0.0,
         }
 
@@ -246,11 +261,21 @@ class FetchPickupReward(RewardFunction):
             components["lift_off"] = cfg.lift_off_bonus
             self.lift_off_earned = True
 
-        # 6. One-time terminal success reward.
+        # 6. One-time reward for stopping the held block where the skill wants it.
+        held = Predicate("holding", (block,)) in info["facts"]
+        in_place = (Predicate("raised", (block,)) in info["facts"]) == cfg.two_sided_lift
+        at_rest = (self.previous_object_position is not None
+                   and float(np.linalg.norm(object_pos - self.previous_object_position)) < AT_REST_DISTANCE)
+        if held and in_place and at_rest and not self.settle_earned:
+            components["settle"] = cfg.settle_bonus
+            self.settle_earned = True
+
+        # 7. One-time terminal success reward.
         if success and not self.success_earned:
             components["success"] = cfg.success_bonus
             self.success_earned = True
 
+        self.previous_object_position = object_pos
         self.previous_distance = distance
         self.previous_grasp_error = grasp_error
         self.previous_gripper_width = gripper_width
@@ -432,20 +457,23 @@ class FetchStackReward(RewardFunction):
 @dataclass
 class FetchPickupRaisedReward(FetchPickupReward):
     """pickup's stages with the lift target at the middle of the raised band above the table, so the lift stage leads
-    to (raised ?o)."""
+    to (raised ?o); the lift term is two-sided, so overshooting the band costs what rising into it earned, and the
+    settle bonus is paid at rest in the band."""
 
     config: FetchPickupRewardConfig = field(
-        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)))
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)), two_sided_lift=True)
     )
 
 
 @dataclass
 class FetchUnstackRaisedReward(FetchUnstackReward):
     """unstack's stages with the lift target at the middle of the raised band; the lift is measured from where
-    the block rests on the block below, one block height above the table."""
+    the block rests on the block below, one block height above the table. Two-sided, with the settle bonus in the
+    band, as for pickup-raised."""
 
     config: FetchPickupRewardConfig = field(
-        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)) - 2 * BLOCK_HALF_SIZE)
+        default_factory=lambda: FetchPickupRewardConfig(target_lift=float(np.mean(RAISED_HEIGHT)) - 2 * BLOCK_HALF_SIZE,
+                                                        two_sided_lift=True)
     )
 
 
