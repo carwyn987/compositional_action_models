@@ -1,6 +1,6 @@
 """The experiments: each research question's overnight runs, by name.
 
-    ./scripts/start_overnight.sh --experiment rq3-repair     # run one (the usual way, inside tmux)
+    ./scripts/start_overnight.sh --experiment rq3-repair-minimal   # run one (the usual way, inside tmux)
     .venv/bin/python scripts/overnight_runs.py --list        # every experiment: what it asks, and its settings
 
 An experiment is a class. Its docstring says what it asks, how, and which metrics answer it; its attributes are
@@ -16,7 +16,7 @@ class Experiment:
     """The training protocol, shared by every experiment unless it sets otherwise.
 
     The settings of every run group are here, not only in the experiments that use them: an experiment can run
-    several groups (rq3-repair runs learnability, rq1 and repair runs), and the runner reads each group's settings
+    several groups (rq3-repair-minimal runs learnability, rq1 and repair runs), and the runner reads each group's settings
     from whichever experiment it runs. Settings of a group an experiment does not run are unused.
 
     Every run records the same metrics (metrics.json, summarized by review_runs.py), since computing them costs
@@ -83,8 +83,8 @@ class Experiment:
         return {name.upper(): getattr(cls, name) for name in Experiment.__annotations__ if name != "name"}
 
 
-# The multi-skill training set: every literal of every operator rq3-repair holds out appears in one of these, in a
-# different context.
+# The multi-skill training set: every literal of every operator the repair experiments hold out appears in one of
+# these, in a different context.
 TRAINING_SKILLS = (
     "pickup", "putdown", "stack", "unstack", "pickup-raised",
     "push-left", "push-right", "push-front", "push-back", "push-right-front", "push-left-back", "push-right-back",
@@ -148,31 +148,64 @@ class RQ3Repair(Experiment):
         behaviour already satisfies TO, and the pair tests nothing (review_runs.py flags it: REPAIR INVALID);
       - one-hot gives TO an index no training used: its zero-shot success is what the state alone gives.
 
-    Pairs:
-      unstack -> unstack-raised     effect (not (raised ?o)) becomes (raised ?o): the change from pickup to
-                                    pickup-raised, both trained
-      stack -> place-beside         putdown's effects, and (beside ?o ?u) and (on-table ?u) from push-beside: several
-                                    literals at once, so read it as a new-skill test
-      push-left -> push-left-front  adds (at-front ?o) and (not (at-front ?o)), trained in push-front and in the
-                                    other diagonals
-
     The metrics that answer it (review_runs.py section 5): TO's zero-shot success at the swap, repair-visible against
     repair-hidden (the difference is what the policy read from the operator); TO's steps to threshold against its
     learnability run (the transfer gain); and what the other skills forgot. A pair is only informative where the rq1
     policy learned FROM and the skills that carry TO's literals, so check their final success in the rq1 run first.
     Coverage in the overlap report (printed first) says how much of TO the training skills have, and the runner
-    refuses to start if the training skills leave a literal of a repaired operator untrained. Operator
-    embeddings: one of each kind (identity, literals, text, composition), and only isolated repairs, whose steps
-    compare directly with learning from scratch; OPERATOR_EMBEDDINGS and REPAIR_MODES add the others at the cost of
-    a longer plan.
+    refuses to start if the training skills leave a literal of a repaired operator untrained. Operator embeddings:
+    one of each kind (identity, literals, text, composition), and only isolated repairs, whose steps compare directly
+    with learning from scratch; OPERATOR_EMBEDDINGS and REPAIR_MODES add the others at the cost of a longer plan.
+    Two experiments: rq3-repair-minimal (few training skills, each repair's new literals in one other skill) and
+    rq3-repair-maximal (every training skill, one repair).
     """
 
-    name = "rq3-repair"
     run_groups = ("learnability", "rq1", "repair")
-    base_skills = TRAINING_SKILLS
-    repairs = (("unstack", "unstack-raised"), ("stack", "place-beside"), ("push-left", "push-left-front"))
     operator_embeddings = ("compositional-tree", "one-hot", "multi-hot-trainable", "text")
     repair_modes = ("isolated",)
+
+
+class RQ3RepairMinimal(RQ3Repair):
+    """RQ3, minimal: each repair's training side is FROM and the few skills that carry TO's new literals.
+
+    Seven training skills, so the shared policy trains quickly, and each new literal is seen in exactly one other
+    context. Read it for a faster repair (fewer steps to threshold than learning TO from scratch) more than for
+    zero-shot success, which one other context makes less likely. The controls and the metrics are RQ3Repair's
+    (research_experiments.py).
+
+    Pairs, with the skills that carry what TO adds:
+      unstack -> unstack-raised     effect (not (raised ?o)) becomes (raised ?o): pickup-raised adds (raised ?o), and
+                                    pickup is its contrast (the same operator with (not (raised ?o)))
+      putdown -> place-beside       adds parameter ?u, precondition (on-table ?u) and effect (beside ?o ?u): both in
+                                    push-beside
+      push-left -> push-left-front  adds (not (at-front ?o)) and (at-front ?o): both in push-front
+    """
+
+    name = "rq3-repair-minimal"
+    base_skills = ("pickup", "pickup-raised", "unstack", "putdown", "push-beside", "push-left", "push-front")
+    repairs = (("unstack", "unstack-raised"), ("putdown", "place-beside"), ("push-left", "push-left-front"))
+
+
+class RQ3RepairMaximal(RQ3Repair):
+    """RQ3, maximal: every training skill first, then one repair whose new literals are trained many times.
+
+    The 13 training skills, which include every push but push-left-front, so (at-left ?o) and (at-front ?o) are each
+    trained in several pushes and combined in the other three diagonals: the most favourable case for zero-shot
+    transfer, and the longest rq1 runs. The controls and the metrics are RQ3Repair's (research_experiments.py).
+
+    Pairs:
+      push-left -> push-left-front  adds (not (at-front ?o)) and (at-front ?o): in push-front and the other diagonals
+    """
+
+    name = "rq3-repair-maximal"
+    base_skills = TRAINING_SKILLS
+    repairs = (
+        ("push-left", "push-left-front"),
+        # TODO: enable stack -> place-beside, a pair with little overlap (stack and place-beside share few literals,
+        # so it is closer to learning a new skill), once place-beside's carriers (putdown, push-beside) learn
+        # reliably: until then it would only lengthen the plan without being informative.
+        # ("stack", "place-beside"),
+    )
 
 
 class RepresentationOverlap(Experiment):
@@ -201,11 +234,11 @@ class RepresentationOverlap(Experiment):
     name = "overlap"
     run_groups = ()
     base_skills = TRAINING_SKILLS
-    repairs = RQ3Repair.repairs
+    repairs = RQ3RepairMinimal.repairs  # their TO's coverage
 
 
 EXPERIMENTS: dict[str, type[Experiment]] = {
-    experiment.name: experiment for experiment in (Learnability, RQ1, RQ3Repair, RepresentationOverlap)
+    experiment.name: experiment for experiment in (Learnability, RQ1, RQ3RepairMinimal, RQ3RepairMaximal, RepresentationOverlap)
 }
 
 

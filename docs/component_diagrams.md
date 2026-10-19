@@ -95,7 +95,7 @@ flowchart LR
     end
 
     envsetup["cam/experiments/environment_setup.py<br/>setup_environment · OPERATOR_ENCODERS"]
-    experiments["cam/experiments/research_experiments.py<br/>EXPERIMENTS: learnability · rq1 · rq3-repair"]
+    experiments["cam/experiments/research_experiments.py<br/>EXPERIMENTS: learnability · rq1 · rq3-repair-minimal / -maximal · overlap"]
     logcfg["cam/logging_config.py<br/>configure_logging"]
 
     %% ---------------- planned ----------------

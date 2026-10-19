@@ -96,11 +96,11 @@ def test_a_repair_asking_for_an_untrained_literal_stops_the_runner(monkeypatch):
 def test_settings_come_from_the_experiment_unless_set_in_the_environment(monkeypatch):
     """The experiment's settings in the runner's format; an environment variable replaces one and is reported as an
     override; machine settings (JOBS) are not the experiment's."""
-    monkeypatch.setattr(overnight_runs, "EXPERIMENT", EXPERIMENTS["rq3-repair"])
+    monkeypatch.setattr(overnight_runs, "EXPERIMENT", EXPERIMENTS["rq3-repair-minimal"])
     monkeypatch.setattr(overnight_runs, "OVERRIDES", {})
     for name in ("OPERATOR_EMBEDDINGS", "REPAIRS", "JOBS"):
         monkeypatch.delenv(name, raising=False)
-    assert overnight_runs.setting("REPAIRS") == "unstack:unstack-raised stack:place-beside push-left:push-left-front"
+    assert overnight_runs.setting("REPAIRS") == "unstack:unstack-raised putdown:place-beside push-left:push-left-front"
     assert overnight_runs.setting("OPERATOR_EMBEDDINGS") == "compositional-tree one-hot multi-hot-trainable text"
     monkeypatch.setenv("OPERATOR_EMBEDDINGS", "one-hot")
     monkeypatch.setenv("JOBS", "3")
@@ -110,8 +110,8 @@ def test_settings_come_from_the_experiment_unless_set_in_the_environment(monkeyp
 
 @pytest.mark.unit
 def test_the_command_line_chooses_the_experiment(tmp_path):
-    """--experiment learnability plans one run per registered skill, alone; the default plans rq3-repair's runs."""
-    environment = {name: value for name, value in os.environ.items() if name not in EXPERIMENTS["rq3-repair"].settings()}
+    """--experiment learnability plans one run per registered skill, alone; the default plans rq3-repair-minimal's runs."""
+    environment = {name: value for name, value in os.environ.items() if name not in EXPERIMENTS["rq3-repair-minimal"].settings()}
     environment |= {"DRY_RUN": "1", "OUT": str(tmp_path)}
 
     def plan(*arguments: str) -> list[str]:

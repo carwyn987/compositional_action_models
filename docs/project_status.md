@@ -99,8 +99,9 @@ released, gently, without disturbing anything else.
 | push-beside(?o ?u) | as push, + `(on-table ?u)`; `beside` in place of the region | – | push toward ?u | as push |
 
 Which skills are trained and which are held out is set by the experiment (§4), not by the skill definitions:
-in `rq3-repair` (`src/cam/experiments/research_experiments.py`), `push-left-front` is held out and the other
-three diagonals are trained.
+in `rq3-repair-minimal` (`src/cam/experiments/research_experiments.py`), seven skills train and unstack-raised,
+place-beside and push-left-front are held out; in `rq3-repair-maximal`, the 13 training skills (every push but
+push-left-front) train and push-left-front is held out.
 
 Every scripted policy succeeds with 5-step settled success (2 and 3 blocks): pick/place skills 10/10, pushes
 18–20/20 (with 3 blocks another block can lie on a straight push path). The scripted push moves at a quarter
@@ -198,12 +199,13 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   runs the unit tests, writes `run_info.txt` (commit and settings), blocks sleep, then runs
   `overnight_runs.py`.
 - **`scripts/overnight_runs.py`:** runs an experiment's plan of runs.
-  - **experiments** (`--experiment NAME`, default `rq3-repair`; `--list` describes each) are classes in
+  - **experiments** (`--experiment NAME`, default `rq3-repair-minimal`; `--list` describes each) are classes in
     `src/cam/experiments/research_experiments.py`: the docstring gives the question, design, controls and what
     to read; the attributes are the runner's settings (groups, skills, repairs, conditions, budgets). An
     environment variable named as a setting overrides it, and the runner lists the overrides. `learnability`:
     each registered skill alone; `rq1`: one shared policy per operator embedding on the training skills;
-    `rq3-repair`: rq1's policies continued with repaired operators; `overlap`: how much of their operators'
+    `rq3-repair-minimal` and `rq3-repair-maximal`: rq1's policies continued with repaired operators (few training
+    skills, each repair's new literals in one other skill; or every training skill and one repair); `overlap`: how much of their operators'
     structure the training skills share, at five levels from predicates to whole operators, and how much of each
     held-out operator they cover (`src/cam/experiments/representation_overlap.py`; static, nothing trains). Every
     experiment prints the same report for its own skills when it starts and saves it as `<OUT>/overlap.txt`;

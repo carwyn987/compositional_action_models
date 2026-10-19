@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 """Overnight experiments for the research questions: an experiment's plan of training runs, executed and explained.
 
-    ./scripts/start_overnight.sh --experiment rq3-repair       # usual way: environment checks + unit tests, then this
+    ./scripts/start_overnight.sh --experiment rq3-repair-minimal       # usual way: environment checks + unit tests, then this
     .venv/bin/python scripts/overnight_runs.py --list          # the experiments: what each asks, and its settings
     .venv/bin/python scripts/overnight_runs.py --experiment rq1                      # this runner alone
     DRY_RUN=1 .venv/bin/python scripts/overnight_runs.py --experiment rq1            # print the plan, run nothing
     SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py --experiment learnability
 
-Experiments (--experiment NAME, default rq3-repair) are defined in src/cam/experiments/research_experiments.py:
-learnability (each skill alone), rq1 (one shared policy per operator embedding) and rq3-repair (rq1's
-policies continued with repaired operators). Each sets the groups to run and every setting below; an environment
+Experiments (--experiment NAME, default rq3-repair-minimal) are defined in src/cam/experiments/research_experiments.py:
+learnability (each skill alone), rq1 (one shared policy per operator embedding), rq3-repair-minimal and
+rq3-repair-maximal (rq1's policies continued with repaired operators), and overlap (static: how much of their
+operators the training skills share). Each sets the groups to run and every setting below; an environment
 variable of a setting's name overrides it, and the runner lists the overrides when it starts. A plan whose repairs
 ask for a literal that no training skill has refuses to start.
 
@@ -99,8 +100,8 @@ PYTHON = str(ROOT / ".venv" / "bin" / "python") if (ROOT / ".venv" / "bin" / "py
 def command_line() -> argparse.Namespace:
     """The runner's arguments (imported as a module, e.g. by the tests: the defaults)."""
     parser = argparse.ArgumentParser(description="Run an experiment's plan of training runs (see this file's header).")
-    parser.add_argument("--experiment", choices=EXPERIMENTS, default="rq3-repair",
-                        help="the experiment to run (default rq3-repair); --list describes each")
+    parser.add_argument("--experiment", choices=EXPERIMENTS, default="rq3-repair-minimal",
+                        help="the experiment to run (default rq3-repair-minimal); --list describes each")
     parser.add_argument("--list", action="store_true", help="describe every experiment and its settings, run nothing")
     return parser.parse_args(sys.argv[1:] if __name__ == "__main__" else [])
 

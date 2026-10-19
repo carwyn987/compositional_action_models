@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Start an overnight experiment (scripts/overnight_runs.py) from the current branch, in this terminal.
 #
-#   ./scripts/start_overnight.sh --experiment rq3-repair   # check, then run its plan (2 runs at a time), explaining each
+#   ./scripts/start_overnight.sh --experiment rq3-repair-minimal   # check, then run its plan (2 runs at a time), explaining each
 #   DEVICE=cuda ./scripts/start_overnight.sh --experiment rq1    # on a GPU (fails fast if CUDA is not available)
 #   JOBS=1 ./scripts/start_overnight.sh --experiment rq1         # one run at a time
 #   ./scripts/start_overnight.sh --no-tests --experiment rq1     # skip the unit tests before starting
@@ -21,7 +21,7 @@
 # Ctrl+C stops the current run after it saves; running the same command again continues where it stopped.
 # Arguments other than --no-tests (--experiment NAME, --list) and the settings of overnight_runs.py (environment
 # variables: OUT, JOBS, DEVICE, SEEDS, OPERATOR_EMBEDDINGS, ...; see its header) pass through, e.g.
-#   SEEDS="0 1" ./scripts/start_overnight.sh --experiment rq3-repair
+#   SEEDS="0 1" ./scripts/start_overnight.sh --experiment rq3-repair-minimal
 
 set -euo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/.."
