@@ -213,7 +213,8 @@ where conditions differ most, at little cost (`ADDED_SKILL_FIRST_EVALUATION` in 
     on the few transitions collected since the resume (in the 2026-10-11 repairs the critic fitted those, and
     the other skills' success dipped);
   - Ctrl+C saves and stops every run, and the same command resumes;
-  - **groups:** learnability (each skill alone), rq1 (one shared policy per condition and seed), repair
+  - **groups:** learnability (each skill alone, evaluated every `LEARN_EVAL_INTERVAL` (10k) steps: its steps to
+    threshold are the from-scratch baseline and set `RQ1_STEPS=auto`), rq1 (one shared policy per condition and seed), repair
     (each `FROM:TO` in `REPAIRS`, in each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill
     evaluated every `REPAIR_EVAL_INTERVAL` (10k) steps).
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training

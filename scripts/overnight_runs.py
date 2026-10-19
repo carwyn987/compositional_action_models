@@ -68,8 +68,10 @@ Settings (environment variables, defaults in brackets)
           literal of each TO appears in some base skill, so a policy reading the operator can use it)
   REPAIR_MODES ["isolated retain"]  REPAIR_EVAL_INTERVAL [10000] (how often a repair run evaluates every skill)
   LEARN_STEPS [150000]  RQ1_STEPS [500000]  REPAIR_STEPS [150000] (a repair run's most steps)
+  LEARN_EVAL_INTERVAL [10000] (how often a learnability run evaluates: its steps to threshold are the from-scratch
+                  baseline and set RQ1_STEPS=auto, so they need a finer resolution than EVAL_INTERVAL)
   RQ1_STEPS=auto: each rq1 run's budget is RQ1_BUDGET_MARGIN [1.5] x the sum over BASE_SKILLS of the steps each
-                  needed alone to reach the threshold in its learnability run (at least one EVAL_INTERVAL; a skill
+                  needed alone to reach the threshold in its learnability run (at least LEARN_EVAL_INTERVAL; a skill
                   that never did, or has no learnability result, counts as LEARN_STEPS), so every skill gets at
                   least what it needs alone. The rq1 runs wait for the learnability runs.
   EVAL_INTERVAL [50000]  EVAL_EPISODES [20]  SAVE_INTERVAL [50000]
@@ -118,6 +120,7 @@ REPAIRS = [tuple(pair.split(":")) for pair in
 REPAIRED = [to for _, to in REPAIRS]
 REPAIR_MODES = setting("REPAIR_MODES", "isolated retain").split()
 REPAIR_EVAL_INTERVAL = int(setting("REPAIR_EVAL_INTERVAL", "10000"))
+LEARN_EVAL_INTERVAL = int(setting("LEARN_EVAL_INTERVAL", "10000"))
 LEARN_STEPS = int(setting("LEARN_STEPS", "150000"))
 RQ1_AUTO = setting("RQ1_STEPS", "500000") == "auto"
 RQ1_BUDGET_MARGIN = float(setting("RQ1_BUDGET_MARGIN", "1.5"))
@@ -238,7 +241,7 @@ def learnability_steps(skills: list[str]) -> tuple[dict[str, int | None], list[s
 
 
 # rq1 steps: the setting, or with RQ1_STEPS=auto the most the budget can be until the learnability runs are done
-RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, EVAL_INTERVAL) if RQ1_AUTO
+RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, LEARN_EVAL_INTERVAL) if RQ1_AUTO
              else int(setting("RQ1_STEPS", "500000")))
 
 
@@ -269,7 +272,8 @@ def build_plan() -> list[Run]:
                      "Also the single-skill baseline for RQ4 (hypernetworks vs individual policies)."),
                 steps=LEARN_STEPS, condition="multi-hot", output=output,
                 command=["main.py", "--skills", skill, "--operator-encoder", "multi-hot",
-                         "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output)],
+                         "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output),
+                         "--eval-interval", str(LEARN_EVAL_INTERVAL)],
             ))
     for seed in SEEDS:
         for condition in CONDITIONS:
@@ -538,7 +542,7 @@ class Runner:
         """RQ1_STEPS=auto: the rq1 run's budget from the learnability results, the same for every rq1 run."""
         if self.rq1_steps is None:
             steps, missing = learnability_steps(BASE_SKILLS)
-            self.rq1_steps = rq1_budget(steps, RQ1_BUDGET_MARGIN, LEARN_STEPS, EVAL_INTERVAL)
+            self.rq1_steps = rq1_budget(steps, RQ1_BUDGET_MARGIN, LEARN_STEPS, LEARN_EVAL_INTERVAL)
             needed = ", ".join(f"{skill} {'-' if value is None else f'{value // 1000}k'}" for skill, value in steps.items())
             say(f"   budget (RQ1_STEPS=auto): {self.rq1_steps:,} steps = {RQ1_BUDGET_MARGIN} x the steps each skill "
                 f"needed alone ({needed}; '-' counts as {LEARN_STEPS // 1000}k)")

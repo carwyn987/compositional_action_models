@@ -55,7 +55,7 @@ def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
     for run in runs:
         runner.set_rq1_budget(run)
     expected = overnight_runs.rq1_budget({"pickup": 100_000, "putdown": 50_000}, overnight_runs.RQ1_BUDGET_MARGIN,
-                                         overnight_runs.LEARN_STEPS, overnight_runs.EVAL_INTERVAL)
+                                         overnight_runs.LEARN_STEPS, overnight_runs.LEARN_EVAL_INTERVAL)
     assert [(run.steps, run.command[-1]) for run in runs] == [(expected, str(expected))] * 2
 
 
