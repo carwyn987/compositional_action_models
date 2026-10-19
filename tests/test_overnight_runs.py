@@ -73,7 +73,7 @@ def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypa
     for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("OPERATOR_EMBEDDINGS", ["one-hot", "text"]),
                         ("SEEDS", [0]), ("BASE_SKILLS", ["pickup", "putdown", "stack"]),
                         ("REPAIRS", [("stack", "place-beside")]), ("REPAIRED", ["place-beside"]),
-                        ("REPAIR_MODES", ["isolated"]), ("RQ1_AUTO", False)):
+                        ("REPAIR_MODES", ["isolated"]), ("REPAIR_HIDDEN_EMBEDDINGS", ["one-hot"]), ("RQ1_AUTO", False)):
         monkeypatch.setattr(overnight_runs, name, value)
     groups = [run.group for run in overnight_runs.build_plan()]
     assert groups == ["learnability"] * 4 + ["rq1"] * 2 + ["repair"] * 3  # one-hot: visible and hidden; text: visible
