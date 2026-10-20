@@ -8,7 +8,8 @@ task over one or more skills. Each episode is one grounded action of one skill
            next skill in turn, or by competence), reset the scene, run that skill's setup chain
            (one of skill.setup_skills, e.g. pickup before putdown) to reach a state
            where it applies, then choose a random grounding whose
-           preconditions hold
+           preconditions hold and that is feasible in the scene (feasible: e.g.
+           a push with no other block in its path, which could only fail)
     step   the episode ends (terminated) once the grounding's effects have held for
            success_hold_steps consecutive steps (settled success: the skill must stop in
            its goal state, not pass through it), with the scene settled over those steps
@@ -24,8 +25,10 @@ task over one or more skills. Each episode is one grounded action of one skill
 Each setup skill is executed like an episode of its own: a random applicable
 grounding is chosen and its policy acts until that grounding's effects hold.
 If a setup skill has no applicable grounding or does not succeed within
-max_steps_per_setup_skill, the scene is reset and setup starts over, up to
-max_setup_attempts times.
+max_steps_per_setup_skill, or no grounding is feasible, the scene is reset and
+setup starts over, up to max_setup_attempts times (many: a diagonal push's path
+is clear in about one scene in four, and a skill without setup resamples in
+one reset).
 
 TODO: execute setup skills with learned policies instead of scripted ones, so
 that training links actions into chains.
@@ -76,7 +79,7 @@ class SkillEnvironment(gym.Wrapper):
         setup_policies: dict[str, Policy] | None = None,
         reward_functions: dict[str, RewardFunction] | None = None,
         max_steps_per_setup_skill: int = 100,
-        max_setup_attempts: int = 10,
+        max_setup_attempts: int = 100,
         success_hold_steps: int = 1,
         check_failure: Callable[[GroundedSymbolicActionModel, dict, dict], str | None] | None = None,
         frame_predicates: frozenset[str] = frozenset(),
@@ -84,6 +87,7 @@ class SkillEnvironment(gym.Wrapper):
         failure_penalty: float = 0.0,
         competence_sampling: bool = False,
         at_rest: Callable[[GroundedSymbolicActionModel, list[dict]], bool] | None = None,
+        feasible: Callable[[GroundedSymbolicActionModel, dict], bool] | None = None,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
@@ -93,6 +97,9 @@ class SkillEnvironment(gym.Wrapper):
         # (grounded action, the infos of the last success_hold_steps steps the effects held, oldest first) -> whether
         # the scene settled over them; settled success needs it (None: always)
         self.at_rest = at_rest
+        # (grounding, info) -> whether it can be carried out in this scene without failing (e.g. a push with another
+        # block in its path cannot); groundings for which it is False are not chosen (None: every grounding can)
+        self.feasible = feasible
         self.held_infos: deque = deque(maxlen=max(success_hold_steps, 1))
         self.shared_reward = shared_reward  # reward terms added for every skill
         self.failure_penalty = failure_penalty  # subtracted on the step a failure ends the episode
@@ -261,7 +268,8 @@ class SkillEnvironment(gym.Wrapper):
         return obs, info, setup
 
     def _choose_grounding(self, skill: Skill, info: dict) -> GroundedSymbolicActionModel | None:
-        candidates = skill.applicable_groundings(info["facts"], info["objects"])
+        candidates = [grounded for grounded in skill.applicable_groundings(info["facts"], info["objects"])
+                      if self.feasible is None or self.feasible(grounded, info)]
         return candidates[self.np_random.integers(len(candidates))] if candidates else None
 
     def _annotate(self, info: dict, success: bool) -> dict:

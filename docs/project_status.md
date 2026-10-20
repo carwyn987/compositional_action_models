@@ -10,7 +10,9 @@ Fetch simulator (`FetchMultiBlock-v0`, 1–5 blocks), wrapped from the inside ou
 1. `FetchEnvStateAnnotationWrapper`: named state, including block positions and rotations.
 2. `FetchPredicateEvaluationWrapper`: the facts true in the current state.
 3. `SkillEnvironment`: per episode, picks a skill (`--skill-sampling`, §2), runs one of its setup chains with
-   scripted policies, picks a random applicable grounding, and computes success, failure and reward.
+   scripted policies, picks a random applicable grounding that is feasible in the scene (a push only with no
+   other block on its path, `push_path_clear`: otherwise it could only fail, by knocking that block aside), and
+   computes success, failure and reward.
 4. `TimeLimit`: outside `SkillEnvironment`, so setup steps don't count toward the episode's limit
    (`--max-steps-per-episode`, default 100).
 5. `PolicyObservationWrapper`: builds `{observation, operator_embedding, grounding}` (`docs/policy_inputs.md`).
@@ -112,7 +114,9 @@ place-beside and push-left-front are held out; in `rq3-repair-maximal`, the 13 t
 push-left-front) train and push-left-front is held out.
 
 Every scripted policy succeeds with 5-step settled success (2 and 3 blocks): pick/place skills 10/10, pushes
-18–20/20 (with 3 blocks another block can lie on a straight push path). The scripted push moves at a quarter
+40/40 (2 blocks). Without the clear-path rule another block lies on the path in a fifth of push-left's scenes and
+two thirds of a diagonal's, and the scripted push-left-front then succeeds in 30/40 (knocking the other block in
+9). Diagonal scenes are resampled until the path is clear, about four resets each. The scripted push moves at a quarter
 of full speed while pushing (`PUSH_SPEED`), which keeps its contact force low; a diagonal push then takes
 about 30–120 steps (mostly 70–100), so the pre-flight check gives scripted policies 150 steps.
 

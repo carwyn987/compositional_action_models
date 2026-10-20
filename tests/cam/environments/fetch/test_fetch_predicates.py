@@ -139,3 +139,27 @@ def test_disturbed_names_another_block_moved_from_its_start():
     assert disturbed(pickup, start, moved_block0) is None and disturbed(pickup, start, nudged) is None
     assert disturbed(pickup, start, knocked) == "block1"
     assert check_fetch_failure(pickup, start, knocked) == "disturbed block1"
+
+
+@pytest.mark.unit
+def test_a_push_path_is_clear_unless_another_block_lies_between_behind_the_block_and_its_goal():
+    from cam.environments.fetch.fetch_predicate_evaluation_wrapper import REGION_CENTRE, push_path_clear
+    from cam.skills.registry import build_skill
+
+    def clear(skill, block1, arguments=("block0",)):
+        start = np.array([*REGION_CENTRE, TABLE_REST_Z])
+        state = FetchState(np.array(FAR), OPEN, {"block0": start, "block1": np.array([*block1, TABLE_REST_Z])})
+        grounded = build_skill(skill, {"symbolic_action_model_format": "pddl"}).ground(
+            dict(zip(("?o", "?u"), arguments)))
+        info = {"environment_state": state, "facts": FetchPredicateEvaluationWrapper.evaluate(state)}
+        return push_path_clear(grounded, info)
+
+    x, y = REGION_CENTRE
+    assert clear("push-left", (x, y + 0.23))  # past the goal (y + 0.14) by more than the clearance
+    assert clear("push-left", (x + 0.10, y + 0.07))  # beside the path
+    assert not clear("push-left", (x, y + 0.07))  # on the path
+    assert not clear("push-left", (x + 0.05, y + 0.07))  # touching the path
+    assert not clear("push-left", (x, y - 0.10))  # where the gripper comes down behind the block
+    assert not clear("push-left-front", (x - 0.07, y + 0.07))  # between the legs of the diagonal
+    assert clear("pickup", (x, y + 0.07))  # not a push: the block is lifted over the others
+    assert clear("push-beside", (x, y + 0.15), ("block0", "block1"))  # ?u, at the goal's end of the path

@@ -213,6 +213,35 @@ def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None
                 None)
 
 
+# A push sweeps the moved block from its start to its goal with the gripper behind it. Its path is the rectangle from
+# PUSH_BEHIND behind the block's start (where the gripper comes down) to its goal, along each axis the push moves it,
+# padded by PUSH_PATH_CLEARANCE all round: a block centre inside it would be touched by the moved block (half-widths
+# 2.5 cm each, more when turned) or by the gripper. The rectangle covers a straight push and one in two legs, x then y.
+PUSH_BEHIND = 0.055
+PUSH_PATH_CLEARANCE = 0.07
+
+
+def push_path_clear(grounded_action_model, info: dict) -> bool:
+    """Whether a push can be carried out without disturbing another block (SkillEnvironment's feasible): no block
+    other than the grounding's arguments has its centre on the push's path (PUSH_PATH_CLEARANCE). A push here is an
+    action that moves a block resting on the table and leaves it there (its effects do not delete (on-table ?o));
+    with another block in the way it could only fail. Other actions lift the moved block over the others: True."""
+    state = info["environment_state"]
+    block = grounded_action_model.arguments[0]
+    on_table_fact = Predicate("on-table", (block,))
+    if on_table_fact not in info["facts"] or any(
+            effect.delete and effect.predicate == on_table_fact for effect in grounded_action_model.effects):
+        return True
+    start = state.block_positions[block][:2]
+    goal = push_goal(state, grounded_action_model)
+    behind = start - PUSH_BEHIND * np.sign(np.round(goal - start, 3))  # along each axis the block moves
+    low = np.minimum(behind, goal) - PUSH_PATH_CLEARANCE
+    high = np.maximum(behind, goal) + PUSH_PATH_CLEARANCE
+    return not any(np.all((low <= position[:2]) & (position[:2] <= high))
+                   for name, position in state.block_positions.items()
+                   if name not in grounded_action_model.arguments)
+
+
 # Settled success needs the moved block (first argument) to have risen or sunk less than this, net, over the steps the
 # effects held (--success-hold-steps, 5): a block lifted on and on fast enough to reach the raised band within an
 # episode (2 mm per step or more) moves 1 cm or more over them and has not stopped there, while an exploring policy's
