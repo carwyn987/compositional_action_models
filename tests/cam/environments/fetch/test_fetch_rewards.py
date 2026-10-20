@@ -364,3 +364,27 @@ def test_lifting_slowly_and_lowering_fast_earns_nothing_from_the_lift():
     fractions = np.clip(np.array(heights) / 0.06, 0.0, 1.0)
     clipped = 8.0 * np.clip(np.diff(fractions), -0.25, 0.25).sum()
     assert lift == pytest.approx(0.0, abs=1e-6) and clipped > 10
+
+
+@pytest.mark.integration
+@pytest.mark.parametrize("skill, rewarded", [("unstack-raised", True), ("unstack", True), ("pickup", False)])
+def test_closing_where_unstacks_setup_leaves_the_gripper_earns_the_grip(skill, rewarded):
+    """unstack's setup leaves the open gripper around the top block: closing there earns the closing progress and the
+    grip bonus, though the gripper never went above the block. From pickup's start, away from the block (the
+    control), closing in place earns neither."""
+    from main import parse_args
+    from cam.experiments.environment_setup import setup_environment
+    from cam.skills.registry import build_skill
+
+    config = parse_args(["--skills", skill, "--num-blocks", "2", "--reward", "shaped", "--seed", "0"])
+    env = setup_environment(config, [build_skill(skill, config)])
+    try:
+        env.reset(seed=7)
+        close = grip = 0.0
+        for _ in range(6):
+            components = env.step(np.array([0.0, 0.0, 0.0, -1.0]))[4]["reward_components"]
+            close, grip = close + components["close"], grip + components["grip"]
+    finally:
+        env.close()
+    assert (close > 0 and grip == FetchPickupReward().config.grip_bonus) is rewarded
+    assert (close == 0 and grip == 0) is not rewarded

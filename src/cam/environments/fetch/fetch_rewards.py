@@ -14,7 +14,7 @@ episode against an honest 8, as much as a success, without ever succeeding.
 """
 
 from collections import deque
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 
 import numpy as np
 
@@ -28,6 +28,7 @@ from cam.environments.fetch.fetch_predicate_evaluation_wrapper import (
     SAFE_GRIPPER_FORCE,
     RAISED_HEIGHT,
     TABLE_REST_Z,
+    gripping,
     push_goal,
 )
 from cam.rewards.reward_function import RewardFunction
@@ -154,6 +155,9 @@ class FetchPickupReward(RewardFunction):
 
     Progress terms reward the change since the previous step; each stage's bonus
     is paid once per episode. The lift is measured from rest_height (the table).
+    An episode that starts with the open gripper already around the block (unstack's setup leaves it there, after
+    placing the block) counts the approach stages as done, without their bonuses, so closing is rewarded from its
+    first step: otherwise only getting 4 cm above the block first would open the close and grip stages.
     """
 
     config: FetchPickupRewardConfig = field(default_factory=FetchPickupRewardConfig)
@@ -178,6 +182,10 @@ class FetchPickupReward(RewardFunction):
         self.settle_earned = False
         self.success_earned = False
         self.recent_object_positions: deque = deque(maxlen=3)  # the settle bonus's window
+        if grounded_action_model is not None and "environment_state" in info:
+            state = info["environment_state"]
+            around = gripping(replace(state, finger_width=0.0), grounded_action_model.arguments[0])  # within reach
+            self.above_earned = self.grasp_pose_earned = around
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -202,10 +210,8 @@ class FetchPickupReward(RewardFunction):
 
         above_now = xy_distance <= cfg.above_xy_tolerance and z_clearance >= cfg.above_min_clearance
         at_grasp_pose = xy_distance <= cfg.grasp_xy_tolerance and grasp_z_error <= cfg.grasp_z_tolerance
-        # Forgiving: holding, or the gripper closing while correctly positioned around the block.
-        gripping_now = Predicate("holding", (block,)) in info["facts"] or (
-            at_grasp_pose and gripper_width < OPEN_FINGER_WIDTH
-        )
+        # Forgiving: holding, or the closed fingers around the block (the predicates' gripping), lifted or not.
+        gripping_now = Predicate("holding", (block,)) in info["facts"] or gripping(state, block)
         lift_off_now = lift >= cfg.lift_off_height
 
         components = {
