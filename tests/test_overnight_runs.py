@@ -148,3 +148,16 @@ def test_the_review_reports_a_repairs_transfer_gain_against_its_learnability_run
         summary("pickup-raised", zero_shot_success_rate=0.0, steps_to_threshold=20_000, skill_steps_to_threshold=20_000))
     assert any("transfer gain 3.00x" in line for line in section_added_skills([alone, repaired]))
     assert not any("transfer gain" in line for line in section_added_skills([repaired]))
+
+
+@pytest.mark.unit
+def test_progress_is_read_even_when_other_output_follows_the_progress_bar(tmp_path, monkeypatch):
+    """The last progress bar, followed by 20 kB of other output (a run's log between two redraws of the bar), is still
+    found; searched over only the last 4,000 bytes (the control), it is not."""
+    monkeypatch.setattr(overnight_runs, "OUT", tmp_path)
+    run = overnight_runs.Run("rq1_one-hot_seed0", "rq1", "", "", "", 300_000, "one-hot", tmp_path, ["main.py"])
+    run.log.parent.mkdir(parents=True)
+    run.log.write_text(" 57%  172,987/300,000 [3:30:23 < 2:42:00, 13 it/s]\r\n" + "| rollout/ |  |\n" * 1_300)
+    assert overnight_runs.Runner.progress(run) == (172_987, 300_000)
+    monkeypatch.setattr(overnight_runs, "PROGRESS_TAIL", 4_000)
+    assert overnight_runs.Runner.progress(run) == (None, 300_000)

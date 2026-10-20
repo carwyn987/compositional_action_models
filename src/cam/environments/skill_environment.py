@@ -143,9 +143,9 @@ class SkillEnvironment(gym.Wrapper):
                 continue
             grounded = self._choose_grounding(self.skill, info)
             if grounded is None:
-                logger.info("setup failed: no applicable grounding of %s after setup", self.skill.name)
+                logger.debug("setup resampled: no applicable grounding of %s after setup", self.skill.name)
                 continue
-            logger.info("episode start: %s (preconditions hold)", grounded)
+            logger.debug("episode start: %s (preconditions hold)", grounded)
             if grounded.effects_hold(info["facts"]):
                 logger.warning("episode start: %s effects already hold", grounded)
             self.grounded_action_model = grounded
@@ -242,9 +242,9 @@ class SkillEnvironment(gym.Wrapper):
         for setup_skill in chains[self.np_random.integers(len(chains))]:
             grounded = self._choose_grounding(setup_skill, info)
             if grounded is None:
-                logger.info("setup failed: no applicable grounding of %s", setup_skill.name)
+                logger.debug("setup resampled: no applicable grounding of %s", setup_skill.name)
                 return obs, info, None
-            logger.info("setup start: %s (preconditions hold)", grounded)
+            logger.debug("setup start: %s (preconditions hold)", grounded)
             if grounded.effects_hold(info["facts"]):
                 logger.warning("setup start: %s effects already hold", grounded)
             policy = self.setup_policies[setup_skill.name]
@@ -256,7 +256,7 @@ class SkillEnvironment(gym.Wrapper):
                     return obs, info, None
                 obs, _, _, _, info = self.env.step(policy(obs, info, grounded))
                 steps += 1
-            logger.info("setup succeeded: %s in %d steps", grounded, steps)
+            logger.debug("setup succeeded: %s in %d steps", grounded, steps)
             setup.append((grounded, steps))
         return obs, info, setup
 

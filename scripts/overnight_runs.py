@@ -192,6 +192,7 @@ COMMON = [
     "--save-interval", str(SAVE_INTERVAL), "--text-backend", TEXT_BACKEND,
 ]
 PROGRESS = re.compile(r"(\d[\d,]*)/(\d[\d,]*)\s")
+PROGRESS_TAIL = 256_000  # bytes at the end of a run's log searched for its progress bar
 
 
 @dataclass
@@ -668,10 +669,11 @@ class Runner:
 
     @staticmethod
     def progress(run: Run) -> tuple[int | None, int]:
-        """(steps done in this invocation, its total) from the progress bar at the end of the run's log."""
+        """(steps done in this invocation, its total) from the last progress bar in the end of the run's log
+        (PROGRESS_TAIL bytes: other output between two redraws of the bar can be long)."""
         try:
             with open(run.log, "rb") as log:
-                log.seek(max(log.seek(0, 2) - 4000, 0))
+                log.seek(max(log.seek(0, 2) - PROGRESS_TAIL, 0))
                 tail = log.read().decode(errors="replace").replace("\r", "\n")
         except OSError:
             return None, run.steps
