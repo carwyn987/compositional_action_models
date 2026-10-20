@@ -64,17 +64,21 @@ assumption, checked over `on-table`, `on`, `clear`, `holding`, `gripper-empty`; 
 as side effects and are left out). So unstack(?o ?u) must leave `(on-table ?u)` true: lifting both blocks,
 which a trained policy did, is not an unstack.
 
-**Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
+**Failure** ends an episode unsuccessfully, with a penalty of 2 under shaped rewards, and takes precedence
 over success. It is the same for every skill (`check_fetch_failure`): an **extreme force** on the gripper (net
 contact force above `MAX_GRIPPER_FORCE`, 500 N, for `FORCE_FAILURE_STEPS`, 5, steps in a row: pressing on a
 block or the table), the moved block (first argument) was **dropped** (let go more than `DROP_HEIGHT`,
 2 cm, above its support), or another block was **disturbed** (moved more than `DISTURB_DISTANCE`, 3 cm,
-from where it started: knocked or pushed aside).
+from where it started: knocked or pushed aside). The episode ends on the failing step, before the failure plays out
+(a block let go 20 cm up has not fallen yet), so on that step the shaped reward also charges back the moved block's
+progress of the episode (the `refund` component: lift, push, carry, align, descent); the stage bonuses and the
+gripper's approach are kept, since failing cannot earn them. Without the refund, lifting a block and letting it go
+kept the lift's reward.
 
 **Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`), against brutal motion
 (without them, trained push policies threw blocks): action changes (smoothness), the moved block's
 acceleration, any movement of the other blocks, and the **gripper force** above `SAFE_GRIPPER_FORCE`
-(100 N), counted up to 500 N: at most 0.2 per step, so pressing until it fails costs a tenth of the failure.
+(100 N), counted up to 500 N: at most 0.2 per step, so pressing until it fails costs half as much as the failure.
 The gripper force is the net contact force on the gripper and fingers, read from MuJoCo
 (`FetchState.gripper_force`, with the last 10 steps' magnitudes in `gripper_force_history`): a grasp's
 squeeze cancels out, so it measures pressing on a block or the table,
@@ -90,8 +94,11 @@ released, gently, without disturbing anything else.
 The motion penalties are light on purpose: they grow with exploration noise wherever the gripper touches
 something, and with ten times these weights (2026-10-14 run) an exploring policy did better keeping away from the
 blocks than trying (scripted pickup with noise σ = 0.6: −7.4 against −0.2 for doing nothing; now −1.9 against
-−4.2). Every shaped reward also costs 0.05 per step: 5 over a 100-step episode, half a failure, so waiting is
-not free and failing early never pays.
+−4.2). The failure penalty is small for the same reason: exploring policies fail often near the blocks (a noisy
+finger command lets a lifted block go, a noisy height command presses the fingers into the table), and at 10 they
+learned to keep away: pickup-raised trained alone hovered over its block with the fingers closed, 0 of 10 at every
+evaluation up to 60k steps. Every shaped reward also costs 0.05 per step, at most 1 from any step on at the
+training's discount (γ = 0.95): waiting is not free, and costs less than a failure, so failing never pays.
 
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 

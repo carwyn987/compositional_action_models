@@ -186,6 +186,7 @@ class SkillEnvironment(gym.Wrapper):
         success = self.steps_effects_held >= self.success_hold_steps and (
             self.at_rest is None or self.at_rest(self.grounded_action_model, list(self.held_infos)))
         reward_function = self.reward_functions[self.skill.name]
+        info = {**info, "failed": failed, "failure": failure}  # the reward functions see whether this step failed
         reward, components = reward_function(self.grounded_action_model, action, info, success)
         if self.shared_reward is not None:
             shared, shared_components = self.shared_reward(self.grounded_action_model, action, info, success)

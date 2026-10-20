@@ -20,7 +20,9 @@ class RewardFunction(ABC):
     def __call__(
         self, grounded_action_model: GroundedSymbolicActionModel, action: np.ndarray, info: dict, success: bool
     ) -> tuple[float, dict[str, float]]:
-        """(reward, components): the step's reward and its named terms (summing to it) for logging."""
+        """(reward, components): the step's reward and its named terms (summing to it) for logging. In
+        SkillEnvironment, info also says whether the step ended the episode as a failure (failed, and the reason
+        in failure); the failure penalty itself is added by SkillEnvironment."""
 
 
 class SparseReward(RewardFunction):

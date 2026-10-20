@@ -11,6 +11,14 @@ progress, and moving back and forth earns nothing. Clipped, a fast move back wou
 be charged less than the slow move forward earned: holding a block and lifting it
 slowly, then lowering it fast, would earn about 25 from pickup's lift term per
 episode against an honest 8, as much as a success, without ever succeeding.
+
+A failure (the moved block dropped, another block knocked aside, the gripper pressing hard) ends the episode on the
+step it happens, before its consequences play out: a block let go 20 cm up has not fallen yet. So on a failing step
+every reward charges back the moved block's progress of the episode (the refund component), as the block's fall
+would have; the stage bonuses and the gripper's approach are kept, since failing cannot earn them. Without the
+refund, lifting a block and letting it go kept the lift's reward: with a small failure penalty it paid about 10 per
+episode, and a policy learned it instead of the skill (pickup-raised trained alone: 3 in 4 training episodes failing
+and none succeeding at 60k steps).
 """
 
 from collections import deque
@@ -35,7 +43,19 @@ from cam.rewards.reward_function import RewardFunction
 
 
 
-FAILURE_PENALTY = 10.0  # subtracted when an episode fails (a block dropped or knocked aside); success pays 15
+# Subtracted when an episode fails (a block dropped or knocked aside, the gripper pressing hard), besides the refund of
+# the block's progress; success pays 15. Small on purpose: an exploring policy fails often near the blocks (a noisy
+# finger command lets a lifted block go; a noisy height command presses the fingers into the table), and at 10
+# policies learned to keep away from them (hovering over the block with the fingers closed, never grasping). It only
+# has to make failing worse than waiting: the time penalty costs at most 1 from any step on (0.05 per step,
+# discounted at gamma = 0.95), and a failure also forfeits the success to come.
+FAILURE_PENALTY = 2.0
+
+
+def refund(info: dict, block_progress: float) -> float:
+    """The refund component: on a step that ends the episode as a failure (info["failed"]), minus the moved block's
+    progress earned in the episode (see the module docstring); otherwise 0."""
+    return -block_progress if info.get("failed") else 0.0
 
 
 @dataclass(frozen=True)
@@ -46,7 +66,7 @@ class FetchMotionRewardConfig:
     acceleration_penalty: float = 50.0  # per (m/step^2)^2 of the moved block's acceleration
     disturbance_penalty: float = 2.0  # per metre the other blocks move
     # per newton of net gripper contact force from SAFE_ to MAX_GRIPPER_FORCE: at most 0.2 per step, so a press that
-    # lasts until it fails (FORCE_FAILURE_STEPS) costs a tenth of the failure itself
+    # lasts until it fails (FORCE_FAILURE_STEPS) costs half as much as the failure itself
     force_penalty: float = 0.0005
 
 
@@ -107,7 +127,7 @@ class FetchMotionReward(RewardFunction):
 @dataclass(frozen=True)
 class FetchPickupRewardConfig:
     # General costs
-    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
+    time_penalty: float = 0.05  # per step: at most 1 from any step on (gamma = 0.95), half a failure (FAILURE_PENALTY)
     action_l2_penalty: float = 0.001
 
     # 1. Approach object
@@ -182,6 +202,7 @@ class FetchPickupReward(RewardFunction):
         self.settle_earned = False
         self.success_earned = False
         self.recent_object_positions: deque = deque(maxlen=3)  # the settle bonus's window
+        self.block_progress = 0.0  # the lift terms so far, refunded on failure
         if grounded_action_model is not None and "environment_state" in info:
             state = info["environment_state"]
             around = gripping(replace(state, finger_width=0.0), grounded_action_model.arguments[0])  # within reach
@@ -226,6 +247,7 @@ class FetchPickupReward(RewardFunction):
             "lift": 0.0,
             "settle": 0.0,
             "success": 0.0,
+            "refund": 0.0,
         }
 
         # 1. Approach the block: reward reduced distance, in every stage, so moving away again (e.g. once the stage
@@ -261,6 +283,7 @@ class FetchPickupReward(RewardFunction):
         if self.grip_earned or lift > 0.0:
             lift_progress = lift_fraction - self.previous_lift_fraction
             components["lift"] = cfg.lift_progress_weight * float(lift_progress)
+            self.block_progress += components["lift"]
         if lift_off_now and not self.lift_off_earned:
             components["lift_off"] = cfg.lift_off_bonus
             self.lift_off_earned = True
@@ -279,6 +302,7 @@ class FetchPickupReward(RewardFunction):
         if success and not self.success_earned:
             components["success"] = cfg.success_bonus
             self.success_earned = True
+        components["refund"] = refund(info, self.block_progress)
 
         self.previous_distance = distance
         self.previous_grasp_error = grasp_error
@@ -302,7 +326,7 @@ class FetchUnstackReward(FetchPickupReward):
 @dataclass(frozen=True)
 class FetchStackRewardConfig:
     # General costs
-    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
+    time_penalty: float = 0.05  # per step: at most 1 from any step on (gamma = 0.95), half a failure (FAILURE_PENALTY)
     action_l2_penalty: float = 0.001
 
     # 1. Carry: raise the held block until its bottom clears the base's top by carry_clearance
@@ -358,6 +382,7 @@ class FetchStackReward(RewardFunction):
         self.placed_earned = False
         self.release_earned = False
         self.success_earned = False
+        self.block_progress = 0.0  # the carry, align and descend progress so far, refunded on failure
 
     def resting_z(self, block: np.ndarray, base: np.ndarray) -> float:
         """Height of the block's centre once placed: on top of the base."""
@@ -404,11 +429,13 @@ class FetchStackReward(RewardFunction):
             "placed": 0.0,
             "release": 0.0,
             "success": 0.0,
+            "refund": 0.0,
         }
 
         # 1. Raise the held block high enough to clear the base.
         if held and not self.carried_earned:
             components["carry"] = self.progress(self.previous_carry_gap, carry_gap, cfg.carry_progress_weight)
+            self.block_progress += components["carry"]
             if carry_gap <= cfg.carry_tolerance:
                 components["carry"] += cfg.carried_bonus
                 self.carried_earned = True
@@ -418,6 +445,7 @@ class FetchStackReward(RewardFunction):
             components["align"] = self.progress(
                 self.previous_align_distance, align_distance, cfg.align_progress_weight
             )
+            self.block_progress += components["align"]
             if align_distance <= cfg.aligned_xy_tolerance:
                 components["align"] += cfg.aligned_bonus
                 self.aligned_earned = True
@@ -425,6 +453,7 @@ class FetchStackReward(RewardFunction):
         # 3. Lower onto the base, penalizing a fast drop.
         if self.aligned_earned and not self.placed_earned:
             components["descend"] = self.progress(self.previous_place_gap, place_gap, cfg.descend_progress_weight)
+            self.block_progress += components["descend"]
             if self.previous_block_z is not None:
                 descent_speed = max(0.0, self.previous_block_z - float(block[2]))
                 components["gentle"] = -cfg.gentle_descent_penalty * max(0.0, descent_speed - cfg.gentle_descent_speed)
@@ -446,6 +475,7 @@ class FetchStackReward(RewardFunction):
         if success and not self.success_earned:
             components["success"] = cfg.success_bonus
             self.success_earned = True
+        components["refund"] = refund(info, self.block_progress)
 
         self.previous_carry_gap = carry_gap
         self.previous_align_distance = align_distance
@@ -501,7 +531,7 @@ class FetchPlaceBesideReward(FetchStackReward):
 @dataclass(frozen=True)
 class FetchPutdownRewardConfig:
     # General costs
-    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
+    time_penalty: float = 0.05  # per step: at most 1 from any step on (gamma = 0.95), half a failure (FAILURE_PENALTY)
     action_l2_penalty: float = 0.001
 
     # 1. Lower the block toward the table
@@ -565,6 +595,7 @@ class FetchPutdownReward(RewardFunction):
         self.on_table_earned = False
         self.release_earned = False
         self.success_earned = False
+        self.block_progress = 0.0  # the descend and square progress so far, refunded on failure
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -587,14 +618,16 @@ class FetchPutdownReward(RewardFunction):
             "on_table": 0.0,
             "release": 0.0,
             "success": 0.0,
+            "refund": 0.0,
         }
 
 
         # 1. Lower the block toward the table until it rests there.
         if not on_table:
             if self.previous_height is not None:
-                progress = self.previous_height - height
-                components["descend"] += cfg.descend_progress_weight * float(progress)
+                progress = cfg.descend_progress_weight * float(self.previous_height - height)
+                components["descend"] += progress
+                self.block_progress += progress
             components["descend"] += cfg.descend_dense_weight * float(np.exp(-cfg.descend_dense_sharpness * height))
 
         # 1b. Penalize lowering or dropping the block faster than a gentle speed.
@@ -604,9 +637,9 @@ class FetchPutdownReward(RewardFunction):
 
         # 2. Reward becoming more square, and a bonus scaled by squareness when it first comes to rest.
         if self.previous_squareness is not None:
-            components["square"] += cfg.square_progress_weight * float(
-                square - self.previous_squareness
-            )
+            progress = cfg.square_progress_weight * float(square - self.previous_squareness)
+            components["square"] += progress
+            self.block_progress += progress
         if on_table and not self.square_land_earned:
             components["square"] += cfg.square_land_bonus * square
             self.square_land_earned = True
@@ -635,6 +668,7 @@ class FetchPutdownReward(RewardFunction):
             scale = cfg.success_square_floor + (1.0 - cfg.success_square_floor) * square
             components["success"] = cfg.success_bonus * scale
             self.success_earned = True
+        components["refund"] = refund(info, self.block_progress)
 
         self.previous_height = height
         self.previous_squareness = square
@@ -645,7 +679,7 @@ class FetchPutdownReward(RewardFunction):
 
 @dataclass(frozen=True)
 class FetchPushRewardConfig:
-    time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
+    time_penalty: float = 0.05  # per step: at most 1 from any step on (gamma = 0.95), half a failure (FAILURE_PENALTY)
     action_l2_penalty: float = 0.001
     # 1. Get behind the block (opposite its goal), at its height, by way of a point above it: from the goal side of
     #    the block (most starts) the straight line to the point behind it runs through the block
@@ -682,6 +716,7 @@ class FetchPushReward(RewardFunction):
         self.above_earned = False
         self.behind_earned = False
         self.success_earned = False
+        self.block_progress = 0.0  # the push progress so far, refunded on failure
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -704,6 +739,7 @@ class FetchPushReward(RewardFunction):
             "behind": 0.0,
             "push": 0.0,
             "success": 0.0,
+            "refund": 0.0,
         }
         # 1. Get above the point behind the block, then lower to it (directly to it also earns the behind bonus).
         reach = float(np.linalg.norm(gripper - (behind if self.above_earned else above)))
@@ -725,10 +761,12 @@ class FetchPushReward(RewardFunction):
             components["push"] = cfg.push_progress_weight * float(
                 self.previous_goal_distance - goal_distance
             )
+            self.block_progress += components["push"]
         # 3. One-time terminal success reward.
         if success and not self.success_earned:
             components["success"] = cfg.success_bonus
             self.success_earned = True
+        components["refund"] = refund(info, self.block_progress)
 
         self.previous_reach = reach
         self.previous_goal_distance = goal_distance

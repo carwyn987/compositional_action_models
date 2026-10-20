@@ -195,7 +195,7 @@ def force_info(force, earlier=()):
 def test_gripper_force_is_penalized_up_to_the_failure_limit():
     """Holding a block (20 N) costs nothing; 300 N costs 0.1. A one-step contact spike of 38 kN (seen while
     exploring) costs at most 0.2, where the uncapped penalty (the control) would cost 19, more than success earns
-    (15). At most 0.2 per step, a press that lasts until it fails (5 steps) costs a tenth of the failure itself."""
+    (15). At most 0.2 per step, a press that lasts until it fails (5 steps) costs half as much as the failure itself."""
     reward = FetchMotionReward()
     reward.reset(PICKUP_BLOCK0, {})
     assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(20.0), False)[1]["force"] == 0
@@ -204,7 +204,7 @@ def test_gripper_force_is_penalized_up_to_the_failure_limit():
 
     assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(300.0), False)[1]["force"] == pytest.approx(-0.1)
     spike = reward(PICKUP_BLOCK0, np.zeros(4), force_info(38_000.0), False)[1]["force"]
-    assert spike == pytest.approx(-0.2) == pytest.approx(-FAILURE_PENALTY / FORCE_FAILURE_STEPS / 10)
+    assert spike == pytest.approx(-0.2) == pytest.approx(-FAILURE_PENALTY / FORCE_FAILURE_STEPS / 2)
     assert reward.config.force_penalty * (38_000.0 - 100.0) == pytest.approx(18.95)
 
 
@@ -418,3 +418,62 @@ def test_the_push_approach_goes_over_the_block_and_the_direct_route_still_earns_
     step(direct, block + [0.0, -0.15, 0.0])
     arrived = step(direct, behind)
     assert arrived["above"] == direct.config.above_bonus and arrived["behind"] == direct.config.behind_bonus
+
+
+@pytest.mark.integration
+def test_letting_a_lifted_block_go_keeps_none_of_the_lift():
+    """pickup-raised: the scripted grasp and lift to 20 cm, then the fingers open. The episode fails (dropped) on the
+    step the block is let go, before it falls, so the lift term alone keeps what the lift earned (the control: 5.8,
+    against 8 for the whole lift); the refund on that step charges it back, and the lift and the refund sum to 0."""
+    from main import parse_args
+    from cam.experiments.environment_setup import setup_environment
+    from cam.skills.registry import build_skill
+    from scripts.run_skill import SCRIPTED_POLICIES
+
+    config = parse_args(["--skills", "pickup-raised", "--num-blocks", "2", "--reward", "shaped", "--seed", "0"])
+    env = setup_environment(config, [build_skill("pickup-raised", config)])
+    policy = SCRIPTED_POLICIES["pickup-raised"]()
+    policy.reset()
+    try:
+        obs, info = env.reset(seed=11)
+        block = info["grounded_action_model"].arguments[0]
+        lift = refunded = 0.0
+        done = truncated = False
+        while not (done or truncated):
+            high = info["environment_state"].block_positions[block][2] - 0.425 >= 0.20
+            action = np.array([0.0, 0.0, 0.0, 1.0]) if high else policy(obs, info, info["grounded_action_model"])
+            obs, _, done, truncated, info = env.step(np.asarray(action, dtype=np.float64))
+            lift += info["reward_components"]["lift"]
+            refunded += info["reward_components"]["refund"]
+    finally:
+        env.close()
+    assert info["failure"].startswith("dropped")
+    assert lift > 4.0
+    assert lift + refunded == pytest.approx(0.0, abs=1e-6)
+
+
+@pytest.mark.unit
+def test_a_failure_refunds_the_push_progress_and_keeps_the_bonuses():
+    """push-left: the gripper reaches the point behind the block (its bonuses) and the block moves 4 cm toward its
+    goal (push progress, 30 x 0.04). The step that fails charges the push progress back; without a failure (the
+    control) nothing is refunded."""
+    from cam.environments.fetch.fetch_rewards import FetchPushReward
+    from cam.skills.blocksworld_skills import PushLeftSkill
+
+    push = PushLeftSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+
+    def run(failed_at_end):
+        reward = FetchPushReward()
+        reward.reset(push, {})
+        total = {}
+        for k, y in enumerate([0.70, 0.70, 0.72, 0.74]):
+            block = np.array([1.34, y, 0.425])
+            state = FetchState(block + [0.0, -0.055, 0.0], 0.0, {"block0": block})
+            info = {"environment_state": state, "facts": frozenset(), "failed": failed_at_end and k == 3}
+            for name, value in reward(push, np.zeros(4), info, success=False)[1].items():
+                total[name] = total.get(name, 0.0) + value
+        return total
+
+    failed, control = run(True), run(False)
+    assert control["push"] == pytest.approx(30 * 0.04) and control["refund"] == 0
+    assert failed["refund"] == pytest.approx(-failed["push"]) and failed["behind"] == FetchPushReward().config.behind_bonus
