@@ -102,7 +102,7 @@ not free and failing early never pays.
 | pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift peaking at 33 cm (overshooting costs), settle bonus in the band |
 | unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift peaking 28 cm above the base rest (overshooting costs), settle bonus in the band |
 | place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u along x | stack's stages, target ring around ?u |
-| push-left/right/front/back(?o) | pre `on-table`, `clear`, `gripper-empty`, `(not (at-X ?o))`; eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | reach behind, push progress |
+| push-left/right/front/back(?o) | pre `on-table`, `clear`, `gripper-empty`, `(not (at-X ?o))`; eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | over the block to the point behind it, down to it, push progress |
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | as push, both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | as push, + `(on-table ?u)`; `beside` in place of the region | – | push toward ?u | as push |
 

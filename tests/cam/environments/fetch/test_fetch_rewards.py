@@ -388,3 +388,33 @@ def test_closing_where_unstacks_setup_leaves_the_gripper_earns_the_grip(skill, r
         env.close()
     assert (close > 0 and grip == FetchPickupReward().config.grip_bonus) is rewarded
     assert (close == 0 and grip == 0) is not rewarded
+
+
+@pytest.mark.unit
+def test_the_push_approach_goes_over_the_block_and_the_direct_route_still_earns_its_bonus():
+    """push-left (goal toward +y): the point behind the block is 5.5 cm on its -y side, at its height; the approach is
+    rewarded toward the point 8 cm above that first (bonus there), then down to it (behind bonus). Arriving at the point
+    behind directly, without passing above (the control route), earns both bonuses at once, so it is not penalized."""
+    from cam.environments.fetch.fetch_rewards import FetchPushReward
+    from cam.skills.blocksworld_skills import PushLeftSkill
+
+    push = PushLeftSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+    block = np.array([1.34, 0.70, 0.425])
+    behind = block + [0.0, -0.055, 0.0]
+
+    def step(reward, gripper):
+        state = FetchState(np.array(gripper, dtype=float), 0.0, {"block0": block.copy()})
+        return reward(push, np.zeros(4), {"environment_state": state, "facts": frozenset()}, success=False)[1]
+
+    over = FetchPushReward()
+    over.reset(push, {})
+    start = step(over, block + [0.0, 0.10, 0.10])  # on the goal side, above
+    up = step(over, behind + [0.0, 0.0, 0.08])  # over the point behind
+    down = step(over, behind)
+    assert start["above"] == 0 and up["above"] == over.config.above_bonus and up["reach"] > 0
+    assert up["behind"] == 0 and down["behind"] == over.config.behind_bonus and down["reach"] > 0
+    direct = FetchPushReward()
+    direct.reset(push, {})
+    step(direct, block + [0.0, -0.15, 0.0])
+    arrived = step(direct, behind)
+    assert arrived["above"] == direct.config.above_bonus and arrived["behind"] == direct.config.behind_bonus

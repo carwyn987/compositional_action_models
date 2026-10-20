@@ -647,8 +647,12 @@ class FetchPutdownReward(RewardFunction):
 class FetchPushRewardConfig:
     time_penalty: float = 0.05  # per step: 5 over a 100-step episode, half a failure, so failing early never pays
     action_l2_penalty: float = 0.001
-    # 1. Get behind the block (opposite its goal), at its height
+    # 1. Get behind the block (opposite its goal), at its height, by way of a point above it: from the goal side of
+    #    the block (most starts) the straight line to the point behind it runs through the block
     behind_offset: float = 0.055  # gripper centre behind the block centre
+    hover_height: float = 0.08  # the point above, over the block's centre height (as the scripted push)
+    above_tolerance: float = 0.02  # horizontally, and how far below hover_height still counts as above
+    above_bonus: float = 1.0
     reach_progress_weight: float = 15.0
     behind_tolerance: float = 0.02
     behind_bonus: float = 2.0
@@ -660,8 +664,11 @@ class FetchPushRewardConfig:
 
 @dataclass
 class FetchPushReward(RewardFunction):
-    """Staged push shaping: reach the point behind the block (opposite its goal, push_goal), then push the
-    block toward its goal, success. The push progress counts at any stage, so any way of moving the block
+    """Staged push shaping: get above the point behind the block (opposite its goal, push_goal), lower to it,
+    then push the block toward its goal, success. The approach goes over the block, as the scripted push does: the
+    gripper usually starts on the goal side of the block, where heading straight for the point behind it drives into
+    the block (pushing it the wrong way, and failing on force in about a third of such starts). Reaching the point
+    behind directly still earns its bonus. The push progress counts at any stage, so any way of moving the block
     toward its goal is rewarded."""
 
     config: FetchPushRewardConfig = field(default_factory=FetchPushRewardConfig)
@@ -672,6 +679,7 @@ class FetchPushReward(RewardFunction):
     def reset(self, grounded_action_model, info) -> None:
         self.previous_reach: float | None = None
         self.previous_goal_distance: float | None = None
+        self.above_earned = False
         self.behind_earned = False
         self.success_earned = False
 
@@ -686,21 +694,30 @@ class FetchPushReward(RewardFunction):
         goal_distance = float(np.linalg.norm(to_goal))
         direction = to_goal / max(goal_distance, 1e-6)
         behind = np.array([*(block[:2] - cfg.behind_offset * direction), block[2]])
-        reach = float(np.linalg.norm(gripper - behind))
+        above = behind + [0.0, 0.0, cfg.hover_height]
 
         components = {
             "time": -cfg.time_penalty,
             "movement": -cfg.action_l2_penalty * float(np.dot(action, action)),
             "reach": 0.0,
+            "above": 0.0,
             "behind": 0.0,
             "push": 0.0,
             "success": 0.0,
         }
-        # 1. Get behind the block.
+        # 1. Get above the point behind the block, then lower to it (directly to it also earns the behind bonus).
+        reach = float(np.linalg.norm(gripper - (behind if self.above_earned else above)))
         if not self.behind_earned:
             if self.previous_reach is not None:
                 components["reach"] = cfg.reach_progress_weight * float(self.previous_reach - reach)
-            if reach <= cfg.behind_tolerance:
+            at_behind = float(np.linalg.norm(gripper - behind)) <= cfg.behind_tolerance
+            if not self.above_earned and (at_behind or (
+                    float(np.linalg.norm(gripper[:2] - behind[:2])) <= cfg.above_tolerance
+                    and gripper[2] >= above[2] - cfg.above_tolerance)):
+                components["above"] = cfg.above_bonus
+                self.above_earned = True
+                reach = float(np.linalg.norm(gripper - behind))  # the next leg's distance, so progress continues from it
+            if at_behind:
                 components["behind"] = cfg.behind_bonus
                 self.behind_earned = True
         # 2. Move the block toward its goal.
