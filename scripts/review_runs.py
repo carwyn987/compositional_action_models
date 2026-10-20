@@ -137,10 +137,18 @@ def section_training(runs: list[Path]) -> list[str]:
 
 def section_added_skills(runs: list[Path]) -> list[str]:
     """Skills first evaluated after step 0 (added on resume, e.g. a repaired operator replacing its
-    original): zero-shot success at the step they were added and steps to threshold from there."""
+    original): zero-shot success at the step they were added and steps to threshold from there, and the transfer
+    gain: the steps the skill needed from scratch (its learnability run in the same folder) divided by the steps it
+    needed on itself after being added."""
     lines = ["5. ADDED SKILLS (added or replaced after training started: step added, zero-shot success there "
              "(deterministic / stochastic), steps to threshold from there; mean ± std over seeds)"]
     conditions: dict[str, list[tuple]] = {}
+    from_scratch: dict[str, list] = {}  # skill -> deterministic steps to threshold in its learnability runs
+    for run in runs:
+        metrics = load_metrics(run)
+        if metrics and run.parent.parent.name == "learnability":
+            from_scratch.setdefault(run.parent.name, []).append(
+                metrics["summary"]["deterministic"].get(run.parent.name, {}).get("steps_to_threshold"))
     for run in runs:
         metrics = load_metrics(run)
         if not metrics:
@@ -172,6 +180,16 @@ def section_added_skills(runs: list[Path]) -> list[str]:
                          f"  steps to threshold {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
                          f"  on skill {mean_std([v.get('skill_steps_to_threshold') for v in values]):>16s}"
                          f"  final {mean_std([v.get('final_success_rate') for v in values]):>10s}")
+        skill = key.rsplit(" ", 1)[1]
+        if skill in from_scratch:
+            alone = [steps for steps in from_scratch[skill] if steps is not None]
+            after = [e[1]["deterministic"].get("skill_steps_to_threshold") for e in entries]
+            if alone and after and all(steps is not None for steps in after):
+                gain = ("zero-shot" if statistics.mean(after) == 0 else
+                        f"{statistics.mean(alone) / statistics.mean(after):.2f}x (from scratch / after the repair)")
+            else:
+                gain = "n/a: " + ("never reached from scratch" if not alone else "not reached after the repair")
+            lines.append(f"     from scratch (learnability)  steps to threshold {mean_std(alone):>16s}  transfer gain {gain}")
         retentions = [e[3] for e in entries if e[3] and e[3]["skills"]]
         if retentions:
             def mean_of(key: str) -> list:

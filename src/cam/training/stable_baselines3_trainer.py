@@ -47,6 +47,11 @@ HYPERPARAMETERS = {
     "ppo": dict(learning_rate=3e-4, n_steps=1024, batch_size=256, gamma=0.95),
 }
 HYPERPARAMETERS["mtsac"] = HYPERPARAMETERS["sac"]
+# PPO's Gaussian action noise is the same in every state. At Stable-Baselines3's default (standard deviation 1) a
+# grasped block is let go within a few steps, since any positive gripper command opens the fingers: the scripted
+# pickup with that noise on the gripper command alone succeeds 0 of 20 times (with 0.3, 20 of 20), so a policy
+# learns that grasping fails. New PPO models start at exp(-1), about 0.37.
+PPO_LOG_STD_INIT = -1.0
 
 
 # After resuming an off-policy model without its replay buffer, the buffer starts empty, and Stable-Baselines3 updates
@@ -253,7 +258,7 @@ def train_stable_baselines3(
             seed=seed,
             verbose=1,
             tensorboard_log=str(run_directory / "tensorboard"),
-            policy_kwargs=policy_kwargs,
+            policy_kwargs=({"log_std_init": PPO_LOG_STD_INIT} if algorithm == "ppo" else {}) | (policy_kwargs or {}),
             device=device,
             **(HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})),
         )

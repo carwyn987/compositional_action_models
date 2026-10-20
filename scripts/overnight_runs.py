@@ -63,7 +63,7 @@ View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 
 Settings: the experiment's (research_experiments.py describes each), unless set as an environment variable
   RUN_GROUPS  SEEDS  ALGORITHM  SKILL_SAMPLING  TEXT_BACKEND  BASE_SKILLS  EVAL_EPISODES  SAVE_INTERVAL
-  LEARN_STEPS  LEARNABILITY_EMBEDDING  TRAIN_EVAL_INTERVAL
+  LEARN_STEPS  LEARNABILITY_EMBEDDING  LEARN_EVAL_INTERVAL  TRAIN_EVAL_INTERVAL
   OPERATOR_EMBEDDINGS  RQ1_STEPS (a number, or auto)  RQ1_BUDGET_MARGIN
   REPAIRS (FROM:TO pairs)  REPAIR_MODES  REPAIR_HIDDEN_EMBEDDINGS  REPAIR_STEPS  REPAIR_EVAL_INTERVAL
   e.g. OPERATOR_EMBEDDINGS="one-hot text" SEEDS="0 1 2" REPAIRS="unstack:unstack-raised"
@@ -141,6 +141,7 @@ REPAIRS = [tuple(pair.split(":")) for pair in setting("REPAIRS").split()]
 REPAIRED = [to for _, to in REPAIRS]
 REPAIR_MODES = setting("REPAIR_MODES").split()
 REPAIR_EVAL_INTERVAL = int(setting("REPAIR_EVAL_INTERVAL"))
+LEARN_EVAL_INTERVAL = int(setting("LEARN_EVAL_INTERVAL"))
 LEARN_STEPS = int(setting("LEARN_STEPS"))
 LEARNABILITY_EMBEDDING = setting("LEARNABILITY_EMBEDDING")
 RQ1_AUTO = setting("RQ1_STEPS") == "auto"
@@ -168,6 +169,11 @@ OPERATOR_EMBEDDING_OPTIONS = {
              f"the operator described in a paragraph, embedded by the {TEXT_BACKEND} text model"),
     "compositional-tree": (["--operator-encoder", "compositional", "--compositional-architecture", "tree"],
                            "the operator's structure, composed by learned functions following the PDDL syntax"),
+    # the same without the operator's name, which can carry a repair by itself ("pickup-raised" shares "raised" with
+    # "unstack-raised"): only the structure tells the policy which skill to do
+    "compositional-tree-no-name": (["--operator-encoder", "compositional", "--compositional-architecture", "tree",
+                                    "--compositional-name", "none"],
+                                   "the operator's structure without its name, composed along the PDDL syntax"),
     "compositional-slots": (["--operator-encoder", "compositional", "--compositional-architecture", "slots"],
                             "the operator's components as tokens, grouped by slot attention"),
     "compositional-geometric": (
@@ -254,7 +260,7 @@ def learnability_steps(skills: list[str]) -> tuple[dict[str, int | None], list[s
 
 
 # rq1 steps: the setting, or with RQ1_STEPS=auto the most the budget can be until the learnability runs are done
-RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, TRAIN_EVAL_INTERVAL) if RQ1_AUTO
+RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, LEARN_EVAL_INTERVAL) if RQ1_AUTO
              else int(setting("RQ1_STEPS")))
 
 
@@ -286,7 +292,8 @@ def build_plan() -> list[Run]:
                      "Also the single-skill baseline for RQ4 (hypernetworks vs individual policies)."),
                 steps=LEARN_STEPS, condition=LEARNABILITY_EMBEDDING, output=output,
                 command=["main.py", "--skills", skill, *condition_options(LEARNABILITY_EMBEDDING),
-                         "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output)],
+                         "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output),
+                         "--eval-interval", str(LEARN_EVAL_INTERVAL)],
             ))
     for seed in SEEDS:
         for condition in OPERATOR_EMBEDDINGS:
@@ -574,7 +581,7 @@ class Runner:
         """RQ1_STEPS=auto: the rq1 run's budget from the learnability results, the same for every rq1 run."""
         if self.rq1_steps is None:
             steps, missing = learnability_steps(BASE_SKILLS)
-            self.rq1_steps = rq1_budget(steps, RQ1_BUDGET_MARGIN, LEARN_STEPS, TRAIN_EVAL_INTERVAL)
+            self.rq1_steps = rq1_budget(steps, RQ1_BUDGET_MARGIN, LEARN_STEPS, LEARN_EVAL_INTERVAL)
             needed = ", ".join(f"{skill} {'-' if value is None else f'{value // 1000}k'}" for skill, value in steps.items())
             say(f"   budget (RQ1_STEPS=auto): {self.rq1_steps:,} steps = {RQ1_BUDGET_MARGIN} x the steps each skill "
                 f"needed alone ({needed}; '-' counts as {LEARN_STEPS // 1000}k)")

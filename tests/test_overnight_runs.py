@@ -62,7 +62,7 @@ def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
     for run in runs:
         runner.set_rq1_budget(run)
     expected = overnight_runs.rq1_budget({"pickup": 100_000, "putdown": 50_000}, overnight_runs.RQ1_BUDGET_MARGIN,
-                                         overnight_runs.LEARN_STEPS, overnight_runs.TRAIN_EVAL_INTERVAL)
+                                         overnight_runs.LEARN_STEPS, overnight_runs.LEARN_EVAL_INTERVAL)
     assert [(run.steps, run.command[-1]) for run in runs] == [(expected, str(expected))] * 2
 
 
@@ -73,7 +73,7 @@ def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypa
     for name, value in (("RUN_GROUPS", ["learnability", "rq1", "repair"]), ("OPERATOR_EMBEDDINGS", ["one-hot", "text"]),
                         ("SEEDS", [0]), ("BASE_SKILLS", ["pickup", "putdown", "stack"]),
                         ("REPAIRS", [("stack", "place-beside")]), ("REPAIRED", ["place-beside"]),
-                        ("REPAIR_MODES", ["isolated"]), ("RQ1_AUTO", False)):
+                        ("REPAIR_MODES", ["isolated"]), ("REPAIR_HIDDEN_EMBEDDINGS", ["one-hot"]), ("RQ1_AUTO", False)):
         monkeypatch.setattr(overnight_runs, name, value)
     groups = [run.group for run in overnight_runs.build_plan()]
     assert groups == ["learnability"] * 4 + ["rq1"] * 2 + ["repair"] * 3  # one-hot: visible and hidden; text: visible
@@ -124,3 +124,27 @@ def test_the_command_line_chooses_the_experiment(tmp_path):
                             cwd=overnight_runs.ROOT, env=environment, capture_output=True, text=True, check=True).stdout
     assert "Representation overlap: 13 training skills" in static and "Checks before starting" not in static
     assert set(plan()) == {"Learnability", "RQ1", "Repair"}
+
+
+@pytest.mark.unit
+def test_the_review_reports_a_repairs_transfer_gain_against_its_learnability_run(tmp_path):
+    """pickup-raised needed 60k steps alone (its learnability run) and 20k on itself after being added to a repaired
+    run: a transfer gain of 3x. A repair without a learnability run in the folder (the control) reports none."""
+    from scripts.review_runs import section_added_skills
+
+    def run(path, points, summary):
+        path.mkdir(parents=True)
+        (path / "metrics.json").write_text(json.dumps({"curves": {"deterministic": {"points": points}},
+                                                       "summary": summary}))
+        return path
+
+    def summary(skill, **values):
+        return {mode: {skill: values} for mode in ("deterministic", "stochastic")}
+
+    alone = run(tmp_path / "learnability" / "pickup-raised" / "run", [{"step": 0, "result": {"pickup-raised": {}}}],
+                summary("pickup-raised", steps_to_threshold=60_000))
+    repaired = run(tmp_path / "repair" / "pickup-raised" / "tree", [
+        {"step": 0, "result": {"pickup": {}}}, {"step": 500_000, "result": {"pickup-raised": {}}}],
+        summary("pickup-raised", zero_shot_success_rate=0.0, steps_to_threshold=20_000, skill_steps_to_threshold=20_000))
+    assert any("transfer gain 3.00x" in line for line in section_added_skills([alone, repaired]))
+    assert not any("transfer gain" in line for line in section_added_skills([repaired]))

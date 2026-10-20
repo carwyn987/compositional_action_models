@@ -44,7 +44,10 @@ class Experiment:
     # The operator embedding a learnability run's policy sees (one of the runner's OPERATOR_EMBEDDING_OPTIONS). One
     # skill alone always sees the same embedding, so the choice should not matter; multi-hot is fixed and cheap.
     learnability_embedding: str = "multi-hot"
-    train_eval_interval: int = 50_000  # how often a learnability or rq1 run evaluates every skill
+    # How often a learnability run evaluates: its steps to threshold are the from-scratch baseline (a repair's transfer
+    # gain) and set rq1_steps="auto", so they need a finer resolution than train_eval_interval.
+    learn_eval_interval: int = 10_000
+    train_eval_interval: int = 50_000  # how often an rq1 run evaluates every skill (learnability: learn_eval_interval)
 
     # Rq1 runs: one shared policy on base_skills per operator embedding and seed (also the policies repairs continue).
     # The operator embeddings to compare, each the input that tells the shared policy which skill to perform (the

@@ -35,6 +35,20 @@ def test_moving_toward_the_block_earns_reach_reward():
 
 
 @pytest.mark.unit
+def test_backing_off_after_the_stage_bonuses_costs_what_approaching_earned():
+    """Once above the block (its bonus earned), moving away still costs reach reward, and staying near the block
+    earns nothing. Under the former rule (the control, measured on 2026-10-14 policies) the approach stopped
+    counting once above, so a pickup policy that approached, closed and backed off kept every point."""
+    reward = FetchPickupReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    reward(PICKUP_BLOCK0, np.zeros(4), info_with_gripper_at(BLOCK0 + [0.0, 0.0, 0.06]), success=False)  # above
+    assert reward.above_earned
+    _, stay = reward(PICKUP_BLOCK0, np.zeros(4), info_with_gripper_at(BLOCK0 + [0.0, 0.0, 0.06]), success=False)
+    _, away = reward(PICKUP_BLOCK0, np.zeros(4), info_with_gripper_at(BLOCK0 + [0.0, 0.05, 0.08]), success=False)
+    assert stay["reach"] == 0 and away["reach"] < 0
+
+
+@pytest.mark.unit
 def test_success_bonus_is_paid_once_per_episode():
     """The success bonus appears on the first successful step only, and again after reset."""
     reward = FetchPickupReward()
@@ -179,19 +193,19 @@ def force_info(force, earlier=()):
 
 @pytest.mark.unit
 def test_gripper_force_is_penalized_up_to_the_failure_limit():
-    """Holding a block (20 N) costs nothing; 300 N costs 1. A one-step contact spike of 38 kN (seen while exploring)
-    costs at most 2, where the uncapped penalty (the control) would cost 190, far more than success earns (15).
-    At most 2 per step, a press that lasts until it fails (5 steps) costs at most twice the failure itself."""
+    """Holding a block (20 N) costs nothing; 300 N costs 0.1. A one-step contact spike of 38 kN (seen while
+    exploring) costs at most 0.2, where the uncapped penalty (the control) would cost 19, more than success earns
+    (15). At most 0.2 per step, a press that lasts until it fails (5 steps) costs a tenth of the failure itself."""
     reward = FetchMotionReward()
     reward.reset(PICKUP_BLOCK0, {})
     assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(20.0), False)[1]["force"] == 0
     from cam.environments.fetch.fetch_predicate_evaluation_wrapper import FORCE_FAILURE_STEPS
     from cam.environments.fetch.fetch_rewards import FAILURE_PENALTY
 
-    assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(300.0), False)[1]["force"] == pytest.approx(-1.0)
+    assert reward(PICKUP_BLOCK0, np.zeros(4), force_info(300.0), False)[1]["force"] == pytest.approx(-0.1)
     spike = reward(PICKUP_BLOCK0, np.zeros(4), force_info(38_000.0), False)[1]["force"]
-    assert spike == pytest.approx(-2.0) == -FAILURE_PENALTY / FORCE_FAILURE_STEPS
-    assert reward.config.force_penalty * (38_000.0 - 100.0) == pytest.approx(189.5)
+    assert spike == pytest.approx(-0.2) == pytest.approx(-FAILURE_PENALTY / FORCE_FAILURE_STEPS / 10)
+    assert reward.config.force_penalty * (38_000.0 - 100.0) == pytest.approx(18.95)
 
 
 @pytest.mark.unit
@@ -257,3 +271,96 @@ def test_pressing_into_the_table_still_fails():
     finally:
         env.close()
     assert done and info["failure"].startswith("excessive force") and step < 15
+
+
+@pytest.mark.integration
+def test_exploring_near_the_block_scores_above_doing_nothing():
+    """The scripted pickup with heavy exploration noise (sigma 0.6, as SAC explores early) scores above doing nothing
+    with the current weights. Scored on the same episodes with ten times the motion penalties and a fifth of the
+    time cost (the control: the weights the 2026-10-14 runs learned nothing with), it scores below: keeping away
+    from the blocks paid better than trying."""
+    from cam.environments.fetch.fetch_rewards import FetchMotionRewardConfig
+    from cam.environments.fetch.fetch_scripted_policies import FetchScriptedPickupPolicy
+
+    heavy = FetchMotionReward(FetchMotionRewardConfig(
+        smoothness_penalty=0.005, acceleration_penalty=500.0, disturbance_penalty=20.0, force_penalty=0.005))
+    motion = ("smoothness", "acceleration", "disturbance", "force")
+    env = pickup_environment()
+    rng = np.random.default_rng(0)
+    try:
+        returns = {"current": [], "control": [], "idle": []}
+        for episode in range(10):
+            for noisy in (True, False):
+                policy = FetchScriptedPickupPolicy()
+                policy.reset()
+                obs, info = env.reset(seed=1000 + episode)
+                heavy.reset(info["grounded_action_model"], info)
+                current = control = 0.0
+                done = truncated = False
+                while not (done or truncated):
+                    action = np.zeros(4)
+                    if noisy:
+                        action = np.clip(policy(obs, info, info["grounded_action_model"]) + rng.normal(0, 0.6, 4), -1, 1)
+                    obs, reward, done, truncated, info = env.step(action)
+                    components = info["reward_components"]
+                    current += reward
+                    heavy_terms = heavy(info["grounded_action_model"], action, info, False)[1]
+                    control += (reward - sum(components[name] for name in motion) - 0.8 * components["time"]
+                                + sum(heavy_terms.values()))
+                if noisy:
+                    returns["current"].append(current)
+                    returns["control"].append(control)
+                else:
+                    returns["idle"].append(current)
+    finally:
+        env.close()
+    idle_control = np.mean(returns["idle"]) + 0.8 * 0.05 * 100  # doing nothing costs only the time, a fifth of it
+    assert np.mean(returns["current"]) > np.mean(returns["idle"])
+    assert np.mean(returns["control"]) < idle_control
+
+
+@pytest.mark.unit
+def test_raised_lift_peaks_in_the_band_and_stopping_where_wanted_earns_the_settle_bonus_once():
+    """pickup-raised's lift term peaks at the middle of the raised band (33 cm): rising to it earns, overshooting to
+    40 cm costs; the first step the held block has settled in the band (3 steps without rising or sinking) earns the
+    settle bonus, once. pickup (the control) keeps its one-sided term, which is 0 above its 6 cm target, and settles
+    below the band, not in it."""
+    def held_at(z, raised):
+        block = np.array([1.3, 0.7, 0.425 + z])
+        facts = {Predicate("holding", ("block0",))} | ({Predicate("raised", ("block0",))} if raised else set())
+        return {"environment_state": FetchState(block.copy(), 0.048, {"block0": block}), "facts": frozenset(facts)}
+
+    def components(reward_class, heights):
+        reward = reward_class()
+        reward.reset(PICKUP_BLOCK0, {})
+        reward.grip_earned = True
+        return [reward(PICKUP_BLOCK0, np.zeros(4), held_at(z, 0.30 <= z <= 0.36), False)[1] for z in heights]
+
+    raised = components(FetchPickupRaisedReward, [0.25, 0.33, 0.33, 0.33, 0.33, 0.40])
+    assert raised[1]["lift"] > 0 and raised[2]["settle"] == 0  # rising, not settled yet
+    assert raised[3]["settle"] == FetchPickupRaisedReward().config.settle_bonus and raised[4]["settle"] == 0
+    assert raised[5]["lift"] < 0  # overshooting the band
+    pickup = components(FetchPickupReward, [0.25, 0.33, 0.33, 0.33, 0.40, 0.40, 0.40])
+    assert pickup[4]["lift"] == 0 and pickup[1]["lift"] == 0  # one-sided: nothing above its target
+    assert [c["settle"] > 0 for c in pickup] == [False] * 6 + [True]  # settled above the band, not in it
+
+
+@pytest.mark.unit
+def test_lifting_slowly_and_lowering_fast_earns_nothing_from_the_lift():
+    """Holding the block, up 1 cm per step to pickup's 6 cm target and back down in 2 steps, three times: the lift
+    term sums to the net change, 0. Clipped per step at a quarter of the target (the control, on the same steps),
+    the fast way down is charged less than the slow way up earned, and every cycle pays."""
+    cycle = [0.01 * k for k in range(1, 7)] + [0.03, 0.0]
+    heights = [0.0] + cycle * 3
+    reward = FetchPickupReward()
+    reward.reset(PICKUP_BLOCK0, {})
+    reward.grip_earned = True
+    lift = 0.0
+    for z in heights:
+        block = BLOCK0 + [0.0, 0.0, z]
+        info = {"environment_state": FetchState(block.copy(), 0.048, {"block0": block}),
+                "facts": frozenset({Predicate("holding", ("block0",))})}
+        lift += reward(PICKUP_BLOCK0, np.zeros(4), info, success=False)[1]["lift"]
+    fractions = np.clip(np.array(heights) / 0.06, 0.0, 1.0)
+    clipped = 8.0 * np.clip(np.diff(fractions), -0.25, 0.25).sum()
+    assert lift == pytest.approx(0.0, abs=1e-6) and clipped > 10

@@ -54,11 +54,13 @@ The regions are global, so pushes have fixed goals.
 
 ### Success, failure and motion penalties
 **Success is settled and respects the frame:** the effects must hold for `--success-hold-steps` (default 5)
-consecutive steps, so a skill must stop in its goal state, and every fact the action does not mention must
-keep its value from the episode's start (the STRIPS frame assumption, checked over `on-table`, `on`,
-`clear`, `holding`, `gripper-empty`; the geometric predicates change as side effects and are left out). So
-unstack(?o ?u) must leave `(on-table ?u)` true: lifting both blocks, which a trained policy did, is not an
-unstack.
+consecutive steps with the moved block settled over them (rising or sinking less than 1 cm net,
+`SETTLE_DISTANCE`), so a skill must stop in its goal state: a block lifted on and on fast enough to reach the
+raised band within an episode has not stopped in it, while an exploring policy's jitter mostly cancels out; and
+every fact the action does not mention must keep its value from the episode's start (the STRIPS frame
+assumption, checked over `on-table`, `on`, `clear`, `holding`, `gripper-empty`; the geometric predicates change
+as side effects and are left out). So unstack(?o ?u) must leave `(on-table ?u)` true: lifting both blocks,
+which a trained policy did, is not an unstack.
 
 **Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
 over success. It is the same for every skill (`check_fetch_failure`): an **extreme force** on the gripper (net
@@ -70,10 +72,10 @@ from where it started: knocked or pushed aside).
 **Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`), against brutal motion
 (without them, trained push policies threw blocks): action changes (smoothness), the moved block's
 acceleration, any movement of the other blocks, and the **gripper force** above `SAFE_GRIPPER_FORCE`
-(100 N), counted up to 500 N: at most 2 per step, so pressing until it fails costs at most twice the
-failure, and a shorter bump less than one. The gripper force is the net contact force on the gripper and
-fingers, read from MuJoCo (`FetchState.gripper_force`, with the last 10 steps' magnitudes in
-`gripper_force_history`): a grasp's squeeze cancels out, so it measures pressing on a block or the table,
+(100 N), counted up to 500 N: at most 0.2 per step, so pressing until it fails costs a tenth of the failure.
+The gripper force is the net contact force on the gripper and fingers, read from MuJoCo
+(`FetchState.gripper_force`, with the last 10 steps' magnitudes in `gripper_force_history`): a grasp's
+squeeze cancels out, so it measures pressing on a block or the table,
 pushing, ramming, and a carried block's weight (~20 N). Lifting and placing peak around 55 N, steady pushing
 around 65 N; pressing into the table stays around 55 kN. First contact spikes for a single step (ramming a
 block with closed fingers: ~900 N once; random exploration: up to ~38 kN on about 1% of steps), and random
@@ -83,16 +85,22 @@ steps. Force limits matter for moving to real robots, whose grippers such forces
 Grasping skills therefore succeed only once the block is lifted and held, and placing skills only once it is
 released, gently, without disturbing anything else.
 
+The motion penalties are light on purpose: they grow with exploration noise wherever the gripper touches
+something, and with ten times these weights (2026-10-14 run) an exploring policy did better keeping away from the
+blocks than trying (scripted pickup with noise σ = 0.6: −7.4 against −0.2 for doing nothing; now −1.9 against
+−4.2). Every shaped reward also costs 0.05 per step: 5 over a 100-step episode, half a failure, so waiting is
+not free and failing early never pays.
+
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 
 | skill | operator | setup | scripted policy | shaped reward |
 | --- | --- | --- | --- | --- |
-| pickup(?o) | classic blocksworld + `(not (raised ?o))`: hold it low | – | approach, descend, close, lift | staged pickup |
+| pickup(?o) | classic blocksworld + `(not (raised ?o))`: hold it low | – | approach, descend, close, lift | staged pickup, ending with a settle bonus (held at rest, below the raised band) |
 | putdown(?o) | classic | pickup **or** pickup-raised (random per episode) | lower, open | staged putdown (gentle descent, square) |
 | stack(?o ?u) | classic | pickup | carry up, align, lower, open | staged stack |
 | unstack(?o ?u) | classic + `(not (raised ?o))` | pickup, stack | pickup motion | pickup's stages, lift from the block below |
-| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift target 33 cm |
-| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift target 28 cm above the base rest |
+| pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift peaking at 33 cm (overshooting costs), settle bonus in the band |
+| unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift peaking 28 cm above the base rest (overshooting costs), settle bonus in the band |
 | place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u along x | stack's stages, target ring around ?u |
 | push-left/right/front/back(?o) | pre `on-table`, `clear`, `gripper-empty`, `(not (at-X ?o))`; eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | reach behind, push progress |
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | as push, both regions | – | two straight pushes | as push |
@@ -211,7 +219,9 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     experiment prints the same report for its own skills when it starts and saves it as `<OUT>/overlap.txt`;
   - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
     skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
-  - **groups:** learnability (each skill alone, multi-hot; also the individually trained baseline for RQ4),
+  - **groups:** learnability (each skill alone, with `LEARNABILITY_EMBEDDING` (multi-hot), evaluated every `LEARN_EVAL_INTERVAL` (10k) steps: its
+    steps to threshold are the from-scratch baseline and set `RQ1_STEPS=auto`; also the individually trained
+    baseline for RQ4),
     rq1 (one shared policy per condition and seed on `BASE_SKILLS`), repair (each `FROM:TO` in `REPAIRS`, in
     each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill evaluated every
     `REPAIR_EVAL_INTERVAL` (10k) steps);
@@ -238,11 +248,26 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   - Ctrl+C saves and stops every run, and the same command resumes;
   - outputs: run directories per group, `logs/`, `failed.txt`, `summary.csv`, and `review.txt` at the end.
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training
-  statistics including embedding magnitudes, added and repaired skills (with a `REPAIR INVALID` flag when
-  repair-hidden succeeds zero-shot), and learned embedding geometry.
+  statistics including embedding magnitudes, added and repaired skills (their transfer gain, the steps from scratch
+  in their learnability run divided by the steps after the repair, and a `REPAIR INVALID` flag when repair-hidden
+  succeeds zero-shot), and learned embedding geometry.
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
 - **`scripts/watch_best_policies.py`:** for each skill, play the best trained policy in a folder of runs (the
   newest overnight folder by default), even while it is still training.
+- **`scripts/check_policy_progress.py`:** is a trained policy stuck, or slowly getting to its goal? Plays each
+  skill of the given runs past the training step limit (300 steps) and gives each episode a verdict (success,
+  failed, progressing, stuck), with its distance to the goal, whether the block is gripped, and how much the
+  policy still explores where it ends up.
+- **`scripts/wrong_embedding_control.py`:** the wrong-embedding control: plays a run's policy on one skill's
+  episodes given its own operator input and then another skill's (e.g. unstack-raised given unstack's). Unchanged
+  success and behaviour mean the policy does not use the operator to tell the two apart. Works with every encoder,
+  compositional ones included.
+- **`scripts/sample_repair_scenario.sh`:** a repair scenario with PPO in a few hours (steps `check`, `train`,
+  `repair`, `evaluate`). A one-hot policy trained on unstack alone is evaluated on unstack-raised with unstack's
+  exact embedding, and must fail (lifting on and on is not raising). A compositional-tree policy (no operator
+  name, which would carry "raised") trained on pickup, unstack and unstack-raised gets pickup-raised added and
+  trained alone: its zero-shot success and steps to threshold against pickup-raised from scratch, the
+  wrong-embedding control before and after, and whether each policy is stuck or slow.
 - **`scripts/start_tensorboard.sh`:** `LOGDIR=<folder> ./scripts/start_tensorboard.sh`.
 - **`scripts/visualize_environment.py`:** render a Fetch environment with a scripted or random policy.
 - **`scripts/experimental/rectangle_grasp.py`:** a prototype of a yaw-controlled gripper picking up a
@@ -295,6 +320,7 @@ normalization of compositional embeddings (§2).
   the simulation spikes for single steps (up to ~38 kN): a random-action pickup episode cost about −195 in
   force penalty, against +31 for the scripted success and about 0 for doing nothing, and a single step over
   500 N ended 7 of 10 random episodes. Policies learned to stay out of contact.
-- **Consequence:** the penalty is capped (2 per step) and failure needs 5 steps over 500 N (§1). With these,
+- **Consequence:** the penalty was capped (2 per step, since lowered to 0.2) and failure needs 5 steps over 500 N
+  (§1). With these,
   random pickup episodes cost about −10 in force penalty and 2 of 10 fail on force; the scripted policies are
   unaffected.

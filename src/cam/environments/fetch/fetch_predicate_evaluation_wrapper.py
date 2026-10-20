@@ -213,6 +213,26 @@ def disturbed(grounded_action_model, start_info: dict, info: dict) -> str | None
                 None)
 
 
+# Settled success needs the moved block (first argument) to have risen or sunk less than this, net, over the steps the
+# effects held (--success-hold-steps, 5): a block lifted on and on fast enough to reach the raised band within an
+# episode (2 mm per step or more) moves 1 cm or more over them and has not stopped there, while an exploring policy's
+# jitter mostly cancels out (a per-step limit could not tell the two apart, and held blocks then almost never counted
+# as stopped under noise).
+SETTLE_DISTANCE = 0.01
+
+
+def net_vertical_movement(positions) -> float:
+    """How far a block rose or sank between the first and the last of its positions (metres, absolute)."""
+    return abs(float(positions[-1][2]) - float(positions[0][2]))
+
+
+def moved_block_settled(grounded_action_model, held_infos: list[dict]) -> bool:
+    """The moved block (first argument) rose or sank less than SETTLE_DISTANCE over the held steps (SkillEnvironment's
+    at_rest)."""
+    block = grounded_action_model.arguments[0]
+    return net_vertical_movement([info["environment_state"].block_positions[block] for info in held_infos]) < SETTLE_DISTANCE
+
+
 def check_fetch_failure(grounded_action_model, start_info: dict, info: dict) -> str | None:
     """Checks whether the episode has failed in this step: returns the reason if it has, None if it has not.
     Called on every step by SkillEnvironment (its check_failure); a returned reason makes the step a failure,
