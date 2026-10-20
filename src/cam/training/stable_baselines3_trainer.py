@@ -15,6 +15,7 @@ Outputs, under <output_dir>/<run_name>/:
 Hyperparameters follow the original deprecated/train_skill.py (removed; see git commit 59054395).
 """
 
+import json
 import logging
 from collections import deque
 from pathlib import Path
@@ -28,7 +29,12 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
-from cam.training.checkpointing import PeriodicSaveCallback, atomic_save_model, atomic_save_replay_buffer
+from cam.training.checkpointing import (
+    PeriodicSaveCallback,
+    atomic_save_model,
+    atomic_save_replay_buffer,
+    atomic_write_text,
+)
 from cam.training.multi_task_sac import MultiTaskSAC
 
 logger = logging.getLogger(__name__)
@@ -85,6 +91,34 @@ class ResumeWarmupCallback(BaseCallback):
     def _end_warmup(self) -> None:
         if self.gradient_steps is not None:
             self.model.gradient_steps, self.gradient_steps = self.gradient_steps, None
+
+
+class ProgressFileCallback(BaseCallback):
+    """Writes this training invocation's progress to path as JSON, {"done": steps done, "total": steps it trains,
+    "step": the model's step}, at the start, every `every` steps and at the end. The overnight runner reads it: the
+    progress bar is drawn only on a terminal, so written to a run's log file it appears once, at the end."""
+
+    def __init__(self, path: Path, total: int, every: int = 1000):
+        super().__init__()
+        self.path, self.total, self.every = path, total, every
+        self.start = self.last = 0
+
+    def _on_training_start(self) -> None:
+        self.start = self.model.num_timesteps
+        self._write()
+
+    def _on_step(self) -> bool:
+        if self.num_timesteps - self.last >= self.every:
+            self._write()
+        return True
+
+    def _on_training_end(self) -> None:
+        self._write()
+
+    def _write(self) -> None:
+        self.last = self.num_timesteps
+        atomic_write_text(self.path, json.dumps(
+            {"done": self.num_timesteps - self.start, "total": self.total, "step": self.num_timesteps}))
 
 
 class SuccessRateCallback(BaseCallback):
@@ -270,7 +304,8 @@ def train_stable_baselines3(
         for save_more in on_save or []:
             save_more()
 
-    all_callbacks = [SuccessRateCallback(), *(warmup if resume else []), *(callbacks or [])]
+    all_callbacks = [SuccessRateCallback(), ProgressFileCallback(run_directory / "progress.json", total_timesteps),
+                     *(warmup if resume else []), *(callbacks or [])]
     if save_interval > 0:
         all_callbacks.append(PeriodicSaveCallback(save_interval, save))
     logger.info("training %s for %d steps on %s; outputs in %s", algorithm, total_timesteps, model.device, run_directory)

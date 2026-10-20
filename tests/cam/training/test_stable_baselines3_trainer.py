@@ -64,3 +64,16 @@ def test_a_model_saved_during_a_warm_up_updates_again_when_resumed(tmp_path):
     before = interrupted._n_updates
     resumed = train_pickup(tmp_path, 100, resume=True)
     assert resumed.gradient_steps == 1 and resumed._n_updates - before >= 99
+
+
+@pytest.mark.integration
+def test_training_writes_its_progress_for_the_overnight_runner(tmp_path):
+    """A 300-step run ends with progress.json at 300 of 300 steps; resumed for 200 more, it counts only those."""
+    import json
+
+    train_pickup(tmp_path, 300)
+    first = json.loads((tmp_path / "progress.json").read_text())
+    train_pickup(tmp_path, 200, resume=True, resume_warmup_steps=0)
+    resumed = json.loads((tmp_path / "progress.json").read_text())
+    assert first == {"done": 300, "total": 300, "step": 300}
+    assert resumed == {"done": 200, "total": 200, "step": 500}

@@ -231,7 +231,8 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     fourth diagonal push is held out and the other three are trained;
   - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
     by side get through the plan several times faster;
-  - announces each run (what it trains, why), reports progress every minute and each outcome; training
+  - announces each run (what it trains, why), reports progress every minute (from each run's `progress.json`, which
+    training writes every 1000 steps) and each outcome; training
     runs as child processes logging to `<OUT>/logs/`;
   - **pre-flight (fail fast):** text backend usable, with every text embedded and cached (default
     `TEXT_BACKEND=openai`); device (`DEVICE=cuda` fails if unavailable); scripted policies; disk space;
