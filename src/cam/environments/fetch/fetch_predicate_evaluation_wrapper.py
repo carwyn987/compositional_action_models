@@ -264,14 +264,14 @@ class FetchPredicateEvaluationWrapper(gym.Wrapper):
     def reset(self, *, seed=None, options=None):
         obs, info = self.env.reset(seed=seed, options=options)
         self.facts = self.evaluate(info["environment_state"])
-        logger.info("facts at reset: %s", format_facts(self.facts))
+        logger.debug("facts at reset: %s", format_facts(self.facts))
         return obs, {**info, "facts": self.facts}
 
     def step(self, action):
         obs, reward, terminated, truncated, info = self.env.step(action)
         facts = self.evaluate(info["environment_state"])
         if facts != self.facts:
-            logger.info(
+            logger.debug(
                 "facts added: %s  removed: %s", format_facts(facts - self.facts), format_facts(self.facts - facts)
             )
             self.facts = facts
