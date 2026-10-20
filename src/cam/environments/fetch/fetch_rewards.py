@@ -703,7 +703,10 @@ class FetchPushReward(RewardFunction):
     gripper usually starts on the goal side of the block, where heading straight for the point behind it drives into
     the block (pushing it the wrong way, and failing on force in about a third of such starts). Reaching the point
     behind directly still earns its bonus. The push progress counts at any stage, so any way of moving the block
-    toward its goal is rewarded."""
+    toward its goal is rewarded. The approach counts in every stage too, toward the point behind the block where
+    it is now: a block knocked ahead of the gripper costs what the gap grew, and following it to push again earns it
+    back (with the approach counted only until the point behind was first reached, trained policies hit the block
+    once, sent it sliding part of the way, and left)."""
 
     config: FetchPushRewardConfig = field(default_factory=FetchPushRewardConfig)
 
@@ -717,6 +720,7 @@ class FetchPushReward(RewardFunction):
         self.behind_earned = False
         self.success_earned = False
         self.block_progress = 0.0  # the push progress so far, refunded on failure
+        self.direction: np.ndarray | None = None  # toward the goal, kept once the block is within 1 cm of it
 
     def __call__(self, grounded_action_model, action, info, success):
         cfg = self.config
@@ -727,8 +731,9 @@ class FetchPushReward(RewardFunction):
         goal = push_goal(state, grounded_action_model)
         to_goal = goal - block[:2]
         goal_distance = float(np.linalg.norm(to_goal))
-        direction = to_goal / max(goal_distance, 1e-6)
-        behind = np.array([*(block[:2] - cfg.behind_offset * direction), block[2]])
+        if goal_distance > 0.01 or self.direction is None:  # at the goal the direction is noise
+            self.direction = to_goal / max(goal_distance, 1e-6)
+        behind = np.array([*(block[:2] - cfg.behind_offset * self.direction), block[2]])
         above = behind + [0.0, 0.0, cfg.hover_height]
 
         components = {
@@ -741,11 +746,12 @@ class FetchPushReward(RewardFunction):
             "success": 0.0,
             "refund": 0.0,
         }
-        # 1. Get above the point behind the block, then lower to it (directly to it also earns the behind bonus).
+        # 1. Get above the point behind the block, then lower to it (directly to it also earns the behind bonus), and
+        #    stay there as the block moves.
         reach = float(np.linalg.norm(gripper - (behind if self.above_earned else above)))
+        if self.previous_reach is not None:
+            components["reach"] = cfg.reach_progress_weight * float(self.previous_reach - reach)
         if not self.behind_earned:
-            if self.previous_reach is not None:
-                components["reach"] = cfg.reach_progress_weight * float(self.previous_reach - reach)
             at_behind = float(np.linalg.norm(gripper - behind)) <= cfg.behind_tolerance
             if not self.above_earned and (at_behind or (
                     float(np.linalg.norm(gripper[:2] - behind[:2])) <= cfg.above_tolerance

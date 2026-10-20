@@ -477,3 +477,28 @@ def test_a_failure_refunds_the_push_progress_and_keeps_the_bonuses():
     failed, control = run(True), run(False)
     assert control["push"] == pytest.approx(30 * 0.04) and control["refund"] == 0
     assert failed["refund"] == pytest.approx(-failed["push"]) and failed["behind"] == FetchPushReward().config.behind_bonus
+
+
+@pytest.mark.unit
+def test_a_block_knocked_ahead_of_the_gripper_costs_reach_and_following_it_earns_it_back():
+    """push-left, the gripper at the point behind the block (bonus earned). The block is knocked 5 cm ahead while
+    the gripper stays: the push progress pays 1.5, and the reach charges the 5 cm gap, 0.75. The gripper follows
+    it to the new point behind: the reach pays the 0.75 back. Counted only until the point behind was first reached
+    (the control), the knock would keep the whole 1.5 and following would earn nothing."""
+    from cam.environments.fetch.fetch_rewards import FetchPushReward
+    from cam.skills.blocksworld_skills import PushLeftSkill
+
+    push = PushLeftSkill({"symbolic_action_model_format": "pddl"}).ground({"?o": "block0"})
+    reward = FetchPushReward()
+    reward.reset(push, {})
+
+    def step(block_y, gripper_y):
+        block = np.array([1.34, block_y, 0.425])
+        state = FetchState(np.array([1.34, gripper_y, 0.425]), 0.0, {"block0": block})
+        return reward(push, np.zeros(4), {"environment_state": state, "facts": frozenset()}, success=False)[1]
+
+    assert step(0.70, 0.70 - 0.055)["behind"] == reward.config.behind_bonus
+    knocked = step(0.75, 0.70 - 0.055)
+    followed = step(0.75, 0.75 - 0.055)
+    assert knocked["push"] == pytest.approx(1.5) and knocked["reach"] == pytest.approx(-0.75)
+    assert followed["reach"] == pytest.approx(0.75) and followed["push"] == 0
