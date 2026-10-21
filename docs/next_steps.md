@@ -93,9 +93,7 @@ In rough priority order.
 4. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.
-5. **Run logs are large** (40–80 MB each, mostly progress-bar redraws). Write progress to a small
-   structured file, which the runner can read instead.
-6. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
+5. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
    conditions that `operator_embedding_magnitude_before_normalization/*` settles at O(1–10) with
    `--composition-weight-decay` (`project_status.md` §2). If it keeps growing, the other remedies are:
 
