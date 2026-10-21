@@ -10,7 +10,9 @@ Fetch simulator (`FetchMultiBlock-v0`, 1–5 blocks), wrapped from the inside ou
 1. `FetchEnvStateAnnotationWrapper`: named state, including block positions and rotations.
 2. `FetchPredicateEvaluationWrapper`: the facts true in the current state.
 3. `SkillEnvironment`: per episode, picks a skill (`--skill-sampling`, §2), runs one of its setup chains with
-   scripted policies, picks a random applicable grounding, and computes success, failure and reward.
+   scripted policies, picks a random applicable grounding that is feasible in the scene (a push only with no
+   other block on its path, `push_path_clear`: otherwise it could only fail, by knocking that block aside), and
+   computes success, failure and reward.
 4. `TimeLimit`: outside `SkillEnvironment`, so setup steps don't count toward the episode's limit
    (`--max-steps-per-episode`, default 100).
 5. `PolicyObservationWrapper`: builds `{observation, operator_embedding, grounding}` (`docs/policy_inputs.md`).
@@ -62,17 +64,21 @@ assumption, checked over `on-table`, `on`, `clear`, `holding`, `gripper-empty`; 
 as side effects and are left out). So unstack(?o ?u) must leave `(on-table ?u)` true: lifting both blocks,
 which a trained policy did, is not an unstack.
 
-**Failure** ends an episode unsuccessfully, with a penalty of 10 under shaped rewards, and takes precedence
+**Failure** ends an episode unsuccessfully, with a penalty of 2 under shaped rewards, and takes precedence
 over success. It is the same for every skill (`check_fetch_failure`): an **extreme force** on the gripper (net
 contact force above `MAX_GRIPPER_FORCE`, 500 N, for `FORCE_FAILURE_STEPS`, 5, steps in a row: pressing on a
 block or the table), the moved block (first argument) was **dropped** (let go more than `DROP_HEIGHT`,
 2 cm, above its support), or another block was **disturbed** (moved more than `DISTURB_DISTANCE`, 3 cm,
-from where it started: knocked or pushed aside).
+from where it started: knocked or pushed aside). The episode ends on the failing step, before the failure plays out
+(a block let go 20 cm up has not fallen yet), so on that step the shaped reward also charges back the moved block's
+progress of the episode (the `refund` component: lift, push, carry, align, descent); the stage bonuses and the
+gripper's approach are kept, since failing cannot earn them. Without the refund, lifting a block and letting it go
+kept the lift's reward.
 
 **Motion penalties** are added to every skill's shaped reward (`FetchMotionReward`), against brutal motion
 (without them, trained push policies threw blocks): action changes (smoothness), the moved block's
 acceleration, any movement of the other blocks, and the **gripper force** above `SAFE_GRIPPER_FORCE`
-(100 N), counted up to 500 N: at most 0.2 per step, so pressing until it fails costs a tenth of the failure.
+(100 N), counted up to 500 N: at most 0.2 per step, so pressing until it fails costs half as much as the failure.
 The gripper force is the net contact force on the gripper and fingers, read from MuJoCo
 (`FetchState.gripper_force`, with the last 10 steps' magnitudes in `gripper_force_history`): a grasp's
 squeeze cancels out, so it measures pressing on a block or the table,
@@ -88,8 +94,11 @@ released, gently, without disturbing anything else.
 The motion penalties are light on purpose: they grow with exploration noise wherever the gripper touches
 something, and with ten times these weights (2026-10-14 run) an exploring policy did better keeping away from the
 blocks than trying (scripted pickup with noise σ = 0.6: −7.4 against −0.2 for doing nothing; now −1.9 against
-−4.2). Every shaped reward also costs 0.05 per step: 5 over a 100-step episode, half a failure, so waiting is
-not free and failing early never pays.
+−4.2). The failure penalty is small for the same reason: exploring policies fail often near the blocks (a noisy
+finger command lets a lifted block go, a noisy height command presses the fingers into the table), and at 10 they
+learned to keep away: pickup-raised trained alone hovered over its block with the fingers closed, 0 of 10 at every
+evaluation up to 60k steps. Every shaped reward also costs 0.05 per step, at most 1 from any step on at the
+training's discount (γ = 0.95): waiting is not free, and costs less than a failure, so failing never pays.
 
 ### Skills (`skills/blocksworld_skills.py`, PDDL in `domain/action_model_library/pddl/`)
 
@@ -102,7 +111,7 @@ not free and failing early never pays.
 | pickup-raised(?o) | pickup + `(raised ?o)` | – | pickup motion to 33 cm | pickup's stages, lift peaking at 33 cm (overshooting costs), settle bonus in the band |
 | unstack-raised(?o ?u) | unstack + `(raised ?o)` | pickup, stack | pickup motion to 33 cm | unstack's stages, lift peaking 28 cm above the base rest (overshooting costs), settle bonus in the band |
 | place-beside(?o ?u) | putdown + ?u + `(beside ?o ?u)` | pickup | stack motion, landing next to ?u along x | stack's stages, target ring around ?u |
-| push-left/right/front/back(?o) | pre `on-table`, `clear`, `gripper-empty`, `(not (at-X ?o))`; eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | reach behind, push progress |
+| push-left/right/front/back(?o) | pre `on-table`, `clear`, `gripper-empty`, `(not (at-X ?o))`; eff `(at-X ?o)` | – | rise, behind the block, lower, push toward the band's middle | over the block to the point behind it, down to it and staying there as the block moves, push progress |
 | push-right-front, push-left-back, push-right-back, push-left-front(?o) | as push, both regions | – | two straight pushes | as push |
 | push-beside(?o ?u) | as push, + `(on-table ?u)`; `beside` in place of the region | – | push toward ?u | as push |
 
@@ -112,7 +121,9 @@ place-beside and push-left-front are held out; in `rq3-repair-maximal`, the 13 t
 push-left-front) train and push-left-front is held out.
 
 Every scripted policy succeeds with 5-step settled success (2 and 3 blocks): pick/place skills 10/10, pushes
-18–20/20 (with 3 blocks another block can lie on a straight push path). The scripted push moves at a quarter
+40/40 (2 blocks). Without the clear-path rule another block lies on the path in a fifth of push-left's scenes and
+two thirds of a diagonal's, and the scripted push-left-front then succeeds in 30/40 (knocking the other block in
+9). Diagonal scenes are resampled until the path is clear, about four resets each. The scripted push moves at a quarter
 of full speed while pushing (`PUSH_SPEED`), which keeps its contact force low; a diagonal push then takes
 about 30–120 steps (mostly 70–100), so the pre-flight check gives scripted policies 150 steps.
 

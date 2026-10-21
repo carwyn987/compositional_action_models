@@ -205,6 +205,20 @@ def test_reset_raises_when_setup_never_succeeds():
 
 
 @pytest.mark.unit
+def test_reset_chooses_only_feasible_groundings():
+    """feasible rules groundings out (e.g. a push with a block in its path): reset only starts the others."""
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)],
+                           feasible=lambda grounded, info: grounded.arguments == ("block1",))
+    for seed in range(10):
+        _, info = env.reset(seed=seed)
+        assert str(info["grounded_action_model"]) == "pickup(block1)"
+    env = SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], max_setup_attempts=3,
+                           feasible=lambda grounded, info: False)
+    with pytest.raises(RuntimeError):
+        env.reset(seed=0)
+
+
+@pytest.mark.unit
 def test_reset_option_selects_the_skill():
     """reset(options={"skill": name}) runs an episode of that skill, including its setup chain."""
     env = SkillEnvironment(
