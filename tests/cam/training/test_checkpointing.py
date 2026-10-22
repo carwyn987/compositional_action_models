@@ -1,3 +1,7 @@
+import os
+import signal
+import time
+
 import pytest
 
 pytest.importorskip("stable_baselines3")
@@ -66,3 +70,27 @@ def test_interrupted_training_still_saves_the_model(tmp_path):
     finally:
         env.close()
     assert SAC.load(tmp_path / "model.zip").num_timesteps == 120
+
+
+@pytest.mark.integration
+def test_a_second_sigint_does_not_cut_the_stopping_runs_save_short(tmp_path):
+    """Stopped by Ctrl+C at step 120, the run saves; a second SIGINT during that save (a systemctl kill that signals
+    every process of the unit while the overnight runner forwards it to each run too) is ignored, so the save
+    finishes. The control: the same SIGINT outside the save interrupts."""
+    finished = []
+
+    def save_more():
+        os.kill(os.getpid(), signal.SIGINT)
+        time.sleep(0.05)  # Python runs a signal's handler between instructions: give it the chance
+        finished.append(True)
+
+    env = make_env()
+    try:
+        with pytest.raises(KeyboardInterrupt):
+            train_stable_baselines3(env, "sac", 1000, tmp_path, hyperparameter_overrides=SAC_OVERRIDES,
+                                    callbacks=[InterruptAt(120)], on_save=[save_more])
+    finally:
+        env.close()
+    assert finished and SAC.load(tmp_path / "model.zip").num_timesteps == 120
+    with pytest.raises(KeyboardInterrupt):
+        save_more()
