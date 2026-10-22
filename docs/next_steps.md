@@ -62,7 +62,7 @@ How changes are made here (keep doing this):
 | --- | --- | --- |
 | A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Check whether its policy is stuck or only slow (`check_policy_progress.py`: slow calls for a longer step limit, stuck for a reward change), look at its `failure` reasons in the logs, and watch it (`watch_best_policies.py`). For the pushes, try `--max-steps-per-episode 150` (a scripted diagonal push takes about 30–120 steps, mostly 70–100; the default limit is 100). If failures dominate, revisit the thresholds (§3.2). |
 | Many episodes end in **failure** (`disturbed`, `excessive force`, `dropped`) | constraints too strict for exploration, or a real behaviour problem | Watch the policy. Disturbance is 3 cm, force 500 N (penalty above 100 N); relax only if the behaviour is acceptable. |
-| **RQ1** conditions are indistinguishable | one seed, or too small a budget (13 skills in 500k steps is ~40k each) | 3+ seeds, `RQ1_STEPS=1000000`; then add confidence intervals (§4.1). |
+| **RQ1** conditions are indistinguishable | one seed, or too small a budget (13 skills in 500k steps is ~40k each) | 3+ seeds and `RQ1_STEPS=1000000`; compare the conditions' confidence intervals (section 2). With 3 seeds an interval is the seeds' range, which holds the true mean about 3 times in 4; more seeds bring it nearer 95%. |
 | A **compositional** condition lags | composition scale (watch `operator_embedding_magnitude_before_normalization/*`) or capacity | Tune `--composition-weight-decay`; compare tree / slots / geometric. |
 | **Repair: repair-hidden succeeds zero-shot** (`REPAIR INVALID` in section 5) | the original behaviour already satisfies the repaired operator | Redesign that repair pair so the old behaviour fails it. |
 | **Repair: repair-visible zero-shot is ~0 everywhere** | the held-out operator is too far from training, or the policy ignores the embedding | Check with a wrong-embedding control (§5, RQ1). Try the easier pair (`push-left` → `push-left-front`) first. |
@@ -98,23 +98,21 @@ In rough priority order.
 
 ## 4. Features to add
 
-1. **Analysis without new training**
-   - **Confidence intervals** across seeds (bootstrap), instead of mean ± std alone.
-2. **Operator relabeling (hindsight relabeling at the symbolic level).** An episode that satisfied another
+1. **Operator relabeling (hindsight relabeling at the symbolic level).** An episode that satisfied another
    operator's effects is a success for that operator: a `push-left` episode that ended in `at-front` is a
    successful `push-front` episode. Store it again under that operator's embedding. This gives every
    operator more successes and directly trains the policy to read the operator. It's easiest with sparse
    rewards; with shaped rewards the relabeled transitions need their rewards recomputed.
-3. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
+2. **Throughput.** Several environments per run (a vectorized environment) and more than one gradient
    update per step (2–4). Both are cheap on a GPU but change the baseline, so apply them to every condition.
-4. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; a scripted diagonal push takes
+3. **Discount for long skills.** `gamma` is 0.95, about a 20-step horizon; a scripted diagonal push takes
    about 30–120 steps. Try 0.98.
-5. **Run specs as files.** The experiments are classes in `src/cam/experiments/research_experiments.py`, with
+4. **Run specs as files.** The experiments are classes in `src/cam/experiments/research_experiments.py`, with
    environment variables overriding their settings. Spec files instead (e.g. `configs/overnight_rq.yaml`:
    skills, held-out operators, repair pairs, conditions, seeds, learner, budgets, sampling, evaluation) would
    make every experiment reproducible from one file. Only the runner reads the file; it builds everything else
    from it, and lower-level modules take plain arguments.
-6. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
+5. **Learned setup chains** (TODO in `skill_environment.py`): set skills up with trained policies instead of
    scripted ones, so training links skills into chains.
 6. **Demonstration-seeded replay buffer** (optional; training has been RL only by choice): seed the buffer
    with scripted episodes. It's still RL, but usually much faster.
@@ -135,10 +133,10 @@ In rough priority order.
    return as a fraction of the scripted policy's (dense, but it inherits the shaped rewards' quirks).
    Learning progress is the most defensible; on resume, each skill's recent success can be read from the
    run's `monitor.csv`.
-9. **One episode runner.** A `RolloutRunner` that runs one episode of (skill, policy, environment) and
+8. **One episode runner.** A `RolloutRunner` that runs one episode of (skill, policy, environment) and
    returns a structured result, used by evaluation, `scripts/run_skill.py`, dataset collection and the
    probes of RQ6. Today `evaluation.evaluate` and `run_skill.py` each run their own episodes.
-10. **More compositional aggregators.** Mean pooling, DeepSets and attention over the literal embeddings,
+9. **More compositional aggregators.** Mean pooling, DeepSets and attention over the literal embeddings,
     and a graph (message-passing) encoder of the operator, as further compositional conditions alongside
     tree, slots and geometric.
 
@@ -216,8 +214,7 @@ In rough priority order.
 ## 6. Suggested order
 
 1. **Read the current overnight run** with §2.
-2. **Before the next overnight run:** add confidence intervals (§4.1) and shorten run names (§3.1).
-   Then run `--experiment rq3-repair-minimal` (learnability, RQ1, then
-   the repairs) with `SEEDS="0 1 2"`.
-3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
+2. **Before the next overnight run:** shorten run names (§3.1). Then run `--experiment rq3-repair-minimal`
+   (learnability, RQ1, then the repairs) with `SEEDS="0 1 2"`.
+3. **Then, depending on the results:** operator relabeling (§4.1) and the RQ1 wrong-embedding control, or
    RQ2's protocol, or RQ4 starting with FiLM.

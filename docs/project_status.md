@@ -203,6 +203,14 @@ new operator) is also evaluated alone 1k, 2k, 4k, … steps after it was added, 
   evaluations in a row, counting only evaluations after the addition): how much the new skill made the
   policy forget (`"retention"` in `metrics.json`).
 
+Over seeds (the runs of a condition that differ only in seed), `scripts/review_runs.py` reports each metric's mean
+± std and, from 2 seeds, a percentile bootstrap 95% confidence interval of the mean (10,000 resamples from a fixed
+seed, so a folder always gives the same report). With 3 seeds or fewer the interval is the seeds' range, which holds
+the true mean less often than 95% (about 3 times in 4 with 3 seeds, about 9 in 10 with 10). A seed that never reached
+the threshold, or whose other skills never recovered, counts as what it trained: left out, it would make a
+condition that often fails look fast; counted so, the mean, its interval and the transfer gain are lower bounds,
+marked `≥` and followed by the number of such seeds.
+
 Training also logs each skill's training success rate (`success_rate/<skill>`) and, every 1000 steps, its
 operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compositional runs
 `..._before_normalization/*`).
@@ -261,10 +269,10 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     critic fitted those and the other skills' success dipped);
   - Ctrl+C saves and stops every run, and the same command resumes;
   - outputs: run directories per group, `logs/`, `failed.txt`, `summary.csv`, and `review.txt` at the end.
-- **`scripts/review_runs.py`:** report covering runs, per-condition metrics, curves, TensorBoard training
-  statistics including embedding magnitudes, added and repaired skills (their transfer gain, the steps from scratch
-  in their learnability run divided by the steps after the repair, and a `REPAIR INVALID` flag when repair-hidden
-  succeeds zero-shot), and learned embedding geometry.
+- **`scripts/review_runs.py`:** report covering runs, per-condition metrics (over seeds, with confidence intervals:
+  §3), curves, TensorBoard training statistics including embedding magnitudes, added and repaired skills (their
+  transfer gain, the steps from scratch in their learnability run divided by the steps after the repair, and a
+  `REPAIR INVALID` flag when repair-hidden succeeds zero-shot), and learned embedding geometry.
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
 - **`scripts/watch_best_policies.py`:** for each skill, play the best trained policy in a folder of runs (the
   newest overnight folder by default), even while it is still training.
