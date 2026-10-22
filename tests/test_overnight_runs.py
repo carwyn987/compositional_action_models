@@ -80,6 +80,76 @@ def test_the_plan_runs_learnability_then_every_rq1_run_then_the_repairs(monkeypa
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize("names, conditions", [
+    (["exclude"], ["one-hot", "text-no-name", "compositional-tree-no-name"]),
+    (["include"], ["one-hot", "text", "compositional-tree"]),
+    (["exclude", "include"], ["one-hot", "text-no-name", "text", "compositional-tree-no-name", "compositional-tree"]),
+])
+def test_operator_names_choose_the_options_and_labels_of_the_conditions_with_a_name(monkeypatch, names, conditions):
+    """Each OPERATOR_NAMES value is a variant of the conditions whose embedding carries the operator's name: exclude
+    leaves it out of main.py's config (text and compositional alike) and labels the runs <condition>-no-name, include
+    keeps main.py's default and the condition's label. One-hot has no name (the control): one run, whatever the
+    setting. Each repair continues the rq1 run of its own variant, and no two runs share main.py's run name (the
+    rows of summary.csv)."""
+    from main import parse_args, run_name
+
+    for name, value in (("RUN_GROUPS", ["rq1", "repair"]), ("OPERATOR_NAMES", names),
+                        ("OPERATOR_EMBEDDINGS", ["one-hot", "text", "compositional-tree"]), ("SEEDS", [0]),
+                        ("BASE_SKILLS", ["pickup", "unstack", "pickup-raised"]),
+                        ("REPAIRS", [("unstack", "unstack-raised")]), ("REPAIRED", ["unstack-raised"]),
+                        ("REPAIR_MODES", ["isolated"]), ("REPAIR_HIDDEN_EMBEDDINGS", []), ("RQ1_AUTO", False)):
+        monkeypatch.setattr(overnight_runs, name, value)
+    plan = overnight_runs.build_plan()
+    rq1 = {run.label.removeprefix("rq1_").removesuffix("_seed0"): run for run in plan if run.group == "rq1"}
+    assert list(rq1) == conditions
+    for condition, run in rq1.items():
+        config = parse_args(run.command[1:])
+        excluded = condition.endswith("-no-name")
+        assert (config["operator_text_name"], config["compositional_name"]) == (
+            "none" if excluded and config["operator_encoder"] == "text" else "include",
+            "none" if excluded and config["operator_encoder"] == "compositional" else "text")
+        assert run.output == overnight_runs.OUT / "rq1" / f"{condition}_seed0"
+        (repair,) = [repair for repair in plan if repair.copy_from == run.output]
+        assert repair.label == f"repair_unstack-raised_{condition}_repair-visible_isolated_seed0"
+        assert repair.embedding_options == run.embedding_options
+        assert " ".join(run.embedding_options) in " ".join(run.command)
+    assert len({run_name(parse_args(run.command[1:])) for run in rq1.values()}) == len(conditions)
+
+
+@pytest.mark.unit
+def test_the_preflight_embeds_the_texts_the_runs_use(monkeypatch):
+    """With the name excluded, the text runs' paragraphs are embedded without it, and no name is. With it included
+    (the control), each paragraph names its operator, and the compositional runs' names are embedded too."""
+    from cam.experiments import environment_setup
+    from cam.representations.text_backends import MockTextBackend
+
+    embedded = []
+
+    class RecordingBackend(MockTextBackend):
+        def embed_text(self, text):
+            embedded.append(text)
+            return super().embed_text(text)
+
+    monkeypatch.setattr(environment_setup, "text_backend",
+                        lambda config, dim=None: RecordingBackend(dim or config["operator_embedding_dim"]))
+    for name, value in (("RUN_GROUPS", ["rq1"]), ("OPERATOR_EMBEDDINGS", ["text", "compositional-tree"]),
+                        ("SEEDS", [0]), ("BASE_SKILLS", ["pickup", "pickup-raised"]), ("TEXT_BACKEND", "mock"),
+                        ("RQ1_AUTO", False)):
+        monkeypatch.setattr(overnight_runs, name, value)
+    texts = {}
+    for choice in ("exclude", "include"):
+        monkeypatch.setattr(overnight_runs, "OPERATOR_NAMES", [choice])
+        embedded.clear()
+        overnight_runs.check_text_backend(["pickup", "pickup-raised"],
+                                          {run.embedding_options for run in overnight_runs.build_plan()})
+        texts[choice] = list(embedded)
+    assert len(texts["exclude"]) == 2 and not any("pickup" in text for text in texts["exclude"])
+    assert all(text.startswith("Action unnamed with parameters") for text in texts["exclude"])
+    assert [text.split(" with")[0] for text in texts["include"][:2]] == ["Action pickup", "Action pickup-raised"]
+    assert texts["include"][2:] == ["pickup", "pickup-raised"]
+
+
+@pytest.mark.unit
 def test_a_repair_asking_for_an_untrained_literal_stops_the_runner(monkeypatch):
     """Control: with push-beside among the base skills, stack -> place-beside passes. Without it, place-beside's
     (beside ?o ?u) is in no base skill, and the runner stops before anything runs, naming the skill that has it."""

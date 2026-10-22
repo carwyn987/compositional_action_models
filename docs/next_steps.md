@@ -6,6 +6,7 @@ question. It is written so a new session can start from it. Read it together wit
 - `docs/research_focus.md`: the research questions (RQ1–RQ6).
 - `docs/project_status.md`: what the code does today (predicates, skills, embeddings, metrics, scripts) and
   what past overnight runs showed.
+- `docs/experiments.md`: how to run each experiment, and where its outputs and review are.
 
 When an item is done, delete it here and describe the result in `project_status.md`.
 
@@ -20,8 +21,8 @@ cat $OUT/failed.txt 2>/dev/null             # runs that crashed
 ./scripts/review_runs.py $OUT --no-embeddings | sed -n '/^1\./,/^3\./p;/^5\./,/^6\./p'   # runs (finished or not), conditions, repairs
 ```
 
-The runner prints `All done` when every run has ended (in its terminal, or in the console log when started
-in the background, see `scripts/start_overnight.sh`).
+The runner prints `All done` when every run has ended (in its terminal, or, when started in the background, in
+its journal or console log: `docs/experiments.md`, `scripts/start_overnight.sh`).
 
 Then ask it to read this file, `project_status.md` and `research_focus.md`, and to propose what to do next
 using §2 below.

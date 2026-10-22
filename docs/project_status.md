@@ -1,7 +1,8 @@
 # Project status
 
 What the code does today and what the experiments so far show. The research questions are in
-`docs/research_focus.md`; the backlog (issues, features, what to do next) is in `docs/next_steps.md`.
+`docs/research_focus.md`; how to run each experiment is in `docs/experiments.md`; the backlog (issues,
+features, what to do next) is in `docs/next_steps.md`.
 
 ## 1. Environment and skills
 
@@ -143,6 +144,9 @@ experimental conditions.
   repair-hidden control. Every other operator keeps its code (one-hot keeps the indices it has without
   aliases, leaving NEW's unused), so the other skills of a repair-hidden run keep the codes of the rq1 run
   it continues.
+- **The operator's name** is in the text embedding's text and is a component of the compositional embedding,
+  unless left out (`--operator-text-name none`, `--compositional-name none`): held-out operators share words
+  of their names with training skills, so the experiments leave it out (`OPERATOR_NAMES`, below).
 
 **Compositional embedding scale.** The compositional extractor (`representations/compositional/extractor.py`)
 normalizes the composed embedding to zero mean and magnitude (L2 norm) 1 before the policy sees it. Without
@@ -249,7 +253,9 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill evaluated every
     `REPAIR_EVAL_INTERVAL` (10k) steps);
   - **defaults** (the `Experiment` base class, and every run's options): multi-task SAC, competence sampling,
-    shaped rewards, 2 blocks, the OpenAI text backend, 13 training skills; the `TO` of each repair pair
+    shaped rewards, 2 blocks, the OpenAI text backend, the operator's name left out of the text and compositional
+    embeddings (`OPERATOR_NAMES=exclude`, runs labelled `<condition>-no-name`; `OPERATOR_NAMES="exclude include"`
+    also runs them with it, the ablation), 13 training skills; the `TO` of each repair pair
     (`unstack-raised`, `place-beside`, `push-left-front`) is held out of training until its repair run, so the
     fourth diagonal push is held out and the other three are trained;
   - **runs `JOBS` (default 2) runs at once.** One SAC run leaves most of a GPU or CPU idle, so a few side
@@ -257,8 +263,9 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   - announces each run (what it trains, why), reports progress every minute (from each run's `progress.json`, which
     training writes every 1000 steps) and each outcome; training
     runs as child processes logging to `<OUT>/logs/`;
-  - **pre-flight (fail fast):** text backend usable, with every text embedded and cached (default
-    `TEXT_BACKEND=openai`); device (`DEVICE=cuda` fails if unavailable); scripted policies; disk space;
+  - **pre-flight (fail fast):** text backend usable, with every operator text the runs need embedded and cached
+    (with or without the name, as the runs have it; default `TEXT_BACKEND=openai`); device (`DEVICE=cuda` fails
+    if unavailable); scripted policies; disk space;
   - **`RQ1_STEPS=auto`:** each rq1 run's budget is 1.5 × the sum of the steps each skill needed alone to
     reach the threshold in its learnability run (a skill that never did counts as `LEARN_STEPS`), so every
     skill gets at least what it needs alone; the rq1 runs wait for the learnability runs;
