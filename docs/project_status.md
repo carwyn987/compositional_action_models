@@ -205,7 +205,8 @@ new operator) is also evaluated alone 1k, 2k, 4k, … steps after it was added, 
 - **retention** (after a skill is added): for every other skill, its level before (the mean of its last 2
   evaluations), its lowest and last success after, and when it recovered (back within 0.1 of its level on 2
   evaluations in a row, counting only evaluations after the addition): how much the new skill made the
-  policy forget (`"retention"` in `metrics.json`).
+  policy forget (`"retention"` in `metrics.json`; a run resumed with added skills more than once, such as an rq2
+  chain, keeps each earlier addition's in `"earlier_retention"`).
 
 Over seeds (the runs of a condition that differ only in seed), `scripts/review_runs.py` reports each metric's mean
 ± std and, from 2 seeds, a 95% confidence interval (CI) of the mean via percentile bootstrap resampling, printed
@@ -238,7 +239,9 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     `src/cam/experiments/research_experiments.py`: the docstring gives the question, design, controls and what
     to read; the attributes are the runner's settings (groups, skills, repairs, conditions, budgets). An
     environment variable named as a setting overrides it, and the runner lists the overrides. `learnability`:
-    each registered skill alone; `rq1`: one shared policy per operator embedding on the training skills;
+    each registered skill alone; `rq1`: one shared policy per operator embedding on the training skills; `rq2`:
+    skills added to a shared policy one at a time, in three shuffled orders of pickup, unstack, pickup-raised and
+    unstack-raised, and `rq2-add-unstack-raised`: unstack-raised added to a policy trained on the other three;
     `rq3-repair-minimal` and `rq3-repair-maximal`: rq1's policies continued with repaired operators (few training
     skills, each repair's new literals in one other skill; or every training skill and one repair); `overlap`: how much of their operators'
     structure the training skills share, at five levels from predicates to whole operators, and how much of each
@@ -251,7 +254,14 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     baseline for RQ4),
     rq1 (one shared policy per condition and seed on `BASE_SKILLS`), repair (each `FROM:TO` in `REPAIRS`, in
     each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill evaluated every
-    `REPAIR_EVAL_INTERVAL` (10k) steps);
+    `REPAIR_EVAL_INTERVAL` (10k) steps), rq2 (per order, condition and seed, a chain of stages in one run. Orders
+    are written `STAGE,STAGE,...`, a stage's skills joined by `+` (`RQ2_ORDERS`), and `RQ2_SHUFFLES` adds shuffles
+    of `BASE_SKILLS` from a fixed seed. Stage 1 is a new run until each of its skills reaches the threshold; each
+    later stage continues that run with its skills added (`--repair-mode retain`), and starts only if the stage
+    before stopped at its threshold: otherwise the chain ends there, and `chain_ended.txt` in the run says why.
+    Unlike a repair, an added skill need not have every literal trained: the plan prints its literal coverage by the
+    skills before it, since zero-shot success needs 1 while steps to threshold compare at any coverage. Every skill
+    evaluated every `RQ2_EVAL_INTERVAL` (10k) steps);
   - **defaults** (the `Experiment` base class, and every run's options): multi-task SAC, competence sampling,
     shaped rewards, 2 blocks, the OpenAI text backend, the operator's name left out of the text and compositional
     embeddings (`OPERATOR_NAMES=exclude`, runs labelled `<condition>-no-name`; `OPERATOR_NAMES="exclude include"`
@@ -270,18 +280,20 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
     reach the threshold in its learnability run (a skill that never did counts as `LEARN_STEPS`), so every
     skill gets at least what it needs alone; the rq1 runs wait for the learnability runs;
   - **order:** runs start in plan order, the most informative first: every learnability run, then every rq1
-    run, then the repairs;
+    run, then the repairs, then the rq2 chains;
   - **replay buffers:** rq1 runs save theirs (about 1 GB each), and each repair starts from it (hard-linked,
-    not copied, and not saved again), so the skills it was trained on keep being replayed. A run resumed
+    not copied, and not saved again), so the skills it was trained on keep being replayed; an rq2 chain's run saves
+    its buffer with every checkpoint, so each stage keeps replaying the earlier stages' skills. A run resumed
     without a buffer acts without updating for its first 5k steps (`RESUME_WARMUP_STEPS`), instead of training
     on the few transitions collected since the resume (in the 2026-10-11 repairs, resumed without buffers, the
     critic fitted those and the other skills' success dipped);
   - Ctrl+C saves and stops every run, and the same command resumes;
   - outputs: run directories per group, `logs/`, `failed.txt`, `summary.csv`, and `review.txt` at the end.
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics (over seeds, with bootstrap 95% CIs:
-  §3), curves, TensorBoard training statistics including embedding magnitudes, added and repaired skills (their
-  transfer gain, the steps from scratch in their learnability run divided by the steps after the repair, and a
-  `REPAIR INVALID` flag when repair-hidden succeeds zero-shot), and learned embedding geometry.
+  §3), curves, TensorBoard training statistics including embedding magnitudes, added and repaired skills (each
+  addition of a run, several in an rq2 chain, with its own retention; their transfer gain, the steps from scratch in
+  their learnability run divided by the steps after the repair; and a `REPAIR INVALID` flag when repair-hidden
+  succeeds zero-shot), and learned embedding geometry.
 - **`scripts/run_skill.py`:** view any skill with its scripted, random or trained policy (`--render`).
 - **`scripts/watch_best_policies.py`:** for each skill, play the best trained policy in a folder of runs (the
   newest overnight folder by default), even while it is still training.

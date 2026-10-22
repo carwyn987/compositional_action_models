@@ -28,7 +28,7 @@ class Experiment:
     """
 
     name: str
-    run_groups: tuple[str, ...]  # the runner's groups, from: learnability, rq1, repair
+    run_groups: tuple[str, ...]  # the runner's groups, from: learnability, rq1, rq2, repair
     base_skills: tuple[str, ...]  # the training skills; held-out operators (repairs' TO) only appear in repair runs
     seeds: tuple[int, ...] = (0,)
     algorithm: str = "mtsac"  # main.py --algorithm: sac; mtsac, SAC with a separate entropy temperature per skill; ppo
@@ -88,6 +88,18 @@ class Experiment:
     repair_steps: int = 150_000  # a repair run's most steps
     repair_eval_interval: int = 10_000  # how often a repair run evaluates every skill
 
+    # Rq2 runs: one shared policy per operator embedding, order and seed, given an order's stages in turn. An order
+    # is written STAGE,STAGE,..., a stage's skills joined by +: "pickup+unstack,unstack-raised" trains pickup and
+    # unstack, then adds unstack-raised.
+    rq2_orders: tuple[str, ...] = ()
+    rq2_shuffles: int = 0  # and this many different shuffles of base_skills, one skill per stage, from a fixed seed
+    # the first stage's most steps: a new run, until each of its skills is at the threshold
+    rq2_first_steps: int = 500_000
+    # each later stage's most steps: retain, until its skills are at the threshold and the earlier ones back at their
+    # level before
+    rq2_stage_steps: int = 1_000_000
+    rq2_eval_interval: int = 10_000  # how often an rq2 run evaluates every skill
+
     @classmethod
     def settings(cls) -> dict[str, object]:
         """Every setting, by its runner name (upper case)."""
@@ -145,6 +157,65 @@ class RQ1(Experiment):
     name = "rq1"
     run_groups = ("learnability", "rq1")
     base_skills = TRAINING_SKILLS
+
+
+class RQ2(Experiment):
+    """RQ2: does conditioning on the operator's structure speed up learning the next skill, or let it succeed
+    zero-shot?
+
+    Skills are added to a shared policy a stage at a time, and every earlier skill keeps training, so none is
+    forgotten: one chain per operator embedding, order and seed. Stage 1 is a new run on its skills until each
+    reaches the success threshold; each later stage continues that run with its skills added (repair mode retain),
+    until they are at the threshold and every earlier skill is back at its level before. A stage starts only once
+    the stage before stopped at its threshold; otherwise the chain ends there, and the runner and review_runs.py
+    (section 1) say why. The orders, rq2_orders and rq2_shuffles shuffles of base_skills, are the same for every
+    embedding and seed, so the embeddings compare on the same orders.
+
+    Unlike a repair, an added skill may have literals no earlier stage trained: its coverage (the fraction of its
+    literals the skills before it have, which the plan prints per stage) varies with the order by design. Zero-shot
+    success is only possible at coverage 1; below it, compare steps to threshold. The four skills are the corners of
+    a square, on the table or on a block, held low or raised: each one's literals are all in its two neighbours
+    (unstack-raised's in unstack and pickup-raised), so in every order the last skill added has coverage 1, the
+    third has it when the first two are opposite corners (8 of the 24 orders), and the second never does. Only the
+    skills needed to generalize are trained: each is needed to cover another. Three shuffles make 12 chains of four
+    stages with the four operator embeddings; the fixed seed's end in pickup-raised, pickup and unstack, and
+    rq2-add-unstack-raised's in unstack-raised, so each corner is once a covered addition. Controls: one-hot gives an
+    added skill a code no training used, so its zero-shot success is what the state alone gives; the learnability
+    runs learn each skill from scratch.
+
+    The metrics that answer it (review_runs.py section 5, one entry per addition): the added skill's zero-shot
+    success, and its steps to threshold on itself, against the other embeddings' on the same order and against
+    learning it alone (transfer gain); and what the earlier skills forgot (retention). Read additions at coverage 1
+    apart from the others, and compare across seeds (SEEDS="0 1 2"). Operator embeddings: one of each kind, as in
+    RQ3; OPERATOR_EMBEDDINGS adds others (e.g. compositional-slots) at the cost of a longer plan.
+    """
+
+    name = "rq2"
+    run_groups = ("learnability", "rq2")
+    base_skills = ("pickup", "unstack", "pickup-raised", "unstack-raised")
+    operator_embeddings = ("compositional-tree", "one-hot", "multi-hot-trainable", "text")
+    rq2_shuffles = 3
+
+
+class RQ2AddUnstackRaised(RQ2):
+    """RQ2, one addition: unstack-raised added to a policy trained on pickup, unstack and pickup-raised together.
+
+    One order of two stages: the three until each reaches the threshold, then unstack-raised, every literal of which
+    they have (coverage 1: (raised ?o) from pickup-raised, the stacked block from unstack), so it can succeed
+    zero-shot. One chain per operator embedding, side by side: one-hot, whose code for unstack-raised no training
+    used, against compositional-tree. Budgets are generous, since each stage stops at its threshold: 1.5M steps for
+    the three, 1M for the addition; a save every 20k steps, replay buffer included, so an interrupted stage loses
+    little. Only rq2 runs, so section 5 has no transfer gain. The metrics and their reading are RQ2's.
+    """
+
+    name = "rq2-add-unstack-raised"
+    run_groups = ("rq2",)
+    operator_embeddings = ("one-hot", "compositional-tree")
+    rq2_orders = ("pickup+unstack+pickup-raised,unstack-raised",)
+    rq2_shuffles = 0
+    rq2_first_steps = 1_500_000
+    rq2_stage_steps = 1_000_000
+    save_interval = 20_000
 
 
 class RQ3Repair(Experiment):
@@ -268,7 +339,9 @@ class RepresentationOverlap(Experiment):
 
 
 EXPERIMENTS: dict[str, type[Experiment]] = {
-    experiment.name: experiment for experiment in (Learnability, RQ1, RQ3RepairMinimal, RQ3RepairMaximal, RepresentationOverlap)
+    experiment.name: experiment for experiment in (
+        Learnability, RQ1, RQ2, RQ2AddUnstackRaised, RQ3RepairMinimal, RQ3RepairMaximal, RepresentationOverlap,
+    )
 }
 
 

@@ -5,7 +5,8 @@
     ./scripts/review_runs.py outputs/overnight_20261008 --no-embeddings
 
 Sections:
-    1. runs         every run: finished or not, last step, stop reason, warnings / errors in its log
+    1. runs         every run: finished or not, last step, stop reason, why an rq2 chain ended before its
+                    last stage, warnings / errors in its log
     2. conditions   per condition (runs differing only in seed): mean ± std over seeds, with a 95% confidence
                     interval (CI) of the mean via bootstrap resampling of the seeds' values (no run is
                     repeated), of steps and episodes to threshold, AUC and final success
@@ -15,10 +16,10 @@ Sections:
                     entropy / action std, KL, explained variance, losses) and the operator embedding
                     magnitudes logged during training, flagging NaN or exploding values
     5. added skills per run where a skill was added or replaced after training started (repair / new
-                    skill runs): the step it was added, its zero-shot success rate there, and the steps to
-                    threshold from there, per condition (as in section 2); and what the other skills
-                    forgot: their mean level before, lowest after and final, and the steps until all were
-                    back at their level
+                    skill runs; an rq2 chain's run has one per stage after the first): the step it was added,
+                    its zero-shot success rate there, and the steps to threshold from there, per condition (as
+                    in section 2); and what the other skills forgot: their mean level before, lowest after and
+                    final, and the steps until all were back at their level
     6. embeddings   per run with a learned operator embedding (trainable or compositional): the final
                     embedding of each skill, from the saved model: its magnitude (L2 norm, i.e. length)
                     and the distance and cosine similarity between skills (low separation means the
@@ -116,6 +117,8 @@ def section_runs(runs: list[Path], folder: Path) -> list[str]:
         counts = {name: len(re.findall(pattern, log)) for name, pattern in LOG_PATTERNS.items()}
         issues = ", ".join(f"{name} {count}" for name, count in counts.items() if count) or "no warnings"
         stop = f", stop: {metrics['stop_reason']}" if metrics and metrics.get("stop_reason") else ""
+        ended = run / "chain_ended.txt"  # written by overnight_runs.py
+        stop += f"; {ended.read_text().strip()}" if ended.exists() else ""
         lines.append(f"   {run.parent.name}/{run.name}: {finished}, last eval step {last}{stop}; {issues}")
     return lines
 
@@ -198,9 +201,10 @@ def section_training(runs: list[Path]) -> list[str]:
 
 def section_added_skills(runs: list[Path]) -> list[str]:
     """Skills first evaluated after step 0 (added on resume, e.g. a repaired operator replacing its
-    original): zero-shot success at the step they were added and steps to threshold from there, and the transfer
-    gain: the steps the skill needed from scratch (its learnability run in the same folder) divided by the steps it
-    needed on itself after being added."""
+    original, or each later stage of an rq2 chain, several in one run): zero-shot success at the step they were added
+    and steps to threshold from there, what the other skills forgot after that addition, and the transfer gain: the
+    steps the skill needed from scratch (its learnability run in the same folder) divided by the steps it needed on
+    itself after being added."""
     lines = ["5. ADDED SKILLS (added or replaced after training started: step added, zero-shot success there "
              "(deterministic / stochastic), steps to threshold from there; over seeds as in section 2)"]
     conditions: dict[str, list[tuple]] = {}
@@ -227,9 +231,13 @@ def section_added_skills(runs: list[Path]) -> list[str]:
                 continue
             summary = {mode: metrics["summary"][mode].get(skill, {}) for mode in ("deterministic", "stochastic")}
             trained = {measure: training_experience(metrics, skill, measure) for measure in ("steps", "skill_steps")}
+            # the retention of this addition: a run with several (an rq2 chain) keeps the earlier ones' apart
+            retention = next((entry for entry in [*metrics.get("earlier_retention", []), metrics.get("retention")]
+                              if entry and entry["added_at"] == step), None)
             conditions.setdefault(f"{condition_name(run)} {skill}", []).append(
-                (step, summary, removed, metrics.get("retention"), trained))
-    for key, entries in sorted(conditions.items()):
+                (step, summary, removed, retention, trained))
+    # by condition, and a run's additions in the order they were added
+    for key, entries in sorted(conditions.items(), key=lambda item: (item[0].rsplit(" ", 1)[0], item[1][0][0])):
         removed = entries[0][2]
         lines.append(f"   {key}  ({len(entries)} seeds; added at step {mean_std([e[0] for e in entries])}"
                      f"{'; replaced ' + ', '.join(removed) if removed else ''})")

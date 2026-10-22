@@ -27,7 +27,9 @@ logged and written to metrics.json.
 Retention: when skills were added after training started (e.g. a repaired operator
 replacing its original), metrics.json also records, for every other skill, its
 level before the addition, its lowest and last success rate after it, and when it
-recovered (retention()): how much the new skill made the policy forget.
+recovered (retention()): how much the new skill made the policy forget. A run resumed
+with added skills more than once (RQ2's stages) also keeps each earlier addition's
+retention, as it was when the next skills were added ("earlier_retention").
 
 Resuming: pass the run's metrics.json contents as `metrics`; curves and training
 experience counters continue from it. write_metrics() also stores the current
@@ -124,6 +126,8 @@ class MetricsCallback(BaseCallback):
         else:
             self.curves = {mode: LearningCurve() for mode in MODES}
             self._restore_progress(TrainingProgress(0, 0, {}, {}))
+        self.earlier_retention: list[dict] = list((metrics or {}).get("earlier_retention") or [])
+        self.resumed_retention = (metrics or {}).get("retention")  # the most recent addition's, when resumed
 
     def _restore_progress(self, progress: TrainingProgress) -> None:
         self.saved_progress = progress
@@ -137,6 +141,8 @@ class MetricsCallback(BaseCallback):
         seen = {skill for _, result, _ in points for skill in result.skills}
         self.added_skills = [skill for skill in self.skill_names if points and skill not in seen]
         self.added_at = self.num_timesteps
+        if self.added_skills and self.resumed_retention:  # a further addition: the one before is over
+            self.earlier_retention.append(self.resumed_retention)
         if points and points[-1][0] == self.num_timesteps:
             # Resumed right at the last evaluation: evaluate only skills added since (their zero-shot point).
             missing = [skill for skill in self.skill_names if skill not in points[-1][1].skills]
@@ -337,6 +343,7 @@ class MetricsCallback(BaseCallback):
             "progress": asdict(progress),
             "summary": self.summary(),
             "retention": self.retention(),
+            "earlier_retention": self.earlier_retention,
             "curves": {mode: curve.to_dict() for mode, curve in self.curves.items()},
         }
         atomic_write_text(self.run_directory / "metrics.json", json.dumps(metrics, indent=2))

@@ -202,3 +202,39 @@ def test_skills_added_on_resume_are_evaluated_densely_then_sparsely(monkeypatch)
     callback._on_training_end()
     assert evaluated[::2] == [(0, ["c"]), (10, ["c"]), (20, ["c"]), (40, ["c"])]  # deterministic of each pair
     assert callback.curves["deterministic"].steps_to_threshold("c", 0.95) == 40
+
+
+@pytest.mark.unit
+def test_a_further_addition_keeps_the_retention_of_the_one_before(tmp_path, monkeypatch):
+    """A run that added b at step 100 (FORGET_THEN_RECOVER) is resumed at step 500 with c added: metrics.json keeps b's
+    retention, as it was at step 500, in earlier_retention, and "retention" becomes c's. Control: resumed without an
+    added skill (after an interruption), nothing moves to earlier_retention."""
+    from unittest.mock import MagicMock
+
+    import cam.evaluation.metrics_callback as metrics_callback_module
+    from cam.evaluation.evaluation import EvaluationResult, SkillEvaluation
+    from cam.evaluation.learning_curve import TrainingProgress
+
+    def fake_evaluate(env, policy, skill_names, episodes, seed=None):
+        return EvaluationResult({skill: SkillEvaluation(1, 0.0, 0.0, 1.0, 0.0, 5.0, 0.0) for skill in skill_names})
+
+    monkeypatch.setattr(metrics_callback_module, "evaluate", fake_evaluate)
+    monkeypatch.setattr(MetricsCallback, "logger", property(lambda self: MagicMock()))
+    first = MetricsCallback(None, ["a", "b"], 100, 1, tmp_path, stop_skills=["b"], stop_consecutive=2)
+    for step, rates in FORGET_THEN_RECOVER:
+        first.curves["deterministic"].add(step, result(**rates), TrainingProgress(step, 0, {}, {}))
+    first.num_timesteps = 500
+    first.write_metrics()
+    saved = json.loads((tmp_path / "metrics.json").read_text())
+
+    def resume(skills):
+        callback = MetricsCallback(None, skills, 100, 1, tmp_path, metrics=saved)
+        callback.model, callback.num_timesteps = None, 500
+        callback._on_training_start()
+        return callback
+
+    assert resume(["a", "b"]).earlier_retention == []
+    resume(["a", "b", "c"])
+    metrics = json.loads((tmp_path / "metrics.json").read_text())
+    assert saved["retention"]["added_at"] == 100 and metrics["earlier_retention"] == [saved["retention"]]
+    assert metrics["retention"]["added_at"] == 500

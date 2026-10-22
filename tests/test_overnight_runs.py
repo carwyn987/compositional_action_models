@@ -1,11 +1,12 @@
-"""scripts/overnight_runs.py: the experiment's settings, the repairs it accepts, and the RQ1 budget set from the
-learnability runs (RQ1_STEPS=auto)."""
+"""scripts/overnight_runs.py: the experiment's settings, the repairs it accepts, the RQ1 budget set from the
+learnability runs (RQ1_STEPS=auto), and the rq2 chains: their orders, stages and when a chain ends."""
 
 import json
 import os
 import re
 import subprocess
 import sys
+from itertools import permutations
 
 import pytest
 
@@ -232,3 +233,207 @@ def test_progress_is_read_from_the_runs_progress_file(tmp_path, monkeypatch):
     assert overnight_runs.Runner.progress(run) == (None, 300_000)
     (directory / "progress.json").write_text(json.dumps({"done": 172_987, "total": 300_000, "step": 172_987}))
     assert overnight_runs.Runner.progress(run) == (172_987, 300_000)
+
+
+def option(command: list[str], flag: str) -> list[str]:
+    """The values a command gives its last flag (up to the next option)."""
+    start = len(command) - command[::-1].index(flag)
+    end = next((index for index in range(start, len(command)) if command[index].startswith("--")), len(command))
+    return command[start:end]
+
+
+def plan_rq2(monkeypatch, tmp_path, order: str, embeddings=("one-hot",), seeds=(0,)) -> list:
+    for name, value in (("OUT", tmp_path), ("RUN_GROUPS", ["rq2"]), ("OPERATOR_EMBEDDINGS", list(embeddings)),
+                        ("SEEDS", list(seeds)), ("RQ2_ORDERS", [overnight_runs.order_stages(order)])):
+        monkeypatch.setattr(overnight_runs, name, value)
+    return overnight_runs.build_plan()
+
+
+@pytest.mark.unit
+def test_an_order_is_stages_of_skills_and_the_runner_checks_it(monkeypatch):
+    """RQ2_ORDERS="pickup+unstack,unstack-raised": pickup and unstack together, then unstack-raised, and the order's
+    name is the same text. Control: an unknown skill, or one in two stages, stops the runner before anything runs."""
+    order = overnight_runs.order_stages("pickup+unstack,unstack-raised")
+    assert order == [["pickup", "unstack"], ["unstack-raised"]]
+    assert overnight_runs.order_name(order) == "pickup+unstack,unstack-raised"
+    monkeypatch.setattr(overnight_runs, "RUN_GROUPS", ["rq2"])
+    monkeypatch.setattr(overnight_runs, "RQ2_ORDERS", [order])
+    overnight_runs.check_orders()
+    for written, problem in (("pickup,unstak", r"unknown skills \['unstak'\]"),
+                             ("pickup+unstack,pickup", "pickup in more than one stage")):
+        monkeypatch.setattr(overnight_runs, "RQ2_ORDERS", [overnight_runs.order_stages(written)])
+        with pytest.raises(SystemExit, match=problem):
+            overnight_runs.check_orders()
+
+
+@pytest.mark.unit
+def test_shuffled_orders_are_different_and_the_same_every_time():
+    """Each shuffle has every skill, one per stage, and differs from the others; the fixed seed gives the same orders
+    every time, and asking for more keeps the first ones. At most every order there is: 6 of 3 skills."""
+    skills = list(EXPERIMENTS["rq2"].base_skills)
+    orders = overnight_runs.shuffled_orders(skills, 3)
+    assert orders == overnight_runs.shuffled_orders(skills, 3) == overnight_runs.shuffled_orders(skills, 5)[:3]
+    assert all(len(stage) == 1 for order in orders for stage in order)
+    assert all(sorted(skill for (skill,) in order) == sorted(skills) for order in orders)
+    assert len({overnight_runs.order_name(order) for order in orders}) == 3
+    assert len(overnight_runs.shuffled_orders(skills[:3], 10)) == 6
+    assert [order[-1] for order in orders] == [["pickup-raised"], ["pickup"], ["unstack"]]  # as rq2's docstring says
+
+
+@pytest.mark.unit
+def test_in_every_order_of_rq2s_skills_the_last_one_added_is_covered():
+    """rq2's docstring: over the 24 orders of its four skills, the fourth skill added has literal coverage 1 by the
+    three before it every time, the third in the 8 orders that start with opposite corners, the second never."""
+    orders = [[[skill] for skill in order] for order in permutations(EXPERIMENTS["rq2"].base_skills)]
+    covered = {number: sum(overnight_runs.stage_coverage(order, number)[order[number - 1][0]] == 1 for order in orders)
+               for number in (2, 3, 4)}
+    assert len(orders) == 24 and covered == {2: 0, 3: 8, 4: 24}
+
+
+@pytest.mark.unit
+def test_an_rq2_chain_is_one_run_continued_stage_by_stage(tmp_path, monkeypatch):
+    """Per seed, order and embedding: stage 1 is a new run on its skills, stopping once each is at the threshold and
+    saving its replay buffer; each later stage waits for the one before and continues that run with its skills added,
+    stopping on them in repair mode retain."""
+    runs = plan_rq2(monkeypatch, tmp_path, "pickup+unstack,unstack-raised,pickup-raised", ("one-hot", "text"), (0, 1))
+    assert len(runs) == 2 * 2 * 3 and {run.group for run in runs} == {"rq2"}
+    first, second, third = runs[:3]
+    chain = "rq2_pickup+unstack,unstack-raised,pickup-raised"
+    assert [run.label for run in runs[::3]] == [f"{chain}_{condition}_seed{seed}_stage1"
+                                                for seed in (0, 1) for condition in ("one-hot", "text-no-name")]
+    assert [run.label for run in runs[:3]] == [f"{chain}_one-hot_seed0_stage{number}" for number in (1, 2, 3)]
+    assert [run.depends_on for run in runs[:3]] == [(), (first.label,), (second.label,)]
+    assert first.output == second.output == third.output == (
+        tmp_path / "rq2" / "one-hot_seed0" / "pickup+unstack,unstack-raised,pickup-raised")
+
+    assert option(first.command, "--skills") == option(first.command, "--stop-skills") == ["pickup", "unstack"]
+    assert "--save-replay-buffer" in first.command and "--repair-mode" not in first.command
+    assert option(first.command, "--output-dir") == [str(first.output)]
+    assert option(first.command, "--total-timesteps") == [str(overnight_runs.RQ2_FIRST_STEPS)]
+    assert option(first.command, "--eval-interval") == [str(overnight_runs.RQ2_EVAL_INTERVAL)]
+    for run, skills in ((second, ["pickup", "unstack", "unstack-raised"]),
+                        (third, ["pickup", "unstack", "unstack-raised", "pickup-raised"])):
+        assert option(run.command, "--run-directory") == [str(first.output)]  # where stage 1 makes its run
+        assert option(run.command, "--skills") == skills
+        assert option(run.command, "--stop-skills") == list(run.added) == skills[-1:]
+        assert option(run.command, "--repair-mode") == ["retain"]
+        assert option(run.command, "--total-timesteps") == [str(overnight_runs.RQ2_STAGE_STEPS)]
+
+
+def make_run(directory, steps: int, points: list[dict]):
+    """A run directory as main.py leaves it, at the given step and with the given evaluation points."""
+    directory.mkdir(parents=True, exist_ok=True)
+    (directory / "config.json").write_text("{}")
+    (directory / "model.zip").write_text("model")
+    (directory / "metrics.json").write_text(json.dumps({"progress": {"steps": steps},
+                                                        "curves": {"deterministic": {"points": points}}}))
+    return directory
+
+
+@pytest.mark.unit
+def test_a_chain_ends_at_a_stage_that_did_not_reach_the_threshold(tmp_path, monkeypatch):
+    """Stage 1 ran its whole budget without reaching the threshold: stage 2 does not start, the chain ends with the
+    reason (also in the run's chain_ended.txt, for review_runs.py), and stage 3 is skipped. Control: once stage 1's
+    log says it stopped at the threshold, stage 2 starts, continuing stage 1's run."""
+    first, second, third = plan_rq2(monkeypatch, tmp_path, "pickup,unstack,pickup-raised")
+    run = make_run(first.output / "pickup_mtsac_one-hot_shaped_seed0", 500_000, [{"step": 0, "result": {"pickup": {}}}])
+    started = []
+    monkeypatch.setattr(overnight_runs.subprocess, "Popen", lambda command, **_: started.append(command))
+    first.log.parent.mkdir()
+
+    def start_stages_after(log: str) -> overnight_runs.Runner:
+        first.log.write_text(log)
+        runner = overnight_runs.Runner([first, second, third])
+        runner.done.add(first.label)
+        runner.start(second, 2)
+        if second.label in runner.failed:
+            runner.start(third, 3)
+        return runner
+
+    runner = start_stages_after("training finished at step 500000\n")
+    assert started == [] and runner.ended == {second.label, third.label} <= runner.failed
+    assert (run / "chain_ended.txt").read_text() == (
+        f"chain ended: stage 1 did not reach the success threshold (its {overnight_runs.RQ2_FIRST_STEPS:,} steps ran "
+        "out), so stage 2 and any after it did not run\n")
+
+    start_stages_after("stopping training at step 120000: pickup reached success rate 0.95\n"
+                       "training finished at step 120000\n")
+    (command,) = started
+    assert option(command, "--run-directory") == [str(run)] and option(command, "--stop-skills") == ["unstack"]
+    assert not (run / "chain_ended.txt").exists()
+
+
+@pytest.mark.unit
+def test_an_interrupted_stage_resumes_its_run_with_the_steps_it_has_left(tmp_path, monkeypatch):
+    """Stage 2 added unstack at step 120k (its first evaluation) and was interrupted at 170k: it resumes the same run
+    with its budget less the 50k done. Control: before stage 2 starts (unstack never evaluated), its whole budget."""
+    first, second = plan_rq2(monkeypatch, tmp_path, "pickup,unstack")
+    directory = first.output / "pickup_mtsac_one-hot_shaped_seed0"
+    before = [{"step": 0, "result": {"pickup": {}}}, {"step": 120_000, "result": {"pickup": {}}}]
+    make_run(directory, 120_000, before)
+    runner = overnight_runs.Runner([first, second])
+    command = runner.prepare(second)
+    assert option(command, "--run-directory") == [str(directory)]
+    assert option(command, "--total-timesteps") == [str(overnight_runs.RQ2_STAGE_STEPS)]
+    make_run(directory, 170_000, [*before[:1], {"step": 120_000, "result": {"pickup": {}, "unstack": {}}}])
+    command = runner.prepare(second)
+    assert option(command, "--run-directory") == [str(directory)]
+    assert option(command, "--total-timesteps") == [str(overnight_runs.RQ2_STAGE_STEPS - 50_000)]
+
+
+@pytest.mark.unit
+def test_rq2_add_unstack_raised_plans_one_chain_of_two_stages_per_embedding(tmp_path):
+    """Per operator embedding (one-hot, compositional-tree without the operator's name): a new run on pickup, unstack and pickup-raised until each
+    reaches the threshold (at most 1.5M steps, evaluated every 10k, saved every 20k with its replay buffer), then that
+    run with unstack-raised added, training every skill (retain) until it is at the threshold and the others are back
+    at their level, at most 1M steps. Every literal of unstack-raised is in the three: coverage 1."""
+    experiment = EXPERIMENTS["rq2-add-unstack-raised"]
+    environment = {name: value for name, value in os.environ.items() if name not in experiment.settings()}
+    environment |= {"DRY_RUN": "1", "OUT": str(tmp_path)}
+    output = subprocess.run([sys.executable, "scripts/overnight_runs.py", "--experiment", experiment.name],
+                            cwd=overnight_runs.ROOT, env=environment, capture_output=True, text=True, check=True).stdout
+    commands = {label: command.split() for label, command in re.findall(r"^(\S+):\n  \S+ (main\.py .*)$", output,
+                                                                        re.MULTILINE)}
+    chain = "rq2_pickup+unstack+pickup-raised,unstack-raised"
+    assert list(commands) == [f"{chain}_{condition}_seed0_stage{number}"
+                              for condition in ("one-hot", "compositional-tree-no-name") for number in (1, 2)]
+    first, added = commands[f"{chain}_one-hot_seed0_stage1"], commands[f"{chain}_one-hot_seed0_stage2"]
+    assert option(first, "--skills") == option(first, "--stop-skills") == ["pickup", "unstack", "pickup-raised"]
+    assert [option(first, flag) for flag in ("--total-timesteps", "--eval-interval", "--save-interval")] == [
+        ["1500000"], ["10000"], ["20000"]]
+    assert "--save-replay-buffer" in first and option(first, "--algorithm") == ["mtsac"]
+    assert option(added, "--skills") == ["pickup", "unstack", "pickup-raised", "unstack-raised"]
+    assert option(added, "--stop-skills") == ["unstack-raised"] and option(added, "--repair-mode") == ["retain"]
+    assert option(added, "--total-timesteps") == ["1000000"]
+    assert "pickup+unstack+pickup-raised,unstack-raised: unstack-raised 1.00" in output
+
+
+@pytest.mark.unit
+def test_the_review_reports_every_addition_of_a_chain_with_its_own_retention(tmp_path):
+    """An rq2 chain's run added unstack at step 100 and pickup-raised at 300: section 5 reports each where it was added,
+    in that order, with what the other skills forgot after it (unstack's from earlier_retention). Control: without
+    earlier_retention, unstack gets no retention rather than pickup-raised's."""
+    from scripts.review_runs import section_added_skills
+
+    def retention(added_at: int, lowest: float) -> dict:
+        others = {"level_before": 1.0, "lowest_after": lowest, "final": 1.0, "recovered_at": None, "recovered": True}
+        return {"added_at": added_at, "skills": {"pickup": others}, "all_recovered_at": added_at + 100}
+
+    run = tmp_path / "rq2" / "one-hot_seed0" / "pickup,unstack,pickup-raised" / "pickup_mtsac_one-hot_shaped_seed0"
+    run.mkdir(parents=True)
+    points = [{"step": 0, "result": {"pickup": {}}}, {"step": 100, "result": {"pickup": {}, "unstack": {}}},
+              {"step": 300, "result": {"pickup": {}, "unstack": {}, "pickup-raised": {}}}]
+    added = {"zero_shot_success_rate": 0.0, "steps_to_threshold": 50, "skill_steps_to_threshold": 30}
+    summary = {mode: {"unstack": added, "pickup-raised": added} for mode in ("deterministic", "stochastic")}
+
+    def entries(**metrics) -> list[str]:
+        (run / "metrics.json").write_text(json.dumps({"curves": {"deterministic": {"points": points}},
+                                                      "summary": summary, **metrics}))
+        return "\n".join(section_added_skills([run])).split("\n   pickup,unstack,pickup-raised/")[1:]
+
+    unstack, raised = entries(retention=retention(300, 0.6), earlier_retention=[retention(100, 0.2)])
+    assert unstack.startswith("pickup_mtsac_one-hot_shaped unstack  (1 seeds; added at step 100)")
+    assert raised.startswith("pickup_mtsac_one-hot_shaped pickup-raised  (1 seeds; added at step 300)")
+    assert re.search(r"lowest after\s+0.2 ", unstack) and re.search(r"lowest after\s+0.6 ", raised)
+    unstack, raised = entries(retention=retention(300, 0.6))
+    assert "lowest after" not in unstack and re.search(r"lowest after\s+0.6 ", raised)
