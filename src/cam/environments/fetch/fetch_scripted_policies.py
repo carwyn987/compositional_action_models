@@ -222,3 +222,26 @@ class FetchScriptedPushPolicy(Policy):
 
     def start_leg(self) -> None:
         self.phase, self.direction = "rise", None
+
+
+class FetchScriptedRetreatPolicy:
+    """SkillEnvironment's retreat for Fetch: from where a setup left the open gripper (unstack's: around the top block,
+    after stack let go of it), straight up by a random RISE, so the fingertips clear the block, then sideways by a
+    random SHIFT in a random direction; the skill then starts with an approach, as pickup does. Returns None once
+    there."""
+
+    RISE = (0.06, 0.12)  # the grip point starts level with the block's centre; the block's top is 2.5 cm above it
+    SHIFT = (0.05, 0.15)
+    REACHED_TOLERANCE = 0.01
+
+    def reset(self, info: dict, rng: np.random.Generator) -> None:
+        start = np.asarray(info["environment_state"].gripper_position, dtype=np.float64)
+        up = start + [0.0, 0.0, rng.uniform(*self.RISE)]
+        angle, distance = rng.uniform(0.0, 2 * np.pi), rng.uniform(*self.SHIFT)
+        self.waypoints = [up, up + [distance * np.cos(angle), distance * np.sin(angle), 0.0]]
+
+    def __call__(self, obs, info: dict) -> np.ndarray | None:
+        gripper = info["environment_state"].gripper_position
+        while self.waypoints and np.linalg.norm(gripper - self.waypoints[0]) < self.REACHED_TOLERANCE:
+            self.waypoints.pop(0)
+        return servo(gripper, self.waypoints[0], OPEN) if self.waypoints else None
