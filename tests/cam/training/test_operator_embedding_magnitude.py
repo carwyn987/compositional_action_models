@@ -70,14 +70,49 @@ def logged_tags(run) -> set[str]:
         (["--algorithm", "ppo", "--operator-encoder", "compositional", "--compositional-architecture", "tree"],
          {"operator_embedding_magnitude/pickup", "operator_embedding_magnitude_before_normalization/pickup"}),
         (["--algorithm", "sac", "--operator-encoder", "random", "--trainable-operator-embedding"],
-         {"operator_embedding_magnitude/actor/pickup", "operator_embedding_magnitude/critic/putdown"}),
+         {"operator_embedding_magnitude/actor/pickup", "operator_embedding_magnitude/actor/putdown"}),
     ],
 )
 def test_training_logs_operator_embedding_magnitude_to_tensorboard(tmp_path, options, expected):
+    """SAC's critic shares the actor's extractor, so it is logged once, under actor/."""
     arguments = ["--skills", "pickup", "putdown", *options, "--num-blocks", "2", "--max-steps-per-episode", "10",
                  "--total-timesteps", "1100", "--mode", "train", "--output-dir", str(tmp_path)]
     main(arguments)
-    assert expected <= logged_tags(tmp_path / run_name(parse_args(arguments)))
+    tags = logged_tags(tmp_path / run_name(parse_args(arguments)))
+    assert expected <= tags and not any("/critic/" in tag for tag in tags)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("shared", [True, False])
+def test_composition_weight_decay_applies_once_per_update_to_each_extractor(shared):
+    """A SAC policy whose critic shares the actor's extractor (main.py's policy_kwargs) decays its composition by
+    the factor once per update, as does a critic with its own extractor (the control); the target critic's copy is
+    left to follow by Polyak averaging."""
+    from types import SimpleNamespace
+
+    from cam.training.stable_baselines3_trainer import CompositionWeightDecayCallback
+
+    def extractor():
+        module = torch.nn.Module()
+        module.composition = torch.nn.Linear(1, 1, bias=False)
+        torch.nn.init.ones_(module.composition.weight)
+        return module
+
+    actor = extractor()
+    critic = actor if shared else extractor()
+    target = extractor()
+    policy = SimpleNamespace(actor=SimpleNamespace(features_extractor=actor),
+                             critic=SimpleNamespace(features_extractor=critic),
+                             critic_target=SimpleNamespace(features_extractor=target))
+    callback = CompositionWeightDecayCallback(weight_decay=0.1)
+    callback.model = SimpleNamespace(policy=policy, _n_updates=0, lr_schedule=lambda _: 0.5,
+                                     _current_progress_remaining=1.0)
+    callback._on_step()
+    callback.model._n_updates = 1
+    callback._on_step()
+    for module in (actor, critic):
+        assert module.composition.weight.item() == pytest.approx(1 - 0.5 * 0.1)
+    assert target.composition.weight.item() == 1.0
 
 
 @pytest.mark.integration
