@@ -1,4 +1,4 @@
-"""Stable-Baselines3 features extractors that make the operator embedding trainable."""
+"""Stable-Baselines3 features extractors that make the operator embedding trainable, and where a policy keeps them."""
 
 import gymnasium as gym
 import torch
@@ -38,3 +38,22 @@ class TrainableOperatorEmbeddingExtractor(BaseFeaturesExtractor):
         parts = [observations[key].float().flatten(start_dim=1) for key in self.other_keys]
         parts.append(self.operator_embedding(observations[OPERATOR_EMBEDDING_KEY].float()))
         return torch.cat(parts, dim=1)
+
+
+def features_extractors(policy: nn.Module) -> dict[str, nn.Module]:
+    """A Stable-Baselines3 policy's features extractors by role, each distinct module once (a shared one is listed
+    under its first role only):
+        actor          SAC's actor; PPO's policy (pi)
+        critic         SAC's critic; PPO's value function (vf)
+        critic-target  SAC only: the target critic's copy, which follows the critic by Polyak averaging
+    A SAC policy keeps its extractors in its actor and critics; its own features_extractor is None."""
+    if hasattr(policy, "actor"):
+        candidates = {"actor": policy.actor.features_extractor, "critic": policy.critic.features_extractor,
+                      "critic-target": policy.critic_target.features_extractor}
+    else:
+        candidates = {"actor": policy.pi_features_extractor, "critic": policy.vf_features_extractor}
+    extractors: dict[str, nn.Module] = {}
+    for role, extractor in candidates.items():
+        if all(extractor is not seen for seen in extractors.values()):
+            extractors[role] = extractor
+    return extractors
