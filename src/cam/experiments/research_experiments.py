@@ -59,6 +59,12 @@ class Experiment:
         "one-hot", "random", "multi-hot-trainable", "text",
         "compositional-tree", "compositional-slots", "compositional-geometric",
     )
+    # Whether the operator embeddings above that carry the operator's name (text, in its text; compositional, as a
+    # component) see it, each value a variant of them: exclude (labelled <condition>-no-name; main.py
+    # --operator-text-name none, --compositional-name none) or include (labelled <condition>). Held-out operators
+    # share name words with training skills (unstack-raised and pickup-raised: "raised"), so with the name a zero-shot
+    # success could come from a word rather than the operator's structure. "exclude include" runs both: the ablation.
+    operator_names: tuple[str, ...] = ("exclude",)
     # An rq1 run's steps, or "auto": set from the learnability runs, rq1_budget_margin x the sum over base_skills of the
     # steps each needed alone to reach the threshold (one that never did counts as learn_steps). rq1 runs then wait for
     # the learnability runs.
@@ -151,7 +157,10 @@ class RQ3Repair(Experiment):
     Controls:
       - repair-hidden (repair_hidden_embeddings): TO gets exactly FROM's embedding. If it succeeds zero-shot, FROM's
         behaviour already satisfies TO, and the pair tests nothing (review_runs.py flags it: REPAIR INVALID);
-      - one-hot gives TO an index no training used: its zero-shot success is what the state alone gives.
+      - one-hot gives TO an index no training used: its zero-shot success is what the state alone gives;
+      - the text and compositional embeddings leave out the operator's name (operator_names), which shares words
+        with training skills (unstack-raised and pickup-raised: "raised") and could carry a repair by itself;
+        OPERATOR_NAMES="exclude include" adds the variants with the name, the ablation.
 
     The metrics that answer it (review_runs.py section 5): TO's zero-shot success at the swap, repair-visible against
     repair-hidden (the difference is what the policy read from the operator); TO's steps to threshold against its

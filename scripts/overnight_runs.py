@@ -35,7 +35,9 @@ Groups
   learnability  each skill alone (BASE_SKILLS and every repaired skill), LEARNABILITY_EMBEDDING: can it be trained at
                 all, and how fast? Also the "individual policy" baseline for RQ4 (hypernetworks).
   rq1           RQ1: one shared policy on BASE_SKILLS for each operator embedding condition (OPERATOR_EMBEDDINGS)
-                and seed: steps to threshold, AUC and final success per condition.
+                and seed: steps to threshold, AUC and final success per condition. Conditions whose embedding
+                carries the operator's name (text, compositional-*) run once per OPERATOR_NAMES: exclude, as
+                <condition>-no-name, and include, as <condition>.
   repair        RQ2 / RQ3: for each FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by its
                 repaired version TO: TO's zero-shot success at the resume step, then the steps it needs to
                 reach the success threshold (TO evaluated alone 1k, 2k, 4k, ... steps after it is added,
@@ -64,7 +66,7 @@ View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
 Settings: the experiment's (research_experiments.py describes each), unless set as an environment variable
   RUN_GROUPS  SEEDS  ALGORITHM  SKILL_SAMPLING  TEXT_BACKEND  BASE_SKILLS  EVAL_EPISODES  SAVE_INTERVAL
   LEARN_STEPS  LEARNABILITY_EMBEDDING  LEARN_EVAL_INTERVAL  TRAIN_EVAL_INTERVAL
-  OPERATOR_EMBEDDINGS  RQ1_STEPS (a number, or auto)  RQ1_BUDGET_MARGIN
+  OPERATOR_EMBEDDINGS  OPERATOR_NAMES (exclude, include)  RQ1_STEPS (a number, or auto)  RQ1_BUDGET_MARGIN
   REPAIRS (FROM:TO pairs)  REPAIR_MODES  REPAIR_HIDDEN_EMBEDDINGS  REPAIR_STEPS  REPAIR_EVAL_INTERVAL
   e.g. OPERATOR_EMBEDDINGS="one-hot text" SEEDS="0 1 2" REPAIRS="unstack:unstack-raised"
 Machine settings (environment variables, defaults in brackets)
@@ -134,6 +136,7 @@ ALGORITHM = setting("ALGORITHM")
 SKILL_SAMPLING = setting("SKILL_SAMPLING")
 SEEDS = [int(seed) for seed in setting("SEEDS").split()]
 OPERATOR_EMBEDDINGS = setting("OPERATOR_EMBEDDINGS").split()
+OPERATOR_NAMES = setting("OPERATOR_NAMES").split()
 REPAIR_HIDDEN_EMBEDDINGS = setting("REPAIR_HIDDEN_EMBEDDINGS").split()
 TEXT_BACKEND = setting("TEXT_BACKEND")
 BASE_SKILLS = setting("BASE_SKILLS").split()  # the training skills; held-out operators (REPAIRS' TO) only in repairs
@@ -169,11 +172,6 @@ OPERATOR_EMBEDDING_OPTIONS = {
              f"the operator described in a paragraph, embedded by the {TEXT_BACKEND} text model"),
     "compositional-tree": (["--operator-encoder", "compositional", "--compositional-architecture", "tree"],
                            "the operator's structure, composed by learned functions following the PDDL syntax"),
-    # the same without the operator's name, which can carry a repair by itself ("pickup-raised" shares "raised" with
-    # "unstack-raised"): only the structure tells the policy which skill to do
-    "compositional-tree-no-name": (["--operator-encoder", "compositional", "--compositional-architecture", "tree",
-                                    "--compositional-name", "none"],
-                                   "the operator's structure without its name, composed along the PDDL syntax"),
     "compositional-slots": (["--operator-encoder", "compositional", "--compositional-architecture", "slots"],
                             "the operator's components as tokens, grouped by slot attention"),
     "compositional-geometric": (
@@ -181,6 +179,10 @@ OPERATOR_EMBEDDING_OPTIONS = {
         "the operator's components on a grid, read by a CNN and slot attention",
     ),
 }
+# The embeddings that carry the operator's name, by --operator-encoder: the main.py options that leave it out, which
+# OPERATOR_NAMES' exclude adds (the name can carry a repair by itself: "pickup-raised" shares "raised" with
+# "unstack-raised").
+NAME_EXCLUDED_OPTIONS = {"text": ["--operator-text-name", "none"], "compositional": ["--compositional-name", "none"]}
 # Rough single-run SAC steps/s per condition on a CPU, for the first time estimate; replaced by the speeds
 # measured as runs finish.
 EXPECTED_RATE = {"compositional-tree": 24, "compositional-slots": 23, "compositional-geometric": 18}
@@ -201,12 +203,13 @@ class Run:
     what: str
     why: str
     steps: int  # training steps this run adds
-    condition: str  # for the time estimate
+    condition: str  # its operator embedding (with or without the name: the same speed), for the time estimate
     output: Path  # new runs: --output-dir; repair runs: the run directory itself
     command: list[str]
     copy_from: Path | None = None  # repair runs: the rq1 output directory holding the run to continue
     depends_on: tuple[str, ...] = ()  # labels of runs that must end first
     repaired: str | None = None  # repair runs: the repaired skill
+    embedding_options: tuple[str, ...] = ()  # main.py options of its operator embedding (a repair's: its rq1 run's)
 
     @property
     def log(self) -> Path:
@@ -224,8 +227,33 @@ class Run:
 
 def condition_options(condition: str) -> list[str]:
     if condition not in OPERATOR_EMBEDDING_OPTIONS:
-        sys.exit(f"unknown condition {condition!r}; known: {', '.join(OPERATOR_EMBEDDING_OPTIONS)}")
+        sys.exit(f"unknown condition {condition!r}; known: {', '.join(OPERATOR_EMBEDDING_OPTIONS)}"
+                 + ("; the -no-name runs come from OPERATOR_NAMES=exclude" if condition.endswith("-no-name") else ""))
     return OPERATOR_EMBEDDING_OPTIONS[condition][0]
+
+
+def name_excluded_options(condition: str) -> list[str] | None:
+    """The main.py options that leave the operator's name out of the condition's embedding; None if it has none."""
+    options = condition_options(condition)
+    return NAME_EXCLUDED_OPTIONS.get(options[options.index("--operator-encoder") + 1])
+
+
+def conditions() -> list[tuple[str, str, list[str], str]]:
+    """The rq1 and repair runs' conditions: (label, operator embedding, main.py options, what the policy is told about
+    the skill). An embedding with the operator's name runs once per OPERATOR_NAMES (exclude: labelled
+    <embedding>-no-name; include: <embedding>), any other once."""
+    planned = []
+    for embedding in OPERATOR_EMBEDDINGS:
+        options, description = condition_options(embedding), OPERATOR_EMBEDDING_OPTIONS[embedding][1]
+        excluded = name_excluded_options(embedding)
+        if excluded is None:
+            planned.append((embedding, embedding, options, description))
+            continue
+        for choice in OPERATOR_NAMES:
+            planned.append((f"{embedding}-no-name", embedding, options + excluded,
+                            f"{description} (without the operator's name)") if choice == "exclude" else
+                           (embedding, embedding, options, f"{description} (with the operator's name)"))
+    return planned
 
 
 def repair_difference(repair_from: str, repair_to: str) -> str:
@@ -290,14 +318,13 @@ def build_plan() -> list[Run]:
                 why=(f"can {skill} be learned at all, and how fast? If not, no result that uses it means anything. "
                      "Also the single-skill baseline for RQ4 (hypernetworks vs individual policies)."),
                 steps=LEARN_STEPS, condition=LEARNABILITY_EMBEDDING, output=output,
+                embedding_options=tuple(condition_options(LEARNABILITY_EMBEDDING)),
                 command=["main.py", "--skills", skill, *condition_options(LEARNABILITY_EMBEDDING),
                          "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output),
                          "--eval-interval", str(LEARN_EVAL_INTERVAL)],
             ))
     for seed in SEEDS:
-        for condition in OPERATOR_EMBEDDINGS:
-            options = condition_options(condition)
-            description = OPERATOR_EMBEDDING_OPTIONS[condition][1]
+        for condition, embedding, options, description in conditions():
             rq1_label, rq1_output = f"rq1_{condition}_seed{seed}", OUT / "rq1" / f"{condition}_seed{seed}"
             if "rq1" in RUN_GROUPS:
                 runs.append(Run(
@@ -309,7 +336,7 @@ def build_plan() -> list[Run]:
                     why=("RQ1: does conditioning on this representation of the operator make multi-skill learning "
                          "faster or better than an arbitrary skill ID? Compared across conditions on steps to "
                          "threshold, AUC and final success."),
-                    steps=RQ1_STEPS, condition=condition, output=rq1_output,
+                    steps=RQ1_STEPS, condition=embedding, output=rq1_output, embedding_options=tuple(options),
                     depends_on=tuple(f"learnability_{skill}" for skill in BASE_SKILLS)
                     if RQ1_AUTO and "learnability" in RUN_GROUPS else (),
                     command=["main.py", "--skills", *BASE_SKILLS, *options, "--total-timesteps", str(RQ1_STEPS),
@@ -321,7 +348,7 @@ def build_plan() -> list[Run]:
             for (repair_from, repair_to), mode in ((pair, mode) for pair in REPAIRS for mode in REPAIR_MODES):
                 difference = repair_difference(repair_from, repair_to)
                 skills = [repair_to if skill == repair_from else skill for skill in BASE_SKILLS]
-                variants = ["repair-visible"] + (["repair-hidden"] if condition in REPAIR_HIDDEN_EMBEDDINGS else [])
+                variants = ["repair-visible"] + (["repair-hidden"] if embedding in REPAIR_HIDDEN_EMBEDDINGS else [])
                 trains = (f"trains only {repair_to} until it reaches the success threshold (the other skills are "
                           "evaluated, not trained)" if mode == "isolated" else
                           f"trains every skill, as the RQ1 run did, until {repair_to} reaches the success threshold "
@@ -341,8 +368,9 @@ def build_plan() -> list[Run]:
                              "repair test is invalid." if hidden else
                              f"RQ3: does {description} let the policy carry out the repaired operator zero-shot, "
                              "or learn it faster than the other conditions?"),
-                        steps=REPAIR_STEPS, condition=condition, output=run_directory, copy_from=rq1_output,
+                        steps=REPAIR_STEPS, condition=embedding, output=run_directory, copy_from=rq1_output,
                         depends_on=(rq1_label,) if "rq1" in RUN_GROUPS else (), repaired=repair_to,
+                        embedding_options=tuple(options),
                         command=["main.py", "--run-directory", str(run_directory), "--skills", *skills,
                                  "--stop-skills", repair_to, "--repair-mode", mode,
                                  "--total-timesteps", str(REPAIR_STEPS), "--eval-interval", str(REPAIR_EVAL_INTERVAL),
@@ -382,8 +410,7 @@ def preflight(runs: list[Run]) -> None:
 
     uses_repair_skill = any(run.group in ("learnability", "repair") for run in runs)
     skills = sorted(set(BASE_SKILLS) | (set(REPAIRED) if uses_repair_skill else set()))
-    if any(run.condition == "text" or run.condition.startswith("compositional") for run in runs):
-        check_text_backend(skills)
+    check_text_backend(skills, {run.embedding_options for run in runs})
     check_scripted_policies(skills)
     free = shutil.disk_usage(OUT if OUT.exists() else ROOT).free / 1e9
     say(f"  ✓ free disk space: {free:.0f} GB" + ("  (low: runs save models and logs)" if free < 10 else ""))
@@ -393,6 +420,12 @@ def check_repair_modes() -> None:
     unknown = [mode for mode in REPAIR_MODES if mode not in ("isolated", "retain")]
     if unknown:
         sys.exit(f"unknown REPAIR_MODES {unknown}; known: isolated, retain")
+
+
+def check_operator_names() -> None:
+    unknown = [choice for choice in OPERATOR_NAMES if choice not in ("exclude", "include")]
+    if unknown or not OPERATOR_NAMES:
+        sys.exit(f"unknown OPERATOR_NAMES {unknown or OPERATOR_NAMES}; known: exclude, include (or both)")
 
 
 def check_repairs() -> None:
@@ -414,26 +447,39 @@ def check_repairs() -> None:
         sys.exit("repairs that test nothing learnable:\n  " + "\n  ".join(problems))
 
 
-def check_text_backend(skills: list[str]) -> None:
+def check_text_backend(skills: list[str], embeddings: set[tuple[str, ...]]) -> None:
     """Embed every operator text the runs need now, through the same cache the runs use, so a missing key
-    or network fails here and training never waits on the API."""
+    or network fails here and training never waits on the API: the texts that each of the runs' operator
+    embeddings (main.py options) embeds, so with or without the operator's name as the runs have it."""
     from cam.experiments.environment_setup import OPERATOR_ENCODERS, text_backend
     from cam.skills.registry import build_skill
     from main import parse_args
 
-    config = dict(parse_args(["--skills", *skills, "--text-backend", TEXT_BACKEND, "--operator-text", "paragraph"]))
+    configs = [parse_args(["--skills", *skills, "--text-backend", TEXT_BACKEND, *options])
+               for options in sorted(embeddings)]
+    texts = [config for config in configs if config["operator_encoder"] == "text"]
+    names = [config for config in configs
+             if config["operator_encoder"] == "compositional" and config["compositional_name"] == "text"]
+    if not texts and not names:
+        return  # no run embeds a text
     try:
-        operators = [build_skill(skill, config) for skill in skills]
-        encoder = OPERATOR_ENCODERS["text"](config, operators)
-        names = text_backend(config, config["component_embedding_dim"])
-        for skill in operators:
-            encoder.encode(skill.symbolic_action_model)  # paragraph embedding (text condition)
-            names.embed_text(skill.name)  # name embedding (compositional conditions)
+        operators = [build_skill(skill, configs[0]) for skill in skills]
+        for config in texts:  # the operator's text (text conditions)
+            encoder = OPERATOR_ENCODERS["text"](config, operators)
+            for skill in operators:
+                encoder.encode(skill.symbolic_action_model)
+        if names:  # the name embedding (compositional conditions), the same for every architecture
+            backend = text_backend(names[0], names[0]["component_embedding_dim"])
+            for skill in operators:
+                backend.embed_text(skill.name)
     except Exception as error:  # report any failure (no key, no network, no openai package) and stop
         fail(f"text backend {TEXT_BACKEND!r} is not usable: {type(error).__name__}: {error}\n"
              "  set OPENAI_API_KEY or put the key in ~/.secrets/openai_api_key, or run with TEXT_BACKEND=mock")
-    say(f"  ✓ text backend {TEXT_BACKEND}: {len(operators)} operator paragraphs and names embedded and cached "
-        f"({config['text_embedding_cache']})")
+    embedded = [f"{len(operators)} operator {config['operator_text']}s "
+                f"({'without' if config['operator_text_name'] == 'none' else 'with'} the name)" for config in texts]
+    embedded += [f"{len(operators)} operator names"] if names else []
+    say(f"  ✓ text backend {TEXT_BACKEND}: {' and '.join(embedded)} embedded and cached "
+        f"({configs[0]['text_embedding_cache']})")
 
 
 def check_scripted_policies(skills: list[str]) -> None:
@@ -759,6 +805,7 @@ def main() -> None:
     for condition in OPERATOR_EMBEDDINGS:
         condition_options(condition)
     check_repair_modes()
+    check_operator_names()
     check_repairs()
     overlap = overlap_report(BASE_SKILLS, REPAIRED)  # how much of their operators the skills share (static)
     if not RUN_GROUPS:  # a static experiment (overlap): the report is all it does
@@ -773,6 +820,10 @@ def main() -> None:
     if OVERRIDES:
         say("  overridden by the environment: " + "  ".join(f"{name}={value}" for name, value in OVERRIDES.items()))
     say(f"  base skills: {', '.join(BASE_SKILLS)}")
+    named = [condition for condition in OPERATOR_EMBEDDINGS if name_excluded_options(condition)]
+    if named and {"rq1", "repair"} & set(RUN_GROUPS):
+        choices = {"exclude": "excluded (<condition>-no-name)", "include": "included (<condition>)"}
+        say(f"  operator name in {', '.join(named)}: {' and '.join(choices[choice] for choice in OPERATOR_NAMES)}")
     if "repair" in RUN_GROUPS:
         for repair_from, repair_to in REPAIRS:
             say(f"  repair: {repair_from} -> {repair_to} ({repair_difference(repair_from, repair_to)})")
