@@ -29,6 +29,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
+from cam.policies.feature_extractors import features_extractors
 from cam.training.checkpointing import (
     PeriodicSaveCallback,
     atomic_save_model,
@@ -164,8 +165,8 @@ def operator_embedding_magnitudes(extractor, operator_inputs: np.ndarray) -> dic
 class OperatorEmbeddingMagnitudeCallback(BaseCallback):
     """Every log_interval steps, logs each skill's operator embedding magnitude (L2 norm, i.e. length) as
     the policy currently computes it, as operator_embedding_magnitude/<skill> (compositional runs also
-    ..._before_normalization/<skill>; see operator_embedding_magnitudes). SAC's actor and critic each have
-    their own features extractor, logged as .../actor/<skill> and .../critic/<skill>.
+    ..._before_normalization/<skill>; see operator_embedding_magnitudes). SAC's extractor is logged as
+    .../actor/<skill>, and a critic's own extractor, when it does not share the actor's, as .../critic/<skill>.
 
     A large or growing magnitude swamps the other inputs of the policy's MLP (around 1): the unnormalized
     compositional tree embedding started at about 100 and reached hundreds. This shows such problems
@@ -181,8 +182,9 @@ class OperatorEmbeddingMagnitudeCallback(BaseCallback):
 
     def _extractors(self) -> dict[str, object]:
         policy = self.model.policy
-        if hasattr(policy, "actor") and hasattr(policy, "critic"):
-            return {"actor/": policy.actor.features_extractor, "critic/": policy.critic.features_extractor}
+        if hasattr(policy, "actor"):
+            return {f"{role}/": extractor for role, extractor in features_extractors(policy).items()
+                    if role != "critic-target"}
         return {"": policy.features_extractor}
 
     def _on_step(self) -> bool:
@@ -222,11 +224,16 @@ class CompositionWeightDecayCallback(BaseCallback):
         self.updates_seen = updates
         if new > 0:
             factor = (1.0 - self.model.lr_schedule(self.model._current_progress_remaining) * self.weight_decay) ** new
-            policy = self.model.policy
-            extractors = [policy.actor.features_extractor, policy.critic.features_extractor] if hasattr(policy, "actor") \
-                else [policy.features_extractor]
+            # the extractors a gradient step updates, each once: SAC's actor and critic share one (main.py's
+            # policy_kwargs). The target critic's copy is not one: Polyak averaging, a moving average, moves its
+            # weights a small fraction tau toward the critic's after each gradient update
+            # (target = tau * critic + (1 - tau) * target)
+            feature_extractors = [
+                extractor for role, extractor in features_extractors(self.model.policy).items()
+                if role != "critic-target"
+            ]
             with torch.no_grad():
-                for extractor in extractors:
+                for extractor in feature_extractors:
                     for parameter in getattr(extractor, "composition", torch.nn.Module()).parameters():
                         parameter.mul_(factor)
         return True
