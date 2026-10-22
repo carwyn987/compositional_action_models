@@ -40,7 +40,9 @@ class Experiment:
     save_interval: int = 50_000
 
     # Learnability runs: each skill alone.
-    learn_steps: int = 150_000  # a learnability run's steps
+    # A learnability run's steps. Alone, the straight pushes need about 160k steps to reach the threshold and the
+    # diagonals 240-290k, and stack, push-beside and push-left-back were still improving at 300k.
+    learn_steps: int = 400_000
     # The operator embedding a learnability run's policy sees (one of the runner's OPERATOR_EMBEDDING_OPTIONS). One
     # skill alone always sees the same embedding, so the choice should not matter; multi-hot is fixed and cheap.
     learnability_embedding: str = "multi-hot"
