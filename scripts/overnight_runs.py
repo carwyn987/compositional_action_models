@@ -8,22 +8,23 @@
     SEEDS="0 1" JOBS=6 .venv/bin/python scripts/overnight_runs.py --experiment learnability
 
 Experiments (--experiment NAME, default rq3-repair-minimal) are defined in src/cam/experiments/research_experiments.py:
-learnability (each skill alone), rq1 (one shared policy per operator embedding), rq3-repair-minimal and
-rq3-repair-maximal (rq1's policies continued with repaired operators), and overlap (static: how much of their
-operators the training skills share). Each sets the groups to run and every setting below; an environment
-variable of a setting's name overrides it, and the runner lists the overrides when it starts. A plan whose repairs
-ask for a literal that no training skill has refuses to start.
+learnability (each skill alone), rq1 (one shared policy per operator embedding), rq2 and rq2-add-unstack-raised
+(skills added to a shared policy a stage at a time), rq3-repair-minimal and rq3-repair-maximal (rq1's policies
+continued with repaired operators), and overlap (static: how much of their operators the training skills share).
+Each sets the groups to run and every setting below; an environment variable of a setting's name overrides it, and
+the runner lists the overrides when it starts. A plan whose repairs ask for a literal that no training skill has
+refuses to start.
 
 How it runs
   * Up to JOBS runs at once (default 2). One run uses a fraction of a GPU or CPU: SAC alternates a
     simulator step (CPU) with one small gradient step, so several runs side by side get through the plan
     several times faster. JOBS=1 runs one at a time.
   * Runs start in plan order, most informative first: every learnability run (can each skill be learned at
-    all?), then every rq1 run (each condition and seed), then the repairs.
+    all?), then every rq1 run (each condition and seed), then the repairs, then the rq2 stages.
   * Each run is a child process (main.py) whose full output goes to <OUT>/logs/<label>.log. The terminal
     shows, as each run starts, what it trains and why (which research question or check it serves);
     while runs go, their progress (steps, steps/s, time left) and the overall time left; when one ends,
-    its outcome. A repair run waits for the RQ1 run it continues.
+    its outcome. A repair run waits for the RQ1 run it continues, an rq2 stage for the stage before.
   * Ctrl+C stops every running run after it saves. Starting the same command again skips finished runs and
     resumes interrupted ones from their last save.
   * Before anything long starts (fail fast): the text backend is checked and every operator text the runs
@@ -38,7 +39,7 @@ Groups
                 and seed: steps to threshold, AUC and final success per condition. Conditions whose embedding
                 carries the operator's name (text, compositional-*) run once per OPERATOR_NAMES: exclude, as
                 <condition>-no-name, and include, as <condition>.
-  repair        RQ2 / RQ3: for each FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by its
+  repair        RQ3: for each FROM:TO in REPAIRS, each rq1 run continued with FROM replaced by its
                 repaired version TO: TO's zero-shot success at the resume step, then the steps it needs to
                 reach the success threshold (TO evaluated alone 1k, 2k, 4k, ... steps after it is added,
                 then every REPAIR_EVAL_INTERVAL), at most REPAIR_STEPS. Each REPAIR_MODES (main.py
@@ -54,11 +55,21 @@ Groups
                                   embedding (--operator-identity-aliases), so the policy cannot see the
                                   repair. A control: if it succeeds zero-shot, the repair needs no new
                                   behaviour and the test is invalid (review.txt flags it).
+  rq2           RQ2: for each order (RQ2_ORDERS, and RQ2_SHUFFLES shuffles of BASE_SKILLS), operator embedding and
+                seed, a chain of stages in one run. Stage 1: a new run on its skills until each reaches the
+                success threshold, at most RQ2_FIRST_STEPS. Each later stage: the same run continued with its
+                skills added, evaluated zero-shot and densely after (as a repair's TO), training every skill
+                (retain) until they are at the threshold and the earlier skills back at their level, at most
+                RQ2_STAGE_STEPS. A stage starts only if the one before stopped at its threshold; otherwise the
+                chain ends there, with the reason. The plan gives each added skill's literal coverage by the
+                skills before it: zero-shot success needs 1. Every skill evaluated every RQ2_EVAL_INTERVAL steps.
 
 Outputs, under OUT (default outputs/overnight_<date>)
   learnability/<skill>/<run name>/, rq1/<condition>_seed<n>/<run name>/   run directories (metrics.json,
                                                                             model.zip, tensorboard/, ...)
   repair/<TO>/<condition>_<repair-visible|repair-hidden>_seed<n>/          copy of the rq1 run, continued
+  rq2/<condition>_seed<n>/<order>/<run name>/                              one run per chain (chain_ended.txt:
+                                                                            why it ended before its last stage)
   logs/<label>.log   each run's full output        failed.txt   labels of runs that failed
   summary.csv        per run and skill metrics     review.txt   scripts/review_runs.py's report
 View the curves with: LOGDIR=<OUT> ./scripts/start_tensorboard.sh
@@ -68,7 +79,10 @@ Settings: the experiment's (research_experiments.py describes each), unless set 
   LEARN_STEPS  LEARNABILITY_EMBEDDING  LEARN_EVAL_INTERVAL  TRAIN_EVAL_INTERVAL
   OPERATOR_EMBEDDINGS  OPERATOR_NAMES (exclude, include)  RQ1_STEPS (a number, or auto)  RQ1_BUDGET_MARGIN
   REPAIRS (FROM:TO pairs)  REPAIR_MODES  REPAIR_HIDDEN_EMBEDDINGS  REPAIR_STEPS  REPAIR_EVAL_INTERVAL
+  RQ2_ORDERS (STAGE,STAGE,..., a stage's skills joined by +)  RQ2_SHUFFLES  RQ2_FIRST_STEPS  RQ2_STAGE_STEPS
+  RQ2_EVAL_INTERVAL
   e.g. OPERATOR_EMBEDDINGS="one-hot text" SEEDS="0 1 2" REPAIRS="unstack:unstack-raised"
+       RQ2_ORDERS="pickup+unstack,unstack-raised pickup,unstack" RQ2_SHUFFLES=0
 Machine settings (environment variables, defaults in brackets)
   OUT [outputs/overnight_<date>]  JOBS [2] runs at once  DEVICE [auto]  THREADS [cores / JOBS] torch threads per run
   DRY_RUN [0]
@@ -80,6 +94,7 @@ import inspect
 import json
 import math
 import os
+import random
 import re
 import shutil
 import signal
@@ -91,7 +106,7 @@ from dataclasses import dataclass
 from datetime import date, datetime
 from pathlib import Path
 
-from cam.experiments.representation_overlap import report as overlap_report
+from cam.experiments.representation_overlap import overlap as overlap_levels, report as overlap_report
 from cam.experiments.research_experiments import EXPERIMENTS, literals, untrained_literals
 from cam.skills.registry import SKILL_REGISTRY
 
@@ -150,6 +165,9 @@ LEARNABILITY_EMBEDDING = setting("LEARNABILITY_EMBEDDING")
 RQ1_AUTO = setting("RQ1_STEPS") == "auto"
 RQ1_BUDGET_MARGIN = float(setting("RQ1_BUDGET_MARGIN"))
 REPAIR_STEPS = int(setting("REPAIR_STEPS"))
+RQ2_FIRST_STEPS = int(setting("RQ2_FIRST_STEPS"))
+RQ2_STAGE_STEPS = int(setting("RQ2_STAGE_STEPS"))
+RQ2_EVAL_INTERVAL = int(setting("RQ2_EVAL_INTERVAL"))
 TRAIN_EVAL_INTERVAL = int(setting("TRAIN_EVAL_INTERVAL"))
 EVAL_EPISODES = int(setting("EVAL_EPISODES"))
 SAVE_INTERVAL = int(setting("SAVE_INTERVAL"))
@@ -204,11 +222,12 @@ class Run:
     why: str
     steps: int  # training steps this run adds
     condition: str  # its operator embedding (with or without the name: the same speed), for the time estimate
-    output: Path  # new runs: --output-dir; repair runs: the run directory itself
+    output: Path  # new runs: --output-dir (every rq2 stage: its stage 1's); repair runs: the run directory itself
     command: list[str]
     copy_from: Path | None = None  # repair runs: the rq1 output directory holding the run to continue
     depends_on: tuple[str, ...] = ()  # labels of runs that must end first
-    repaired: str | None = None  # repair runs: the repaired skill
+    added: tuple[str, ...] = ()  # the skills added to the run continued: a repair's TO, a later rq2 stage's skills
+    stage: int = 0  # rq2 runs: the stage's number in its order (1: the new run, which the later stages continue)
     embedding_options: tuple[str, ...] = ()  # main.py options of its operator embedding (a repair's: its rq1 run's)
 
     @property
@@ -217,6 +236,12 @@ class Run:
 
     def finished(self) -> bool:
         return self.log.exists() and "training finished" in self.log.read_text(errors="replace")
+
+    def stop_reason(self) -> str | None:
+        """Why the run stopped before its step budget, as it last logged it (MetricsCallback); None if it did not."""
+        log = self.log.read_text(errors="replace") if self.log.exists() else ""
+        reasons = re.findall(r"stopping training at step \d+: (.*)", log)
+        return reasons[-1] if reasons else None
 
     def run_directory(self) -> Path | None:
         if self.copy_from is not None:
@@ -289,6 +314,47 @@ def learnability_steps(skills: list[str]) -> tuple[dict[str, int | None], list[s
 # rq1 steps: the setting, or with RQ1_STEPS=auto the most the budget can be until the learnability runs are done
 RQ1_STEPS = (rq1_budget(dict.fromkeys(BASE_SKILLS), RQ1_BUDGET_MARGIN, LEARN_STEPS, LEARN_EVAL_INTERVAL) if RQ1_AUTO
              else int(setting("RQ1_STEPS")))
+
+
+def order_stages(order: str) -> list[list[str]]:
+    """An order as RQ2_ORDERS writes it, e.g. "pickup+unstack,unstack-raised", as its stages, each a list of skills:
+    [[pickup, unstack], [unstack-raised]]."""
+    return [stage.split("+") for stage in order.split(",")]
+
+
+def order_name(order: list[list[str]]) -> str:
+    """The order as RQ2_ORDERS writes it: its name in directories and labels."""
+    return ",".join("+".join(stage) for stage in order)
+
+
+def shuffled_orders(skills: list[str], count: int, seed: int = 0) -> list[list[list[str]]]:
+    """count different orders of the skills, one skill per stage (at most as many as there are), shuffled from a
+    fixed seed: the same orders on every invocation, and a larger count keeps a smaller one's orders first."""
+    generator, orders = random.Random(seed), []
+    while len(orders) < min(count, math.factorial(len(skills))):
+        order = [[skill] for skill in generator.sample(skills, len(skills))]
+        if order not in orders:
+            orders.append(order)
+    return orders
+
+
+def stage_coverage(order: list[list[str]], number: int) -> dict[str, float]:
+    """Each skill the order's stage `number` (from 1) adds, with the fraction of its literals the stages before it have
+    (representation_overlap.py's coverage at the literal level): zero-shot success is only possible at 1."""
+    before = [skill for stage in order[:number - 1] for skill in stage]
+    literals_level = next(level for level in overlap_levels(before, order[number - 1]) if level.level == "literals")
+    return literals_level.coverage
+
+
+def added_at(metrics: dict, skills) -> int | None:
+    """The step at which a run (its metrics.json) first evaluated any of the skills: where they were added, their
+    zero-shot point; None if it has not."""
+    points = metrics["curves"]["deterministic"]["points"]
+    return next((point["step"] for point in points if set(skills) & set(point["result"])), None)
+
+
+RQ2_ORDERS = ([order_stages(order) for order in setting("RQ2_ORDERS").split()]
+              + shuffled_orders(BASE_SKILLS, int(setting("RQ2_SHUFFLES"))))
 
 
 def link_replay_buffer(source: str, destination: str) -> str:
@@ -369,7 +435,7 @@ def build_plan() -> list[Run]:
                              f"RQ3: does {description} let the policy carry out the repaired operator zero-shot, "
                              "or learn it faster than the other conditions?"),
                         steps=REPAIR_STEPS, condition=embedding, output=run_directory, copy_from=rq1_output,
-                        depends_on=(rq1_label,) if "rq1" in RUN_GROUPS else (), repaired=repair_to,
+                        depends_on=(rq1_label,) if "rq1" in RUN_GROUPS else (), added=(repair_to,),
                         embedding_options=tuple(options),
                         command=["main.py", "--run-directory", str(run_directory), "--skills", *skills,
                                  "--stop-skills", repair_to, "--repair-mode", mode,
@@ -377,7 +443,62 @@ def build_plan() -> list[Run]:
                                  "--device", DEVICE, "--no-save-replay-buffer",  # the rq1 run's, linked
                                  *(["--operator-identity-aliases", f"{repair_to}={repair_from}"] if hidden else [])],
                     ))
-    return runs + repairs
+    rq2 = [run for seed in SEEDS for order in RQ2_ORDERS for planned in conditions()
+           for run in rq2_chain(order, *planned, seed)] if "rq2" in RUN_GROUPS else []
+    return runs + repairs + rq2
+
+
+def rq2_chain(order: list[list[str]], condition: str, embedding: str, options: list[str], description: str,
+              seed: int) -> list[Run]:
+    """An rq2 chain: stage 1 a new run on its skills, and each later stage, after the one before, that run continued
+    with its skills added (Runner.start lets a stage begin only if the one before stopped at its threshold).
+
+    The run is continued in place, not copied per stage as repairs copy their rq1 run: several repairs branch from one
+    rq1 run, while a chain never branches, so a copy would only keep each stage's last model, at the cost of a replay
+    buffer (about 1 GB) per stage. In place, one metrics.json holds the order's whole learning curve and every
+    addition (each earlier one's retention in earlier_retention), and one TensorBoard log its training."""
+    name = order_name(order)
+    # the order as the run's parent directory: review_runs.py names a condition by a run's parent and its name
+    # without the seed, so a condition's seeds go together and orders apart
+    output = OUT / "rq2" / f"{condition}_seed{seed}" / name
+    label = f"rq2_{name}_{condition}_seed{seed}"
+    runs = []
+    for number, stage in enumerate(order, 1):
+        before = [skill for earlier in order[:number - 1] for skill in earlier]
+        title = (f"RQ2 · {condition} · seed {seed} · stage {number}: {'+ ' if before else ''}{' + '.join(stage)}"
+                 f" · order {name}")
+        if number == 1:
+            runs.append(Run(
+                label=f"{label}_stage1", group="rq2", title=title,
+                what=(f"a new shared {ALGORITHM.upper()} policy on {', '.join(stage)}, until each reaches the success "
+                      f"threshold (at most {RQ2_FIRST_STEPS:,} steps); the policy is told which skill to do through "
+                      f"{description}"),
+                why=f"RQ2: the policy that the order's {len(order) - 1} later stages add their skills to, in turn",
+                steps=RQ2_FIRST_STEPS, condition=embedding, output=output, stage=1,
+                embedding_options=tuple(options),
+                command=["main.py", "--skills", *stage, *options, "--total-timesteps", str(RQ2_FIRST_STEPS),
+                         "--seed", str(seed), *COMMON, "--output-dir", str(output),
+                         "--eval-interval", str(RQ2_EVAL_INTERVAL), "--stop-skills", *stage,
+                         "--save-replay-buffer"],  # the later stages keep replaying the earlier skills
+            ))
+            continue
+        coverage = ", ".join(f"{skill} {value:.2f}" for skill, value in stage_coverage(order, number).items())
+        runs.append(Run(
+            label=f"{label}_stage{number}", group="rq2", title=title,
+            what=(f"continues the stage {number - 1} policy with {', '.join(stage)} added (literal coverage by the "
+                  f"skills before: {coverage}): evaluates it zero-shot, then trains every skill until each added one "
+                  f"reaches the success threshold and every other skill is back at its level before (at most "
+                  f"{RQ2_STAGE_STEPS:,} steps)"),
+            why=(f"RQ2: does {description} let the policy carry out {', '.join(stage)} zero-shot (possible only at "
+                 "coverage 1), or learn it in fewer steps than the other conditions?"),
+            steps=RQ2_STAGE_STEPS, condition=embedding, output=output, depends_on=(f"{label}_stage{number - 1}",),
+            added=tuple(stage), stage=number, embedding_options=tuple(options),
+            # the directory holding stage 1's run: Runner.prepare puts the run's own in its place
+            command=["main.py", "--run-directory", str(output), "--skills", *before, *stage, "--stop-skills", *stage,
+                     "--repair-mode", "retain", "--total-timesteps", str(RQ2_STAGE_STEPS),
+                     "--eval-interval", str(RQ2_EVAL_INTERVAL), "--device", DEVICE],
+        ))
+    return runs
 
 
 def duration(seconds: float) -> str:
@@ -409,7 +530,8 @@ def preflight(runs: list[Run]) -> None:
     say(f"  ✓ device: {device}" + (f" ({gpu})" if gpu else f" (torch {torch.__version__}; no CUDA GPU)"))
 
     uses_repair_skill = any(run.group in ("learnability", "repair") for run in runs)
-    skills = sorted(set(BASE_SKILLS) | (set(REPAIRED) if uses_repair_skill else set()))
+    rq2_skills = {skill for order in RQ2_ORDERS for stage in order for skill in stage} if "rq2" in RUN_GROUPS else set()
+    skills = sorted(set(BASE_SKILLS) | (set(REPAIRED) if uses_repair_skill else set()) | rq2_skills)
     check_text_backend(skills, {run.embedding_options for run in runs})
     check_scripted_policies(skills)
     free = shutil.disk_usage(OUT if OUT.exists() else ROOT).free / 1e9
@@ -445,6 +567,24 @@ def check_repairs() -> None:
                             + (f" (add one of: {', '.join(carriers)})" if carriers else " (no skill has it)"))
     if problems:
         sys.exit("repairs that test nothing learnable:\n  " + "\n  ".join(problems))
+
+
+def check_orders() -> None:
+    """Each rq2 order names registered skills, each in one stage. Unlike a repair, an added skill may have literals no
+    stage before it trained: how much of it they cover varies with the order by design, and the plan shows it."""
+    if "rq2" not in RUN_GROUPS:
+        return
+    problems = [] if RQ2_ORDERS else ["no orders: set RQ2_ORDERS or RQ2_SHUFFLES"]
+    for order in RQ2_ORDERS:
+        skills = [skill for stage in order for skill in stage]
+        unknown = [skill for skill in skills if skill not in SKILL_REGISTRY]
+        repeated = sorted({skill for skill in skills if skills.count(skill) > 1})
+        if unknown:
+            problems.append(f"{order_name(order)}: unknown skills {unknown}")
+        if repeated:
+            problems.append(f"{order_name(order)}: {', '.join(repeated)} in more than one stage")
+    if problems:
+        sys.exit("rq2 orders that cannot run:\n  " + "\n  ".join(problems))
 
 
 def check_text_backend(skills: list[str], embeddings: set[tuple[str, ...]]) -> None:
@@ -523,6 +663,7 @@ class Runner:
         self.rates: dict[str, float] = {}  # measured steps/s per condition (at the current parallelism)
         self.done: set[str] = set()
         self.failed: set[str] = set()
+        self.ended: set[str] = set()  # of the failed: rq2 stages not run because their chain ended before them
         self.started = time.monotonic()
         self.jobs: list[Job] = []
         self.last_status = 0.0
@@ -604,9 +745,17 @@ class Runner:
             self.report(run)
             return
         failed_dependencies = [label for label in run.depends_on if label in self.failed]
-        if run.copy_from is not None and failed_dependencies:  # a repair continues its rq1 run's model
-            say(f"   ⤼ skipped: {', '.join(failed_dependencies)} failed")
+        if (run.copy_from is not None or run.stage > 1) and failed_dependencies:  # it continues their model
+            if set(failed_dependencies) & self.ended:
+                say("   ⤼ skipped: its chain ended before it")
+                self.ended.add(run.label)
+            else:
+                say(f"   ⤼ skipped: {', '.join(failed_dependencies)} failed")
             self.failed.add(run.label)
+            return
+        if run.stage > 1 and self.chain_ends(run):
+            self.failed.add(run.label)
+            self.ended.add(run.label)
             return
         command = self.prepare(run)
         if command is None:
@@ -621,6 +770,25 @@ class Runner:
                                    env=environment, start_new_session=True)
         self.jobs.append(Job(run, index, process, log, time.monotonic(), []))
         say(f"   ▶ started ({len(self.jobs)} of {JOBS} slots busy)")
+
+    def chain_ends(self, run: Run) -> bool:
+        """A later rq2 stage starts only if the stage before stopped at its success threshold. Otherwise its chain ends
+        here: say why, and record it in the run's chain_ended.txt for review_runs.py."""
+        before = next(other for other in self.runs if other.label in run.depends_on)
+        stopped = before.stop_reason()
+        directory = run.run_directory()
+        record = directory / "chain_ended.txt" if directory is not None else None
+        if stopped and "reached success rate" in stopped:  # MetricsCallback's stop at the threshold
+            if record is not None:
+                record.unlink(missing_ok=True)
+            return False
+        ended = (f"chain ended: stage {before.stage} did not reach the success threshold ("
+                 + (f"it stopped: {stopped}" if stopped else f"its {before.steps:,} steps ran out")
+                 + f"), so stage {run.stage} and any after it did not run")
+        say(f"   ⤼ {ended}")
+        if record is not None:
+            record.write_text(ended + "\n")
+        return True
 
     def set_rq1_budget(self, run: Run) -> None:
         """RQ1_STEPS=auto: the rq1 run's budget from the learnability results, the same for every rq1 run."""
@@ -637,10 +805,18 @@ class Runner:
         run.command[run.command.index("--total-timesteps") + 1] = str(self.rq1_steps)
 
     def prepare(self, run: Run) -> list[str] | None:
-        """The command to run: a new run, a repair copied from its rq1 run, or a resume of an interrupted run."""
+        """The command to run: a new run, a repair copied from its rq1 run, a later rq2 stage continuing the run of its
+        chain, or a resume of an interrupted run."""
         if run.group == "rq1" and RQ1_AUTO:
             self.set_rq1_budget(run)
         run_directory = run.run_directory()
+        command = list(run.command)
+        if run.stage > 1:  # continues the run its stage 1 made, in place
+            if run_directory is None:
+                say(f"   ✗ no run in {run.output} to continue; skipped")
+                self.failed.add(run.label)
+                return None
+            command[command.index("--run-directory") + 1] = str(run_directory)
         if run.copy_from is not None and run_directory is None:
             sources = sorted(path.parent for path in run.copy_from.glob("*/model.zip"))
             if not sources:
@@ -652,15 +828,22 @@ class Runner:
             (run.output / "repair_base_steps.txt").write_text(str(base))
             return run.command
         if run_directory is not None and (run_directory / "model.zip").exists():  # interrupted earlier
-            done = json.loads((run_directory / "metrics.json").read_text())["progress"]["steps"]
-            base = int((run_directory / "repair_base_steps.txt").read_text()) if run.copy_from else 0
+            metrics = json.loads((run_directory / "metrics.json").read_text())
+            done = metrics["progress"]["steps"]
+            if run.copy_from is not None:
+                base = int((run_directory / "repair_base_steps.txt").read_text())
+            elif run.stage > 1:  # a later rq2 stage: from where its skills were added (None: it has not started)
+                base = added_at(metrics, run.added)
+                if base is None:
+                    return command
+            else:
+                base = 0
             left = run.steps - (done - base)
             if left <= 0:
                 say("   ✓ already at its step budget")
                 return None
             say(f"   resuming an interrupted run at step {done:,}: {left:,} steps left")
-            command = list(run.command)
-            if run.copy_from is None:  # new run -> resume it in place
+            if run.copy_from is None and run.stage <= 1:  # new run -> resume it in place
                 command = ["main.py", "--run-directory", str(run_directory),
                            *run.command[run.command.index("--skills"):]]
                 command = [part for part in command if part != "--output-dir" and part != str(run.output)]
@@ -726,18 +909,23 @@ class Runner:
     @staticmethod
     def report(run: Run) -> None:
         """The run's outcome from its metrics.json: per skill, final success and steps to threshold (and how many of
-        those steps were spent on the skill itself)."""
+        those steps were spent on the skill itself); for a repair or a later rq2 stage, the added skills' and what the
+        others forgot."""
         run_directory = run.run_directory()
         if run_directory is None or not (run_directory / "metrics.json").exists():
             return
         metrics = json.loads((run_directory / "metrics.json").read_text())
         summary = metrics["summary"]["deterministic"]
-        if run.group == "repair":
-            values = summary.get(run.repaired, {})
-            say(f"   result: {run.repaired} zero-shot {values.get('zero_shot_success_rate')}, "
-                f"steps to threshold {values.get('steps_to_threshold')} ({values.get('skill_steps_to_threshold')} on it)"
-                + (f"; stopped: {metrics['stop_reason']}" if metrics.get("stop_reason") else ""))
-            retention = metrics.get("retention") or {}
+        if run.added:
+            cells = [f"{skill} zero-shot {summary.get(skill, {}).get('zero_shot_success_rate')}, steps to threshold "
+                     f"{summary.get(skill, {}).get('steps_to_threshold')} "
+                     f"({summary.get(skill, {}).get('skill_steps_to_threshold')} on it)" for skill in run.added]
+            stopped = run.stop_reason()
+            say(f"   result: {'; '.join(cells)}" + (f"; stopped: {stopped}" if stopped else ""))
+            # this addition's: a chain's run keeps its earlier additions' in earlier_retention
+            step = added_at(metrics, run.added)
+            retention = next((entry for entry in [*metrics.get("earlier_retention", []), metrics.get("retention")]
+                              if entry and entry["added_at"] == step), {})
             others = retention.get("skills") or {}
             if others:
                 mean = lambda key: sum(entry[key] or 0 for entry in others.values()) / len(others)  # noqa: E731
@@ -807,6 +995,7 @@ def main() -> None:
     check_repair_modes()
     check_operator_names()
     check_repairs()
+    check_orders()
     overlap = overlap_report(BASE_SKILLS, REPAIRED)  # how much of their operators the skills share (static)
     if not RUN_GROUPS:  # a static experiment (overlap): the report is all it does
         say(overlap)
@@ -827,6 +1016,12 @@ def main() -> None:
     if "repair" in RUN_GROUPS:
         for repair_from, repair_to in REPAIRS:
             say(f"  repair: {repair_from} -> {repair_to} ({repair_difference(repair_from, repair_to)})")
+    if "rq2" in RUN_GROUPS:
+        say("  rq2 orders, each added skill with its literal coverage by the skills before it (zero-shot needs 1):")
+        for order in RQ2_ORDERS:
+            coverage = [f"{skill} {value:.2f}" for number in range(2, len(order) + 1)
+                        for skill, value in stage_coverage(order, number).items()]
+            say(f"    {order_name(order)}: {', '.join(coverage) or 'nothing added'}")
     say(overlap)
     runner.print_plan()
     if DRY_RUN:
@@ -855,7 +1050,8 @@ def main() -> None:
         write_summary()
         subprocess.run([PYTHON, "scripts/review_runs.py", str(OUT)], cwd=ROOT, capture_output=True)
         say(f"\nAll done in {duration(time.monotonic() - runner.started)}. "
-            f"Failed: {', '.join(sorted(runner.failed)) or 'none'}")
+            f"Failed: {', '.join(sorted(runner.failed - runner.ended)) or 'none'}"
+            + (f". Not run, their chain having ended: {', '.join(sorted(runner.ended))}" if runner.ended else ""))
         say(f"  report:  {OUT / 'review.txt'}\n  table:   {OUT / 'summary.csv'}")
     finally:
         lock.unlink(missing_ok=True)
