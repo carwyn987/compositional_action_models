@@ -134,8 +134,9 @@ def test_identity_aliases_encode_a_repaired_operator_like_the_original():
     repaired = dataclasses.replace(PUTDOWN, name="putdown-repaired")
     aliases = {"putdown-repaired": "putdown"}
     one_hot = OneHotOperatorEncoder([PICKUP, PUTDOWN, repaired], aliases)
-    assert one_hot.dim == 2 and (one_hot.encode(repaired) == one_hot.encode(PUTDOWN)).all()
-    assert OneHotOperatorEncoder([PICKUP, PUTDOWN, repaired]).dim == 3
+    np.testing.assert_array_equal(one_hot.encode(repaired), one_hot.encode(PUTDOWN))
+    without_alias = OneHotOperatorEncoder([PICKUP, PUTDOWN, repaired])
+    assert not np.array_equal(without_alias.encode(repaired), without_alias.encode(PUTDOWN))
     np.testing.assert_array_equal(
         RandomOperatorEncoder(16, aliases=aliases).encode(repaired), RandomOperatorEncoder(16).encode(PUTDOWN)
     )
@@ -154,3 +155,22 @@ def test_one_hot_index_does_not_depend_on_the_training_skills():
     before = OPERATOR_ENCODERS["one-hot"](config | {"skills": ["pickup", "stack"]}, [pickup, stack])
     after = OPERATOR_ENCODERS["one-hot"](config | {"skills": ["stack"]}, [stack])
     np.testing.assert_array_equal(before.encode(stack.symbolic_action_model), after.encode(stack.symbolic_action_model))
+
+
+@pytest.mark.unit
+def test_an_identity_alias_leaves_every_other_operator_code_unchanged():
+    """A repair-hidden run (unstack-raised=unstack) continues an rq1 run encoded without aliases. The configured
+    one-hot encoder gives unstack-raised exactly unstack's code, and every other registered skill exactly its code
+    without aliases, at the same size before padding."""
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.skills.registry import SKILL_REGISTRY, build_skill
+
+    config = {"symbolic_action_model_format": "pddl", "operator_embedding_dim": 128}
+    models = {name: build_skill(name, config).symbolic_action_model for name in SKILL_REGISTRY}
+    plain = OPERATOR_ENCODERS["one-hot"](config, [])
+    aliased = OPERATOR_ENCODERS["one-hot"](config | {"operator_identity_aliases": ["unstack-raised=unstack"]}, [])
+    assert aliased.encoder.dim == plain.encoder.dim == len(SKILL_REGISTRY)
+    np.testing.assert_array_equal(aliased.encode(models["unstack-raised"]), plain.encode(models["unstack"]))
+    for name, model in models.items():
+        if name != "unstack-raised":
+            np.testing.assert_array_equal(aliased.encode(model), plain.encode(model), err_msg=name)

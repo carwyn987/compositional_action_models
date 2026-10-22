@@ -11,13 +11,15 @@ class OneHotOperatorEncoder(OperatorEncoder):
     skill, so indices do not depend on the training skills); any other operator is an error.
 
     aliases maps an operator name to another whose position it takes (e.g. {"unstack-raised": "unstack"}:
-    the repaired operator is encoded exactly like the original)."""
+    the repaired operator is encoded exactly like the original). Positions are assigned as without aliases, so
+    every other operator's code and the size are the same with or without them (the aliased operator's own
+    position goes unused)."""
 
     def __init__(self, models: list[SymbolicActionModel], aliases: dict[str, str] | None = None):
         self.aliases = dict(aliases or {})
         self.index: dict[str, int] = {}
         for model in models:
-            self.index.setdefault(self.aliases.get(model.name, model.name), len(self.index))
+            self.index.setdefault(model.name, len(self.index))
 
     @property
     def dim(self) -> int:
