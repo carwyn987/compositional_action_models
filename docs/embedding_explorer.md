@@ -33,7 +33,8 @@ is explored exactly as its policy saw its operators.
 A run's points come from its `model.zip` and `config.json` (defaults filled in as `main.py` does on resume; a stale
 run whose policy reads another embedding size is refused). `--extractor` picks the features extractor: the actor's
 by default; `critic`, `critic-target` or `all`. With `main.py`'s SAC settings the critic and the actor share one
-extractor module (shown once, as the actor); the target critic has its own copy, which follows by Polyak averaging.
+extractor module (shown once, as the actor, whichever loss trains it: the critic's or the actor's, as the run's
+`--operator-embedding-loss` says); the target critic has its own copy, which follows by Polyak averaging.
 For PPO, actor is the policy's extractor (pi) and critic the value function's (vf), one module when shared.
 
 **Untrained twins.** A composition encodes some structure before any training: operators that share literals share

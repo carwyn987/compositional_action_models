@@ -185,6 +185,18 @@ on average over the skills, so learned skills and skills still being explored pu
 Each distinct operator embedding gets its own temperature, logged as `train/ent_coef/<skill>`; the policy's
 input is unchanged.
 
+**Which loss trains a learned embedding** (`--operator-embedding-loss`, SAC and multi-task SAC). The actor and
+critic share the embedding's features extractor (`main.py`'s `policy_kwargs`), and `OperatorEmbeddingSACPolicy`
+(`policies/feature_extractors.py`) trains it with one of their losses. **critic** (the default): the critic's TD
+loss trains it, and the actor reads its features without gradients, in the actor loss and through the critic's
+Q-values in it. This is how SAC from pixels trains its shared encoder (SAC-AE, DrQ): the TD loss fits the value of
+every replayed transition, a richer signal than the actor loss, which follows only the critic's slope in the
+action. **actor**, Stable-Baselines3's own choice: the actor loss trains it, and the critic reads it without
+gradients. Either way the target critic has its own copy, which follows by Polyak averaging. The option is saved
+with the model, so a resumed run keeps it; a run whose `config.json` has no such key resumes with actor
+(`SAVED_WITHOUT_THE_OPTION` in `main.py`), as its saved policy, Stable-Baselines3's own, trains. PPO trains its
+shared extractor with its one loss (policy and value function together), so the option does not apply to it.
+
 **Skill sampling** (`--skill-sampling`): **round-robin** (the skills take turns) or **competence**: each skill
 keeps half its even share of the episodes, and the rest goes to skills in proportion to their recent failure
 rate (over their last 20 training episodes; an episode cut off by the time limit is a failure), so skills
