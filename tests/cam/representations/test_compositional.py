@@ -212,3 +212,24 @@ def test_extractor_composes_each_distinct_operator_once_with_the_same_result(arc
     for gradient, reference in zip(gradients, expected):
         if reference is not None:
             torch.testing.assert_close(gradient, reference)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("architecture", ARCHITECTURES)
+def test_intermediates_end_in_the_embedding(architecture):
+    """forward returns intermediates' "operator" stage, with the name and without; for the tree, each stage is the
+    function of the stage below it (AND = rho(and-sum), PRE(and pre), EFF(and eff)), and and-sum is the sum of the
+    section's conjuncts."""
+    layout = dataclasses.replace(LAYOUT, name_dim=16)
+    x = torch.as_tensor(np.stack([StructuredOperatorEncoder(layout, MockTextBackend(16)).encode(op) for op in (PICKUP, STACK)]))
+    model = architecture(layout, 16, 32)
+    with torch.no_grad():
+        stages = model.intermediates(unpack(x, layout))
+        assert torch.equal(stages["operator"], model(unpack(x, layout)))
+        if architecture is TreeComposition:
+            parts = unpack(x, layout)
+            effect = ((parts.kinds == 5) | (parts.kinds == 6))[..., None]  # ADD, DELETE
+            torch.testing.assert_close(stages["and-sum eff"], (stages["conjunct"] * effect).sum(dim=1))
+            torch.testing.assert_close(stages["and eff"], model.conjunction(stages["and-sum eff"]))
+            torch.testing.assert_close(stages["pre"], model.precondition(stages["and pre"]))
+            torch.testing.assert_close(stages["eff"], model.effect(stages["and eff"]))
