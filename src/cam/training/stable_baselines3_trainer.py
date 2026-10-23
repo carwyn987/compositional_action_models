@@ -26,10 +26,11 @@ import numpy as np
 import torch
 from stable_baselines3 import PPO, SAC
 from stable_baselines3.common.base_class import BaseAlgorithm
+from stable_baselines3.common.buffers import DictReplayBuffer
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
-from cam.policies.feature_extractors import OperatorEmbeddingSACPolicy, features_extractors
+from cam.policies.feature_extractors import OPERATOR_EMBEDDING_KEY, OperatorEmbeddingSACPolicy, features_extractors
 from cam.training.checkpointing import (
     PeriodicSaveCallback,
     atomic_save_model,
@@ -93,6 +94,52 @@ class ResumeWarmupCallback(BaseCallback):
     def _end_warmup(self) -> None:
         if self.gradient_steps is not None:
             self.model.gradient_steps, self.gradient_steps = self.gradient_steps, None
+
+
+def remove_transitions(replay_buffer: DictReplayBuffer, operator_embeddings: list[np.ndarray]) -> int:
+    """Removes every transition whose operator embedding (obs["operator_embedding"]) is one of operator_embeddings
+    from replay_buffer, and returns how many it removed. The others move to the front, oldest first, so new
+    transitions still replace the oldest. Only the arrays in memory change, never the file the buffer was loaded
+    from."""
+    if replay_buffer.n_envs != 1:
+        raise ValueError("removing transitions needs a replay buffer of one environment")
+    stored = replay_buffer.observations[OPERATOR_EMBEDDING_KEY][: replay_buffer.size(), 0]
+    removed = np.zeros(len(stored), dtype=bool)
+    for embedding in operator_embeddings:
+        removed |= (stored == embedding).all(axis=1)
+    if not removed.any():
+        return 0
+    oldest = replay_buffer.pos if replay_buffer.full else 0
+    order = (np.arange(len(stored)) + oldest) % len(stored)
+    kept = order[~removed[order]]
+    for array in (*replay_buffer.observations.values(), *replay_buffer.next_observations.values(),
+                  replay_buffer.actions, replay_buffer.rewards, replay_buffer.dones, replay_buffer.timeouts):
+        array[: len(kept)] = array[kept]
+    replay_buffer.pos, replay_buffer.full = len(kept), False
+    return int(removed.sum())
+
+
+def forget_replaced_skills(model: BaseAlgorithm, operator_embeddings: dict[str, np.ndarray]) -> None:
+    """At a resume that replaces skills (a repair), removes what the model holds of them besides its network: their
+    transitions in the replay buffer and, for MultiTaskSAC, their temperatures (reset to the initial one).
+    operator_embeddings: each replaced skill's operator embedding, as the run being resumed encoded it.
+
+    A replaced skill is no longer part of the task. Its transitions' rewards are for effects the skill no longer has,
+    and with repair-hidden their inputs are exactly the repaired operator's, so the critic would get contradictory
+    targets in the very states the repair changes until FIFO replacement flushed them; its temperature was tuned to a
+    behaviour no longer wanted. SAC's one temperature is every skill's, and what a new skill gets too, so it stays."""
+    names = ", ".join(operator_embeddings)
+    replay_buffer = getattr(model, "replay_buffer", None)
+    if replay_buffer is not None:
+        removed = remove_transitions(replay_buffer, list(operator_embeddings.values()))
+        logger.info("replaced skills %s: removed their %d transitions from the replay buffer, %d left",
+                    names, removed, replay_buffer.size())
+    if isinstance(model, MultiTaskSAC):
+        slots = model.reset_temperatures(operator_embeddings.values())
+        logger.info("replaced skills %s: temperature slots %s reset to %.3g",
+                    names, slots, float(np.exp(model.initial_log_ent_coef)))
+    elif replay_buffer is not None:
+        logger.info("replaced skills %s: SAC's one temperature, every skill's, is kept", names)
 
 
 class ProgressFileCallback(BaseCallback):
@@ -255,6 +302,7 @@ def train_stable_baselines3(
     operator_embedding_loss: str = "critic",
     device: str = "auto",
     resume_warmup_steps: int = RESUME_WARMUP_STEPS,
+    replaced_skills: dict[str, np.ndarray] | None = None,
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
@@ -275,6 +323,10 @@ def train_stable_baselines3(
 
     An off-policy model resumed without a saved replay buffer makes no gradient updates for its first
     resume_warmup_steps steps (ResumeWarmupCallback), so it does not train on a nearly empty buffer.
+
+    replaced_skills (resume only; skill name -> operator embedding as the run being resumed encoded it): skills the
+    resume replaces; their transitions are removed and their temperatures reset before training
+    (forget_replaced_skills).
     """
     run_directory.mkdir(parents=True, exist_ok=True)
     model_path = run_directory / "model.zip"
@@ -296,6 +348,8 @@ def train_stable_baselines3(
             elif resume_warmup_steps > 0:
                 warmup = [ResumeWarmupCallback(resume_warmup_steps)]
                 logger.info("no saved replay buffer: no updates for the first %d steps", resume_warmup_steps)
+        if replaced_skills:
+            forget_replaced_skills(model, replaced_skills)
         logger.info("resuming %s from step %d", algorithm, model.num_timesteps)
     else:
         policy, options = (("MultiInputPolicy", {"log_std_init": PPO_LOG_STD_INIT}) if algorithm == "ppo"

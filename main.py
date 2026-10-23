@@ -52,7 +52,7 @@ MODES = ["train-evaluate", "train", "evaluate"]
 # Options for one invocation only: not taken from a resumed run's config.json.
 PER_INVOCATION = [
     "mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device", "repair_mode",
-    "recovery_tolerance",
+    "recovery_tolerance", "reset_replaced_skills",
 ]
 # With --repair-mode, the stop needs this many evaluations in a row (each of --eval-episodes, about ±0.1 at 20)
 REPAIR_CONSECUTIVE_EVALUATIONS = 2
@@ -288,6 +288,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--recovery-tolerance", type=float, default=0.1,
         help="retain: how far below its level before the repair a skill's success rate may be and count as back",
     )
+    repair.add_argument(
+        "--reset-replaced-skills", action=argparse.BooleanOptionalAction, default=True,
+        help="when the resume replaces skills of the run (leaves them out of --skills while adding others, as a "
+        "repair does): remove their transitions from the loaded replay buffer and, with mtsac, reset their "
+        "temperatures to the initial one, so the repaired skill starts as a new one would, also with "
+        "--operator-identity-aliases; --no-reset-replaced-skills keeps both (an ablation)",
+    )
     return parser
 
 
@@ -387,6 +394,23 @@ def training_skills(config: dict, skills: list[Skill]) -> list[Skill]:
     return skills
 
 
+def replaced_skills(config: dict, saved: dict) -> dict:
+    """The skills this resume replaces, each with its operator embedding as the run being resumed (saved: its
+    config.json) encoded it: the run's skills left out of --skills, when --skills also adds skills (a repair; a
+    resume that only adds skills, such as a later rq2 stage, replaces none). The run's own encoding, without this
+    resume's --operator-identity-aliases: with repair-hidden the repaired operator's embedding is the replaced one's,
+    and every transition with it in the run's replay buffer is the replaced skill's. A replaced skill whose embedding
+    a kept skill shares (aliased in the run) is left out, since their transitions cannot be told apart."""
+    if all(name in saved["skills"] for name in config["skills"]):
+        return {}
+    saved = vars(build_parser().parse_args([])) | saved  # a key missing from config.json: the option's default
+    encoder = OPERATOR_ENCODERS[saved["operator_encoder"]](saved, [])
+    embeddings = {name: encoder.encode(build_skill(name, saved).symbolic_action_model) for name in saved["skills"]}
+    kept = {embeddings[name].tobytes() for name in saved["skills"] if name in config["skills"]}
+    return {name: embedding for name, embedding in embeddings.items()
+            if name not in config["skills"] and embedding.tobytes() not in kept}
+
+
 def resume_command(run_directory: Path) -> str:
     return f"./main.py --run-directory {shlex.quote(str(run_directory))}"
 
@@ -402,6 +426,9 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
         train_stable_baselines3,
     )
 
+    # read before config.json is overwritten: the skills of the run being resumed, and how it encoded them
+    replaced = (replaced_skills(config, json.loads((run_directory / "config.json").read_text()))
+                if resume and config["reset_replaced_skills"] else {})
     atomic_write_text(run_directory / "config.json", json.dumps(config, indent=2))
     callbacks, on_save, eval_env = [], [], None
     if config["trainable_operator_embedding"] or config["operator_encoder"] == "compositional":
@@ -445,6 +472,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             policy_kwargs=policy_kwargs(config),
             operator_embedding_loss=config["operator_embedding_loss"],
             device=config["device"],
+            replaced_skills=replaced,
         )
     finally:
         if eval_env is not None:
