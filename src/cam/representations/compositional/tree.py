@@ -17,17 +17,27 @@ from cam.representations.compositional.structure import (
 class TreeComposition(nn.Module):
     """OPERATOR(NAME, PARAMETERS, PRE(AND(preconditions)), EFF(AND(effects))), with NOT applied to negated
     preconditions and delete effects; AND and PARAMETERS are DeepSets (rho(sum(phi(x)))). Invariant to
-    literal order and to EMPTY (padding) positions."""
+    literal order and to EMPTY (padding) positions.
 
-    def __init__(self, layout: OperatorLayout, component_dim: int, output_dim: int):
+    stage_normalization ends every learned function below OPERATOR (and TYPED, LITERAL and the name's map) in a
+    LayerNorm without gain: each literal's conjunct then has the same magnitude in AND's sum, and no stage scales
+    the next. Without it, the composition's output grew from about 0.8 to 1e3-1e10 over 300-450k SAC steps, most
+    for operators with (raised ?o), and once one literal's terms dominate, every operator with it is the same
+    after the extractor's normalization (pickup-raised and unstack-raised at cosine 1.000; docs/results.md). Off
+    by default, so models saved without it compute as they were trained; main.py's --composition-normalization
+    turns it on."""
+
+    def __init__(self, layout: OperatorLayout, component_dim: int, output_dim: int, stage_normalization: bool = False):
         super().__init__()
-        dim = component_dim
-        self.components = ComponentEmbeddings(layout, dim)
-        self.negation = mlp(dim, dim)  # NOT
-        self.conjunction_element, self.conjunction = mlp(dim, dim), mlp(dim, dim)  # AND
-        self.precondition = mlp(dim, dim)  # PRE
-        self.effect = mlp(dim, dim)  # EFF
-        self.parameter_element, self.parameter_set = mlp(dim, dim), mlp(dim, dim)  # PARAMETERS
+        dim, normalize = component_dim, stage_normalization
+        self.components = ComponentEmbeddings(layout, dim, normalize)
+        self.negation = mlp(dim, dim, normalize=normalize)  # NOT
+        self.conjunction_element = mlp(dim, dim, normalize=normalize)  # AND: phi
+        self.conjunction = mlp(dim, dim, normalize=normalize)  # AND: rho
+        self.precondition = mlp(dim, dim, normalize=normalize)  # PRE
+        self.effect = mlp(dim, dim, normalize=normalize)  # EFF
+        self.parameter_element = mlp(dim, dim, normalize=normalize)  # PARAMETERS: phi
+        self.parameter_set = mlp(dim, dim, normalize=normalize)  # PARAMETERS: rho
         self.operator = mlp((4 if layout.name_dim else 3) * dim, output_dim)  # OPERATOR
 
     def intermediates(self, parts: OperatorParts) -> dict[str, torch.Tensor]:

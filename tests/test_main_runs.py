@@ -127,3 +127,21 @@ def test_a_text_run_saved_without_operator_text_name_resumes_with_the_name_in_it
         np.testing.assert_array_equal(OPERATOR_ENCODERS["text"](config, []).encode(pickup), trained)
     with pytest.raises(SystemExit):
         parse_args(["--run-directory", str(tmp_path), "--operator-text-name", "none"])
+
+
+@pytest.mark.unit
+def test_a_compositional_run_saved_without_composition_normalization_resumes_with_the_output_normalized(tmp_path):
+    """A config.json saved before --composition-normalization has no such key: resumed, the run keeps its only
+    normalization at the output, as it trained; a new run normalizes every stage. Control: asking a resumed old run
+    for every stage would change its network, so it is refused."""
+    from main import policy_kwargs
+
+    saved = parse_args(["--skills", "pickup", "--operator-encoder", "compositional"])
+    assert policy_kwargs(saved)["features_extractor_kwargs"]["architecture_kwargs"] == {"stage_normalization": True}
+    del saved["composition_normalization"]
+    (tmp_path / "config.json").write_text(json.dumps(saved))
+    resumed = parse_args(["--run-directory", str(tmp_path)])
+    assert resumed["composition_normalization"] == "output"
+    assert policy_kwargs(resumed)["features_extractor_kwargs"]["architecture_kwargs"] == {"stage_normalization": False}
+    with pytest.raises(SystemExit):
+        parse_args(["--run-directory", str(tmp_path), "--composition-normalization", "every-stage"])

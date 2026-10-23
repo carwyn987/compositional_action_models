@@ -61,9 +61,12 @@ LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
     "trainable_operator_embedding", "text_backend", "operator_text", "operator_text_name", "compositional_architecture",
     "component_embedding_dim", "max_operator_literals", "max_predicate_arity", "compositional_name", "slots",
-    "slot_iterations",
+    "slot_iterations", "composition_normalization",
     "symbolic_action_model_format",
 ]
+# For a config.json without one of these keys (a run saved before the option existed), the value that run trained
+# with, where it differs from the option's default.
+SAVED_WITHOUT_THE_OPTION = {"composition_normalization": "output"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -204,6 +207,11 @@ def build_parser() -> argparse.ArgumentParser:
         "--compositional-name", choices=["text", "none"], default="text",
         help="include the operator name, text-embedded with --text-backend, or leave it out",
     )
+    compositional.add_argument(
+        "--composition-normalization", choices=["every-stage", "output"], default="every-stage",
+        help="every-stage: each learned function of the composition ends in a LayerNorm, so no literal's terms can "
+        "outgrow the others' (tree.py); output: only the composed embedding is normalized",
+    )
     compositional.add_argument("--slots", type=int, default=4, help="slots (slots and geometric architectures)")
     compositional.add_argument(
         "--slot-iterations", type=int, default=3, help="slot attention rounds (slots and geometric architectures)",
@@ -293,7 +301,8 @@ def parse_args(argv: list[str] | None = None) -> dict:
         config_path = Path(args.run_directory) / "config.json"
         if not config_path.exists():
             parser.error(f"{args.run_directory} has no config.json")
-        saved = {key: value for key, value in json.loads(config_path.read_text()).items() if key not in PER_INVOCATION}
+        saved = SAVED_WITHOUT_THE_OPTION | {
+            key: value for key, value in json.loads(config_path.read_text()).items() if key not in PER_INVOCATION}
         explicit = explicit_options(argv)
         # a key missing from config.json: a run saved before the option, which had its default
         changed = [key for key in LOCKED_ON_RESUME
@@ -347,8 +356,9 @@ def policy_kwargs(config: dict) -> dict | None:
                 "component_dim": config["component_embedding_dim"],
                 "output_dim": config["operator_embedding_dim"],
                 "architecture_kwargs": (
-                    {} if architecture == "tree"
-                    else {"num_slots": config["slots"], "slot_iterations": config["slot_iterations"]}
+                    {"stage_normalization": config["composition_normalization"] == "every-stage"}
+                    | ({} if architecture == "tree"
+                       else {"num_slots": config["slots"], "slot_iterations": config["slot_iterations"]})
                 ),
             },
             "share_features_extractor": True,

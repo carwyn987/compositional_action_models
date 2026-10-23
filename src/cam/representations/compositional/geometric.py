@@ -26,11 +26,13 @@ from cam.representations.compositional.structure import NUM_KINDS, OperatorLayou
 
 
 class GeometricComposition(nn.Module):
+    """stage_normalization normalizes the components' TYPED, LITERAL and name map, as in SlotComposition."""
+
     def __init__(self, layout: OperatorLayout, component_dim: int, output_dim: int, num_slots: int = 4,
-                 slot_iterations: int = 3):
+                 slot_iterations: int = 3, stage_normalization: bool = False):
         super().__init__()
         height = (1 if layout.name_dim else 0) + layout.max_parameters + layout.max_literals
-        self.components = ComponentEmbeddings(layout, component_dim)
+        self.components = ComponentEmbeddings(layout, component_dim, stage_normalization)
         self.cnn = nn.Sequential(
             nn.Conv2d(component_dim, component_dim, 3, padding=1), nn.ReLU(),
             nn.Conv2d(component_dim, component_dim, 3, padding=1), nn.ReLU(),
