@@ -87,8 +87,9 @@ operator that keeps its name keeps its code.
 
 `--operator-identity-aliases NEW=OLD` encodes NEW exactly as OLD (one-hot and
 random only), so a repaired operator is indistinguishable from the original:
-the repair-hidden control (`docs/research_focus.md`, RQ3). Content-based
-encoders ignore it.
+the repair-hidden control (`docs/research_focus.md`, RQ3). Every other operator
+keeps its code: one-hot keeps the indices it has without aliases, and NEW's own
+index goes unused. Content-based encoders ignore it.
 
 ## Multi-hot: literal features
 

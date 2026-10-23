@@ -60,7 +60,7 @@ How changes are made here (keep doing this):
 
 | what the report shows | likely cause | next step |
 | --- | --- | --- |
-| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Check whether its policy is stuck or only slow (`check_policy_progress.py`: slow calls for a longer step limit, stuck for a reward change), look at its `failure` reasons in the logs, and watch it (`watch_best_policies.py`). For the pushes, try `--max-steps-per-episode 150` (a scripted diagonal push takes about 30–120 steps, mostly 70–100; the default limit is 100). If failures dominate, revisit the thresholds (§3.3). |
+| A skill doesn't reach 95% in its **learnability** run | reward stages, step limit, or the constraints (failure rate) | Check whether its policy is stuck or only slow (`check_policy_progress.py`: slow calls for a longer step limit, stuck for a reward change), look at its `failure` reasons in the logs, and watch it (`watch_best_policies.py`). For the pushes, try `--max-steps-per-episode 150` (a scripted diagonal push takes about 30–120 steps, mostly 70–100; the default limit is 100). If failures dominate, revisit the thresholds (§3.2). |
 | Many episodes end in **failure** (`disturbed`, `excessive force`, `dropped`) | constraints too strict for exploration, or a real behaviour problem | Watch the policy. Disturbance is 3 cm, force 500 N (penalty above 100 N); relax only if the behaviour is acceptable. |
 | **RQ1** conditions are indistinguishable | one seed, or too small a budget (13 skills in 500k steps is ~40k each) | 3+ seeds, `RQ1_STEPS=1000000`; then add confidence intervals (§4.1). |
 | A **compositional** condition lags | composition scale (watch `operator_embedding_magnitude_before_normalization/*`) or capacity | Tune `--composition-weight-decay`; compare tree / slots / geometric. |
@@ -72,28 +72,19 @@ How changes are made here (keep doing this):
 
 In rough priority order.
 
-1. **One-hot repair-hidden runs give the other skills the wrong codes.** `OneHotOperatorEncoder` builds its
-   index over the registry with the aliases applied, so an alias (e.g. `unstack-raised=unstack`) removes one
-   index and shifts every later skill in registry order down by one. In a one-hot repair-hidden run, every
-   skill after the repaired one in `SKILL_REGISTRY` (for `unstack-raised`: place-beside and every push) gets
-   another skill's code than in the rq1 run it continues. The repaired skill itself gets the original's code,
-   so its zero-shot result is valid; the other skills' evaluations, their retention and, in retain mode,
-   their training are not. Random vectors are per name and unaffected. Fix: index every registered operator
-   as without aliases and map an aliased name to its original's index, with a test that aliasing leaves
-   every other operator's code unchanged.
-2. **Run directory names grow with the skill list.** With the 13 default skills a name is up to 187
+1. **Run directory names grow with the skill list.** With the 13 default skills a name is up to 187
    characters, and the filesystem limit is 255. A few more skills, or longer skill names, will break run creation.
    Shorten them, e.g. `13skills-<short hash>` once the list is long.
-3. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
+2. **Thresholds are first guesses.** `DISTURB_DISTANCE` (3 cm), `SAFE_GRIPPER_FORCE` (100 N),
    `MAX_GRIPPER_FORCE` (500 N), `DROP_HEIGHT` (2 cm) and the motion penalty weights were calibrated on the
    scripted policies. Set the force limits from the real gripper's rating if a real robot is planned. The
    gripper is position-controlled in simulation, so first contact spikes for one step; failure therefore
    needs 5 steps over 500 N, and a single hard impact (e.g. ramming a block) is only penalized. Telling a
    ram from a first contact would need the impact speed, not the force.
-4. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
+3. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.
-5. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
+4. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
    conditions that `operator_embedding_magnitude_before_normalization/*` settles at O(1–10) with
    `--composition-weight-decay` (`project_status.md` §2). If it keeps growing, the other remedies are:
 
@@ -225,8 +216,8 @@ In rough priority order.
 ## 6. Suggested order
 
 1. **Read the current overnight run** with §2.
-2. **Before the next overnight run:** fix the one-hot aliases (§3.1), add confidence
-   intervals (§4.1), and shorten run names (§3.2). Then run `--experiment rq3-repair-minimal` (learnability, RQ1, then
+2. **Before the next overnight run:** add confidence intervals (§4.1) and shorten run names (§3.1).
+   Then run `--experiment rq3-repair-minimal` (learnability, RQ1, then
    the repairs) with `SEEDS="0 1 2"`.
 3. **Then, depending on the results:** operator relabeling (§4.2) and the RQ1 wrong-embedding control, or
    RQ2's protocol, or RQ4 starting with FiLM.

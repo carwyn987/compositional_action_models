@@ -140,7 +140,9 @@ experimental conditions.
 - **Learned:** `--trainable-operator-embedding` (a learnable linear layer on top); compositional (tree /
   slots / geometric, composed inside the policy, normalized to magnitude 1, with composition weight decay).
 - `--operator-identity-aliases NEW=OLD` makes one-hot and random encode NEW exactly as OLD. This is the
-  repair-hidden control.
+  repair-hidden control. Every other operator keeps its code (one-hot keeps the indices it has without
+  aliases, leaving NEW's unused), so the other skills of a repair-hidden run keep the codes of the rq1 run
+  it continues.
 
 **Compositional embedding scale.** The compositional extractor (`representations/compositional/extractor.py`)
 normalizes the composed embedding to zero mean and magnitude (L2 norm) 1 before the policy sees it. Without
