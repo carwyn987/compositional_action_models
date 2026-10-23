@@ -40,7 +40,9 @@ def test_pca_of_one_hot_vectors_explains_equal_shares_and_has_a_fixed_sign():
 @pytest.mark.unit
 def test_tsne_perplexity_fallback_and_determinism():
     """The default perplexity is below the number of points; below 5 points t-SNE falls back to PCA (with a warning);
-    the same seed gives the same layout."""
+    the same seed gives the same layout. Skipped without scikit-learn, which only the explorer's t-SNE needs, so a
+    machine set up for training alone still passes the unit tests start_overnight.sh runs first."""
+    pytest.importorskip("sklearn")
     vectors = np.random.default_rng(1).standard_normal((12, 8))
     first, warnings = geometry.fit_tsne(vectors, 2, seed=3)
     second, _ = geometry.fit_tsne(vectors, 2, seed=3)
