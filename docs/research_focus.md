@@ -205,6 +205,9 @@ without training one from scratch.
 autoregressive autoencoder) may need more operators than the project has; linear probes from each embedding
 to its literals, with the multi-hot vector as the target, need fewer.
 
+`scripts/explore_embeddings.py` (`docs/embedding_explorer.md`) plots each embedding and its parts and measures,
+against untrained twins, how far their similarities follow the operators' literals.
+
 **Interpretation.** If the operator can be recovered, the learned embedding is a vectorization of the action
 model. A hand-built encoding (multi-hot) already vectorizes operators within fixed limits on arity and
 predicates, so the question is whether embeddings learned from behaviour keep that structure or reduce to a

@@ -198,9 +198,9 @@ In rough priority order.
 **RQ5: do learned embeddings encode operator structure?**
 - *Next:*
   - Linear probes from each learned embedding to its literals, with the multi-hot vector as the target.
-  - A 2-D PCA plot of embeddings during training (the original implementation had one:
-    `deprecated/plot_embeddings.py` at commit 59054395).
-     - I like this idea, and plotting each literal on the same 2-3 dimensions, so that we can see the relation of e.g. where left, front, back, right, ... lie, as well as things like pickup-putdown vector : stack-unstack vector (which I assume would have similar vector directions, magnitudes)
+  - Run `scripts/explore_embeddings.py` (`docs/embedding_explorer.md`) on the rq1 and repair runs: whether pickup
+    lies near pickup-raised and unstack, whether pickup:pickup-raised::unstack:unstack-raised and
+    pickup:putdown::unstack:stack hold at the operator level, and structure agreement against the untrained twins.
 
 **RQ6: does behavioural sensitivity reveal unnecessary or incorrect literals?**
 - *Next:* If I ever ask you to look through here and implement, skip this one for now.

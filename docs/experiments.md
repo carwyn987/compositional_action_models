@@ -154,6 +154,13 @@ BASE_SKILLS="pickup unstack pickup-raised" REPAIRS="unstack:unstack-raised" \
     .venv/bin/python scripts/overnight_runs.py --experiment overlap
 ```
 
+## RQ5: what the learned embeddings contain
+
+Not an experiment of the runner: `scripts/explore_embeddings.py` reads any runs' saved models (and static
+encoders) and plots their operator embeddings, and for compositional runs every level from predicates and
+literals to the whole operator, in 2-D or 3-D, with tables of pairs, analogies and agreement with the
+operators' structure, and custom PDDL operators placed among them. `docs/embedding_explorer.md` describes it.
+
 ## Operator names
 
 Two operator embeddings carry the operator's name:

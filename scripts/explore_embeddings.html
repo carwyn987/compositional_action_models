@@ -1,0 +1,257 @@
+<!doctype html>
+<!-- The page of scripts/explore_embeddings.py: an app when served (--serve), or one exported chart with its data in DATA.
+     The server computes every figure and table; this page only renders them and sends the controls' choices. -->
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Embedding explorer</title>
+<style>
+  :root {
+    color-scheme: light;
+    --surface: #fcfcfb; --page: #f9f9f7; --ink: #0b0b0b; --secondary: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --border: rgba(11, 11, 11, 0.10); --accent: #2a78d6;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --surface: #1a1a19; --page: #0d0d0d; --ink: #f0efec; --secondary: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --border: rgba(255, 255, 255, 0.10); --accent: #3987e5;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --surface: #1a1a19; --page: #0d0d0d; --ink: #f0efec; --secondary: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --border: rgba(255, 255, 255, 0.10); --accent: #3987e5;
+  }
+  body { margin: 0; background: var(--page); color: var(--ink); font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  main { max-width: 1280px; margin: 0 auto; padding: 16px; }
+  h1 { font-size: 20px; margin: 0 0 4px; }
+  h2 { font-size: 15px; margin: 16px 0 4px; }
+  .note { color: var(--secondary); margin: 0 0 12px; max-width: 90ch; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 12px; margin-bottom: 12px; }
+  #controls { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-start; }
+  fieldset { border: 0; padding: 0; margin: 0; min-width: 0; }
+  legend { color: var(--secondary); font-size: 12px; padding: 0; margin-bottom: 4px; }
+  .options { display: flex; flex-wrap: wrap; gap: 2px 14px; max-width: 560px; }
+  label { white-space: nowrap; }
+  select, input, textarea, button {
+    font: inherit; color: inherit; background: var(--surface); border: 1px solid var(--border); border-radius: 6px; padding: 4px 8px;
+  }
+  input[type="checkbox"] { padding: 0; }
+  button { cursor: pointer; }
+  button.primary { background: var(--accent); color: #fff; border-color: transparent; }
+  .tabs { display: flex; gap: 6px; margin-bottom: 8px; }
+  .tabs button[aria-pressed="true"] { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+  #warnings { color: var(--secondary); margin: 0 0 8px; padding-left: 20px; }
+  #chart { min-height: 480px; padding: 4px; transition: opacity 0.2s; }
+  .row { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 8px; }
+  textarea { width: 100%; box-sizing: border-box; min-height: 96px; font: 12px/1.4 ui-monospace, monospace; }
+  #custom { padding-left: 20px; }
+  #custom button { margin-left: 8px; padding: 0 6px; }
+  .scroll { overflow-x: auto; }
+  table { border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { text-align: left; padding: 3px 12px 3px 0; border-bottom: 1px solid var(--grid); white-space: nowrap; }
+  th { color: var(--secondary); font-weight: 600; }
+  th.group { color: var(--ink); padding-top: 10px; }
+  #tables p { color: var(--secondary); margin: 0 0 6px; max-width: 110ch; }
+  [hidden] { display: none !important; }
+</style>
+<!--PLOTLY-->
+</head>
+<body>
+<main>
+  <h1>Operator embeddings</h1>
+  <p class="note">Each panel is one source and space with a projection of its own: compare points within a panel, and
+    read similarities from the tables below, which use the full vectors. Filled markers are trained operators, open
+    ones held out, diamonds custom points; hover a point for its details, and click pair, analogy or x -> W x in the
+    legend to draw them.</p>
+  <form id="controls" class="card" hidden>
+    <fieldset><legend>Sources</legend><div class="options" id="sources"></div></fieldset>
+    <fieldset><legend>Levels</legend><div class="options" id="levels"></div></fieldset>
+    <fieldset><legend>Projection</legend>
+      <div class="row">
+        <select id="method"><option value="pca">PCA</option><option value="tsne">t-SNE (refits every point)</option></select>
+        <select id="fit_on"><option value="registered">PCA fitted on the registered operators</option>
+          <option value="trained">fitted on the trained ones</option><option value="all">fitted on every point</option></select>
+      </div>
+      <label><input type="checkbox" id="unit_norm"> unit norm</label>
+      <label><input type="checkbox" id="labels" checked> labels</label>
+      <button type="button" id="export">Export</button>
+    </fieldset>
+  </form>
+  <div class="tabs" id="dims"><button type="button" data-dims="2">2-D</button><button type="button" data-dims="3">3-D</button></div>
+  <ul id="warnings"></ul>
+  <div id="chart" class="card"></div>
+  <section id="workspace" class="card" hidden>
+    <h2>Custom point</h2>
+    <p class="note">One PDDL operator, embedded by every source. Keep a registered operator's name to change only its
+      content: the name is an input to one-hot, random, text and compositional-with-name embeddings.</p>
+    <div class="row">
+      <select id="start"><option value="">Start from a registered operator</option></select>
+      <input id="label" placeholder="label" aria-label="label">
+      <input id="note-input" placeholder="note" aria-label="note">
+      <button type="button" class="primary" id="add">Add</button>
+    </div>
+    <textarea id="pddl" spellcheck="false" aria-label="PDDL"
+      placeholder="(:action pickup :parameters (?o - block) :precondition (and ...) :effect (and ...))"></textarea>
+    <p id="add-result" class="note"></p>
+    <ul id="custom"></ul>
+    <h2>Pairs and analogies</h2>
+    <p class="note">One per line, labels separated by spaces: two for a pair, four for an analogy (A is to B as C is to D).</p>
+    <div class="row"><textarea id="pairs" aria-label="pairs"></textarea><textarea id="analogies" aria-label="analogies"></textarea></div>
+    <button type="button" id="save-lists">Save pairs and analogies</button>
+  </section>
+  <div id="tables"></div>
+</main>
+<script>
+const DATA = /*DATA*/null;
+const state = {dims: "2", payload: DATA, options: null};
+const darkScheme = window.matchMedia("(prefers-color-scheme: dark)");
+const $ = (id) => document.getElementById(id);
+
+function theme() {
+  const chosen = document.documentElement.dataset.theme;
+  return chosen === "dark" || chosen === "light" ? chosen : (darkScheme.matches ? "dark" : "light");
+}
+
+function listItems(texts) {
+  return texts.map((text) => { const item = document.createElement("li"); item.textContent = text; return item; });
+}
+
+function render() {
+  const payload = state.payload;
+  if (!payload) return;
+  if (!(state.dims in payload.figures)) state.dims = Object.keys(payload.figures)[0];
+  const figure = payload.figures[state.dims][theme()];
+  Plotly.react("chart", figure.data, figure.layout, {responsive: true, displaylogo: false});
+  $("tables").innerHTML = payload.tables_html;  // built and escaped by the server
+  $("warnings").replaceChildren(...listItems(payload.warnings));
+  for (const button of document.querySelectorAll("#dims button")) {
+    button.hidden = !state.options && !(button.dataset.dims in payload.figures);
+    button.setAttribute("aria-pressed", String(button.dataset.dims === state.dims));
+  }
+}
+
+async function api(method, path, body) {
+  const response = await fetch(path, {method, headers: {"Content-Type": "application/json"},
+                                      body: body === undefined ? undefined : JSON.stringify(body)});
+  const json = await response.json();
+  if (!response.ok) throw new Error(json.error || response.statusText);
+  return json;
+}
+
+function checkboxes(container, names, checked, titles = {}) {
+  $(container).replaceChildren(...names.map((name) => {
+    const label = document.createElement("label");
+    const box = Object.assign(document.createElement("input"), {type: "checkbox", value: name, checked: checked.includes(name)});
+    box.addEventListener("change", refresh);
+    label.title = titles[name] || "";
+    label.append(box, " " + name);
+    return label;
+  }));
+}
+
+const chosen = (container) => [...$(container).querySelectorAll("input:checked")].map((box) => box.value);
+
+function request(dims = [Number(state.dims)]) {
+  return {sources: chosen("sources"), levels: chosen("levels"), method: $("method").value, dims,
+          fit_on: $("fit_on").value, unit_norm: $("unit_norm").checked, labels: $("labels").checked};
+}
+
+async function refresh() {
+  $("chart").style.opacity = 0.5;  // the previous chart stays until the new one arrives
+  try {
+    state.payload = await api("POST", "/api/chart", request());
+    render();
+  } catch (error) {
+    $("warnings").replaceChildren(...listItems([error.message]));
+  } finally {
+    $("chart").style.opacity = 1;
+  }
+}
+
+function showWorkspace(workspace) {
+  $("custom").replaceChildren(...workspace.custom_points.map((point) => {
+    const item = document.createElement("li");
+    item.textContent = point.label + (point.note ? ` (${point.note})` : "") + ": " + point.pddl;
+    const remove = Object.assign(document.createElement("button"), {type: "button", textContent: "remove"});
+    remove.addEventListener("click", async () => {
+      await api("DELETE", "/api/points/" + encodeURIComponent(point.label));
+      await reload();
+    });
+    item.append(remove);
+    return item;
+  }));
+  $("pairs").value = workspace.pairs.map((pair) => pair.join(" ")).join("\n");
+  $("analogies").value = workspace.analogies.map((analogy) => analogy.join(" ")).join("\n");
+}
+
+async function reload() {
+  state.options = await api("GET", "/api/options");
+  showWorkspace(state.options.workspace);
+  await refresh();
+}
+
+async function startApp() {
+  $("controls").hidden = $("workspace").hidden = false;
+  state.options = await api("GET", "/api/options");
+  const defaults = state.options.defaults;
+  const levels = [], titles = {};
+  for (const source of state.options.sources) {
+    for (const level of source.levels) {
+      if (!levels.includes(level.name)) levels.push(level.name);
+      titles[level.name] = titles[level.name] || `${level.description} (size ${level.dim})`;
+    }
+  }
+  checkboxes("sources", state.options.sources.map((source) => source.name), defaults.sources);
+  checkboxes("levels", levels, defaults.levels.includes("all") ? levels : defaults.levels, titles);
+  $("method").value = defaults.method;
+  $("fit_on").value = defaults.fit_on;
+  $("unit_norm").checked = defaults.unit_norm;
+  state.dims = String(defaults.dims[0]);
+  for (const id of ["method", "fit_on", "unit_norm", "labels"]) $(id).addEventListener("change", refresh);
+  for (const operator of state.options.operators) {
+    $("start").append(Object.assign(document.createElement("option"), {value: operator.label, textContent: operator.label}));
+  }
+  $("start").addEventListener("change", () => {
+    const operator = state.options.operators.find((entry) => entry.label === $("start").value);
+    if (operator) { $("pddl").value = operator.pddl; $("label").value = operator.label + " (edited)"; }
+  });
+  $("add").addEventListener("click", async () => {
+    try {
+      const result = await api("POST", "/api/points", {label: $("label").value, pddl: $("pddl").value, note: $("note-input").value});
+      const errors = Object.entries(result.errors).map(([source, error]) => `${source}: ${error}`);
+      $("add-result").textContent = `added ${result.label}` + (errors.length ? "; not encodable in " + errors.join("; ") : "");
+      await reload();
+    } catch (error) {
+      $("add-result").textContent = error.message;
+    }
+  });
+  $("save-lists").addEventListener("click", async () => {
+    const lines = (id) => $(id).value.split("\n").map((line) => line.trim().split(/\s+/)).filter((words) => words[0]);
+    try {
+      await api("POST", "/api/pairs", {pairs: lines("pairs")});
+      await api("POST", "/api/analogies", {analogies: lines("analogies")});
+      await reload();
+    } catch (error) {
+      $("warnings").replaceChildren(...listItems([error.message]));
+    }
+  });
+  $("export").addEventListener("click", async () => {
+    const result = await api("POST", "/api/export", request([2, 3]));
+    $("warnings").replaceChildren(...listItems([`exported to ${result.folder}`]));
+  });
+  showWorkspace(state.options.workspace);
+  await refresh();
+}
+
+for (const button of document.querySelectorAll("#dims button")) {
+  button.addEventListener("click", () => { state.dims = button.dataset.dims; state.options ? refresh() : render(); });
+}
+darkScheme.addEventListener("change", render);
+new MutationObserver(render).observe(document.documentElement, {attributes: true, attributeFilter: ["data-theme"]});
+if (DATA) render(); else startApp();
+</script>
+</body>
+</html>

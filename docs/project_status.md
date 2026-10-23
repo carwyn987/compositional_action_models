@@ -305,6 +305,10 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   episodes given its own operator input and then another skill's (e.g. unstack-raised given unstack's). Unchanged
   success and behaviour mean the policy does not use the operator to tell the two apart. Works with every encoder,
   compositional ones included.
+- **`scripts/explore_embeddings.py`:** RQ5's explorer (`docs/embedding_explorer.md`): any embedding condition, fixed
+  or from a run, and its parts (literals, predicates, the composition's stages) in an interactive 2-D / 3-D PCA or
+  t-SNE chart, with custom PDDL points, and tables of pair similarities, analogies and agreement with the operators'
+  structure against untrained twins of the composition; exported as HTML or served as an app (`--serve`).
 - **`scripts/sample_repair_scenario.sh`:** a repair scenario with PPO in a few hours (steps `check`, `train`,
   `repair`, `evaluate`). A one-hot policy trained on unstack alone is evaluated on unstack-raised with unstack's
   exact embedding, and must fail (lifting on and on is not raising). A compositional-tree policy (no operator
