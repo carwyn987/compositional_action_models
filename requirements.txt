@@ -9,3 +9,4 @@ pytest==9.1.1
 torch>=2.14
 stable-baselines3[extra]==2.9.0
 openai==3.26.0  # --text-backend openai; API key in ~/.secrets/openai_api_key (or OPENAI_API_KEY)
+scikit-learn==1.9.1  # src/cam/experiments/embedding_geometry.py: t-SNE

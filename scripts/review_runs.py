@@ -280,6 +280,8 @@ def section_added_skills(runs: list[Path]) -> list[str]:
 
 
 def section_embeddings(runs: list[Path]) -> list[str]:
+    import numpy as np
+
     lines = ["6. EMBEDDINGS (final learned operator embedding per skill: magnitude (L2 norm); pairwise distance and cosine)"]
     for run in runs:
         config_path, model_path = run / "config.json", run / "model.zip"
@@ -289,65 +291,44 @@ def section_embeddings(runs: list[Path]) -> list[str]:
         if not (config.get("trainable_operator_embedding") or config.get("operator_encoder") == "compositional"):
             continue
         try:
-            embeddings = learned_embeddings(config, model_path)
+            embeddings, raw = learned_embeddings(config, model_path)
         except Exception as error:  # report and continue: one broken run should not stop the review
             lines.append(f"   {run.name}: could not compute ({type(error).__name__}: {error})")
             continue
         names = list(embeddings)
-        magnitudes = ", ".join(f"{name} {embeddings[name].norm():.3g}" for name in names)
+        magnitudes = ", ".join(f"{name} {np.linalg.norm(embeddings[name]):.3g}" for name in names)
         pairs = []
         for i, first in enumerate(names):
             for second in names[i + 1 :]:
                 a, b = embeddings[first], embeddings[second]
-                cosine = float(a @ b / (a.norm() * b.norm() + 1e-12))
-                pairs.append(f"{first}-{second} distance {(a - b).norm():.3g} cosine {cosine:.3f}")
+                cosine = float(a @ b / (np.linalg.norm(a) * np.linalg.norm(b) + 1e-12))
+                pairs.append(f"{first}-{second} distance {np.linalg.norm(a - b):.3g} cosine {cosine:.3f}")
         lines.append(f"   {run.name}: magnitudes {magnitudes}; {'; '.join(pairs)}")
-        if config.get("operator_encoder") == "compositional":
-            raw = composition_magnitudes(config, model_path)
+        if raw:
             lines.append(f"     before normalization: magnitudes {', '.join(f'{name} {value:.3g}' for name, value in raw.items())}")
     return lines
 
 
-def learned_embeddings(config: dict, model_path: Path) -> dict:
-    """Each skill's operator embedding as the saved policy computes it (encoder, then the learned extractor)."""
+def learned_embeddings(config: dict, model_path: Path) -> tuple[dict, dict]:
+    """Each skill's operator embedding as the saved policy's actor computes it (the encoder, then the learned
+    extractor; src/cam/experiments/embedding_points.py), and for compositional runs each one's magnitude (L2 norm)
+    before the extractor normalizes it. The normalized embedding always has magnitude 1, so that is where a growing
+    composition still shows (and it is what policies trained before the normalization was added actually saw)."""
     import numpy as np
-    import torch
 
-    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.experiments.embedding_points import CompositionalSource, LabelledOperator, TrainableRunSource
     from cam.policies.feature_extractors import features_extractors
     from cam.policies.stable_baselines3_policy import ALGORITHMS
     from cam.skills.registry import build_skill
 
-    skills = [build_skill(name, config) for name in config["skills"]]
-    encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills)
-    inputs = torch.as_tensor(np.stack([encoder.encode(skill.symbolic_action_model) for skill in skills]))
-    policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
-    extractor = features_extractors(policy)["actor"]
-    with torch.no_grad():
-        outputs = extractor.operator_embedding(inputs)
-    return {skill.name: output for skill, output in zip(skills, outputs)}
-
-
-def composition_magnitudes(config: dict, model_path: Path) -> dict:
-    """Compositional runs only: each skill's composed embedding magnitude (L2 norm) before the extractor
-    normalizes it. The normalized embedding always has magnitude 1, so this is where a growing composition
-    still shows (and it is what policies trained before the normalization was added actually saw)."""
-    import numpy as np
-    import torch
-
-    from cam.experiments.environment_setup import OPERATOR_ENCODERS
-    from cam.policies.feature_extractors import features_extractors
-    from cam.policies.stable_baselines3_policy import ALGORITHMS
-    from cam.skills.registry import build_skill
-
-    skills = [build_skill(name, config) for name in config["skills"]]
-    encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills)
-    inputs = torch.as_tensor(np.stack([encoder.encode(skill.symbolic_action_model) for skill in skills]))
-    policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
-    extractor = features_extractors(policy)["actor"]
-    with torch.no_grad():
-        composed = extractor.composed_embedding(inputs)
-    return {skill.name: float(magnitude) for skill, magnitude in zip(skills, composed.norm(dim=1))}
+    extractor = features_extractors(ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy)["actor"]
+    skills = [LabelledOperator(name, build_skill(name, config).symbolic_action_model) for name in config["skills"]]
+    compositional = config["operator_encoder"] == "compositional"
+    source = (CompositionalSource if compositional else TrainableRunSource)(model_path.parent.name, config, extractor)
+    embeddings = {point.label: point.vector.astype("float64") for point in source.points("operator", skills)[0]}
+    raw = ({point.label: float(np.linalg.norm(point.vector)) for point in source.points("operator-raw", skills)[0]}
+           if compositional else {})
+    return embeddings, raw
 
 
 def main() -> None:
