@@ -151,21 +151,29 @@ experimental conditions.
 **Compositional embedding scale.** The compositional extractor (`representations/compositional/extractor.py`)
 normalizes the composed embedding to zero mean and magnitude (L2 norm) 1 before the policy sees it. Without
 the normalization the tree's embedding was about 100–500× larger than the policy's other inputs, and tree
-never learned pickup (§5, 2026-10-08). The raw output before normalization has no fixed scale: about 50–150
-for tree and 20–30 for slots and geometric at initialization, and it grows during training (slots: from
-about 2.5 to 800–2800 over 500k SAC steps in the 2026-10-10 run). Since the normalized output does not depend
-on that scale, nothing in the loss pulls it back, and as the weights grow, each Adam step (of roughly constant
-size) changes the normalized output less: the composition learns more slowly late in training, by an amount
-set by each layer's weight growth (not measured).
+never learned pickup (§5, 2026-10-08). That alone does not bound the composition inside: the normalized output
+does not depend on the composition's scale, so nothing in the loss holds it, and with only the output normalized
+(`--composition-normalization output`) the tree's raw output grew from about 0.8 to 1e3–1e10 over 300–450k SAC
+steps, most for the operators with `(raised ?o)`. Once one literal's terms dominate AND's sum, every operator
+with that literal is the same embedding after the normalization: pickup-raised and unstack-raised at cosine
+1.000, pickup and unstack at 0.91–0.99 (`docs/results.md`, RQ3 Experiment 2).
+`--composition-normalization every-stage` (the default) therefore ends every learned function of the
+composition below OPERATOR in a LayerNorm without gain or bias (`stage_normalization` of the architectures; for
+slots and geometric, the components' TYPED, LITERAL and name map, since slot attention normalizes its inputs):
+each literal's conjunct has the same magnitude in AND's sum, and no stage scales the next. Growing one literal's
+component 1e4 times then leaves the embeddings as they were, where with the output alone normalized it
+reproduces the collapse (`test_compositional.py`). Its LayerNorms add no parameters, and the architectures
+default to it off, so models saved before it compute as they were trained; a config.json without the key
+resumes with `output`.
 
 `--composition-weight-decay` (default 0.01, compositional runs only; `CompositionWeightDecayCallback`) is
 decoupled weight decay, as in AdamW, on the composition alone: after each gradient update, every parameter
 under each distinct features extractor's `composition` (for SAC the one actor and critic share, not the target
-critic's copy, which follows by Polyak averaging; for PPO the shared one) is multiplied by (1 − lr·wd), once. Weight decay shrinks every parameter toward zero and the learning signal re-grows
-what it needs, so the scale settles where the two balance. Too strong, and the composition underfits and
-operators blur together; it also shrinks the embeddings of rarely seen predicates, which get few updates to
-recover. Tune wd by watching `operator_embedding_magnitude_before_normalization/*` in TensorBoard: it should
-settle at O(1–10) instead of growing. Other remedies, should it not, are in `docs/next_steps.md`.
+critic's copy, which follows by Polyak averaging; for PPO the shared one) is multiplied by (1 − lr·wd), once.
+Weight decay shrinks every parameter toward zero and the learning signal re-grows what it needs, so the
+weights' scale settles where the two balance; with every stage normalized it keeps each Adam step's effect on
+the output from shrinking as the weights grow. Too strong, and the composition underfits and operators blur
+together; it also shrinks the embeddings of rarely seen predicates, which get few updates to recover.
 
 ### Algorithms and skill sampling
 Training is Stable-Baselines3 SAC (`main.py`'s default), multi-task SAC (`--algorithm mtsac`, the overnight

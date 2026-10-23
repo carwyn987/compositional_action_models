@@ -40,12 +40,13 @@ class SlotAttention(nn.Module):
 
 class SlotComposition(nn.Module):
     """Component tokens plus kind embeddings, grouped into num_slots slots, flattened and projected to the
-    operator embedding. Invariant to literal order and to EMPTY (padding) positions."""
+    operator embedding. Invariant to literal order and to EMPTY (padding) positions. stage_normalization
+    normalizes the components' TYPED, LITERAL and name map (slot attention normalizes its inputs and slots)."""
 
     def __init__(self, layout: OperatorLayout, component_dim: int, output_dim: int, num_slots: int = 4,
-                 slot_iterations: int = 3):
+                 slot_iterations: int = 3, stage_normalization: bool = False):
         super().__init__()
-        self.components = ComponentEmbeddings(layout, component_dim)
+        self.components = ComponentEmbeddings(layout, component_dim, stage_normalization)
         self.kind = nn.Embedding(NUM_KINDS, component_dim)
         self.slot_attention = SlotAttention(component_dim, num_slots, slot_iterations)
         self.output = nn.Linear(num_slots * component_dim, output_dim)
