@@ -145,3 +145,21 @@ def test_a_compositional_run_saved_without_composition_normalization_resumes_wit
     assert policy_kwargs(resumed)["features_extractor_kwargs"]["architecture_kwargs"] == {"stage_normalization": False}
     with pytest.raises(SystemExit):
         parse_args(["--run-directory", str(tmp_path), "--composition-normalization", "every-stage"])
+
+
+@pytest.mark.unit
+def test_a_run_saved_without_operator_embedding_loss_resumes_with_the_actor_loss(tmp_path):
+    """The config.json of a run saved before --operator-embedding-loss has no such key; its policy, Stable-Baselines3's
+    own, trained the shared operator embedding with the actor loss. Resumed (with actor given explicitly too), it
+    keeps the actor loss, and the critic loss is refused. Control: a new run, and a saved run that has the key, use
+    the critic loss."""
+    saved = parse_args(["--skills", "pickup", "--trainable-operator-embedding"])
+    assert saved["operator_embedding_loss"] == "critic"
+    (tmp_path / "config.json").write_text(json.dumps(saved))
+    assert parse_args(["--run-directory", str(tmp_path)])["operator_embedding_loss"] == "critic"
+    del saved["operator_embedding_loss"]
+    (tmp_path / "config.json").write_text(json.dumps(saved))
+    for explicit in ([], ["--operator-embedding-loss", "actor"]):
+        assert parse_args(["--run-directory", str(tmp_path), *explicit])["operator_embedding_loss"] == "actor"
+    with pytest.raises(SystemExit):
+        parse_args(["--run-directory", str(tmp_path), "--operator-embedding-loss", "critic"])
