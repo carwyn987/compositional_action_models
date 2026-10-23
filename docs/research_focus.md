@@ -1,8 +1,8 @@
 # Research focus
 
 The research questions, and for each: the hypothesis, the experiment, the metrics and how results are read.
-What the code does and what the experiments have shown so far is in `docs/project_status.md`; what to do next
-is in `docs/next_steps.md`.
+What the code does and what the experiments have shown so far is in `docs/project_status.md`; how to run each
+experiment is in `docs/experiments.md`; what to do next is in `docs/next_steps.md`.
 
 ## The question
 
@@ -37,6 +37,11 @@ overnight runner (`scripts/overnight_runs.py`); `docs/operator_embeddings.md` de
 | | `multi-hot` | the operator's literals, by parameter position |
 | structure, learned | `multi-hot-trainable` | a learned vector per literal, summed over the operator's literals |
 | | `compositional-tree`, `-slots`, `-geometric` | learned components (predicates, variables, types) composed by a learned function that follows the operator's structure |
+
+The text and compositional embeddings can also carry the operator's name, whose words alone can relate two
+skills (unstack-raised and pickup-raised share "raised"). The experiments leave it out and run these
+conditions as `<condition>-no-name`; the variants with the name are an ablation (`docs/experiments.md`,
+Operator names).
 
 ### Held fixed between conditions
 
@@ -154,6 +159,10 @@ runner's defaults are:
   it from scratch. Retain trains every skill until the repaired one is at the threshold and every other skill
   is back at its earlier level: the cost of a repair without forgetting.
 - **From scratch.** The repaired skill learned alone (its learnability run) is the baseline for transfer gain.
+- **Without the operator's name.** Held-out operators share words of their names with training skills
+  (unstack-raised with pickup-raised, push-left-front with push-front, place-beside with push-beside), so the
+  text and compositional embeddings leave the name out: a zero-shot success then comes from the operator's
+  structure. Running them with the name too measures what the name adds.
 
 **Metrics.** The repaired skill's zero-shot success, its steps to threshold and transfer gain; retention of
 the other skills.

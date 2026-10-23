@@ -40,14 +40,35 @@ def test_paragraph_describes_preconditions_and_effects():
 
 @pytest.mark.unit
 @pytest.mark.parametrize("text", ["pddl", "paragraph"])
-def test_repaired_operator_gets_a_new_embedding(text):
-    """The text, and so the embedding, follows the operator's content."""
+@pytest.mark.parametrize("include_name", [True, False])
+def test_repaired_operator_gets_a_new_embedding(text, include_name):
+    """The text, and so the embedding, follows the operator's content, with or without its name."""
     repaired = dataclasses.replace(
         PICKUP, preconditions=PICKUP.preconditions + (Precondition(Predicate("holding", ("?o",)), negated=True),)
     )
-    encoder = TextOperatorEncoder(MockTextBackend(128), text)
+    encoder = TextOperatorEncoder(MockTextBackend(128), text, include_name)
     assert encoder.dim == 128
     assert not np.allclose(encoder.encode(PICKUP), encoder.encode(repaired))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("text", ["pddl", "paragraph"])
+def test_without_the_name_operators_that_differ_only_in_name_get_the_same_embedding(text):
+    """pickup and a copy of it named pickup-raised: the same structure under another name. Without the name, neither
+    text names its operator and the two embed identically; with it (the control), the name alone tells them apart."""
+    renamed = dataclasses.replace(PICKUP, name="pickup-raised")
+    embedded = []
+
+    class RecordingBackend(MockTextBackend):
+        def embed_text(self, written):
+            embedded.append(written)
+            return super().embed_text(written)
+
+    without, named = (TextOperatorEncoder(RecordingBackend(128), text, include_name) for include_name in (False, True))
+    np.testing.assert_array_equal(without.encode(PICKUP), without.encode(renamed))
+    assert not any("pickup" in written for written in embedded)
+    assert not np.allclose(named.encode(PICKUP), named.encode(renamed))
+    assert "pickup-raised" in embedded[-1]
 
 
 @pytest.mark.unit

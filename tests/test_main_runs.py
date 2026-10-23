@@ -103,3 +103,27 @@ def test_resume_keeps_saved_options_that_differ_from_the_defaults(tmp_path):
     (tmp_path / "config.json").write_text(json.dumps(parse_args(["--skills", "pickup", "--algorithm", "ppo", "--seed", "3"])))
     config = parse_args(["--run-directory", str(tmp_path), "--skills", "pickup", "putdown"])
     assert (config["algorithm"], config["seed"], config["skills"]) == ("ppo", 3, ["pickup", "putdown"])
+
+
+@pytest.mark.unit
+def test_a_text_run_saved_without_operator_text_name_resumes_with_the_name_in_its_text(tmp_path):
+    """The config.json of a text run saved before --operator-text-name has no such key. Resumed (with the default
+    given explicitly too) or read as it is (as scripts/review_runs.py does), it embeds the operator's text with the
+    name, as the run trained. Control: leaving the name out would change the observation, so it is refused."""
+    import numpy as np
+
+    from cam.domain.pddl.pddl_writer import to_pddl
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.representations.text_backends import MockTextBackend
+    from cam.skills.registry import build_skill
+
+    saved = parse_args(["--skills", "pickup", "--operator-encoder", "text"])
+    del saved["operator_text_name"]
+    (tmp_path / "config.json").write_text(json.dumps(saved))
+    pickup = build_skill("pickup", saved).symbolic_action_model
+    trained = MockTextBackend(saved["operator_embedding_dim"]).embed_text(to_pddl(pickup))  # "(:action pickup ..."
+    for config in (parse_args(["--run-directory", str(tmp_path)]),
+                   parse_args(["--run-directory", str(tmp_path), "--operator-text-name", "include"]), saved):
+        np.testing.assert_array_equal(OPERATOR_ENCODERS["text"](config, []).encode(pickup), trained)
+    with pytest.raises(SystemExit):
+        parse_args(["--run-directory", str(tmp_path), "--operator-text-name", "none"])
