@@ -283,7 +283,8 @@ does. SAC's one temperature is every skill's, and what a new skill gets, so it i
   - **refuses repairs that test nothing learnable:** each repaired operator must be held out, replace a training
     skill, and have every literal (place in the operator, sign, predicate, arguments) in some training skill;
   - **groups:** learnability (each skill alone, with `LEARNABILITY_EMBEDDING` (multi-hot), evaluated every `LEARN_EVAL_INTERVAL` (10k) steps: its
-    steps to threshold are the from-scratch baseline and set `RQ1_STEPS=auto`; also the individually trained
+    steps to threshold are the from-scratch baseline (a repaired skill's over every one of `SEEDS`, the training skills' at
+    seed 0) and set `RQ1_STEPS=auto`; also the individually trained
     baseline for RQ4),
     rq1 (one shared policy per condition and seed on `BASE_SKILLS`), repair (each `FROM:TO` in `REPAIRS`, in
     each of `REPAIR_MODES`, repair-visible and repair-hidden; every skill evaluated every
