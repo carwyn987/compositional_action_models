@@ -85,9 +85,11 @@ In rough priority order.
 3. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.
-4. **Composition scale under weight decay is unmeasured.** Check in the next run with compositional
-   conditions that `operator_embedding_magnitude_before_normalization/*` settles at O(1–10) with
-   `--composition-weight-decay` (`project_status.md` §2). If it keeps growing, the other remedies are:
+4. **The composition's scale explodes, and the compositional embedding collapses (first priority).** With
+   `--composition-weight-decay 0.01`, `operator_embedding_magnitude_before_normalization/*` grew from about 0.8 to
+   1e3–1e10 in 300–450k steps (`docs/results.md`, RQ3 Experiment 2), largest for operators with `(raised ?o)`, and
+   after the extractor's normalization unstack-raised's embedding was pickup-raised's (cosine 1.000) and pickup's
+   nearly unstack's (0.91–0.99). Every compositional result waits on this. Remedies:
 
    | remedy | how it works | trade-off |
    | --- | --- | --- |
@@ -178,9 +180,15 @@ In rough priority order.
     `push-beside`);
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
-  - more pairs where the repaired literal appears in training in a different skill;
-  - push-beside reached only 0.55 alone in the 2026-10-11 run; if it can't be learned, place-beside's
-    `(beside ?o ?u)` is trained but not learned, and that pair says little.
+  - replicate the first experiment (`docs/results.md`: unstack-raised, no zero-shot transfer, no speed-up, more
+    forgetting with the compositional embedding) under RQ3's protocol with seeds, repair-hidden and the
+    from-scratch baseline;
+  - test its working hypothesis, that a few operators are too few for a literal to get a meaning of its own:
+    repairs whose new literals several training operators share (the pushes; or new operators that use
+    `(raised ?o)` in other contexts, e.g. raise and lower skills on a held block), against the same repairs from
+    fewer operators;
+  - push-beside reached only 0.60 alone in 300k steps (2026-10-21) and was still improving; until it reaches the
+    threshold, place-beside's `(beside ?o ?u)` is trained but not learned, and that pair says little.
 
 **RQ4: can embeddings generate policies (hypernetworks)?**
 - *Built:* nothing yet, apart from the single-skill learnability runs, which are the "individually trained
