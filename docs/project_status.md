@@ -326,6 +326,9 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
 
 ## 5. Results so far
 
+The research results are in `docs/results.md`; the runs below are the development runs that shaped the
+environment, rewards and training.
+
 In short: no research question has a conclusive answer yet. In the 2026-10-10 run every skill was learned
 alone, and every embedding condition learned all six skills when they were trained together, but the RQ1
 comparison had one seed and the repair test turned out not to need new behaviour. The 2026-10-13 run, with

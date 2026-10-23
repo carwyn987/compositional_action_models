@@ -1,8 +1,8 @@
 # Research focus
 
 The research questions, and for each: the hypothesis, the experiment, the metrics and how results are read.
-What the code does and what the experiments have shown so far is in `docs/project_status.md`; how to run each
-experiment is in `docs/experiments.md`; what to do next is in `docs/next_steps.md`.
+What the code does is in `docs/project_status.md`, what the experiments have shown in `docs/results.md`; how to
+run each experiment is in `docs/experiments.md`; what to do next is in `docs/next_steps.md`.
 
 ## The question
 
