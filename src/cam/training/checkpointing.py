@@ -5,8 +5,11 @@ the target (os.replace, atomic on POSIX). An interrupted save leaves the
 previous file intact, never a partial one.
 """
 
+import contextlib
 import logging
 import os
+import signal
+import threading
 from pathlib import Path
 from typing import Callable
 
@@ -21,6 +24,22 @@ def atomic_write_text(path: Path, text: str) -> None:
     partial = path.with_name(path.name + ".partial")
     partial.write_text(text)
     os.replace(partial, path)
+
+
+@contextlib.contextmanager
+def sigint_ignored():
+    """Ctrl+C (SIGINT) is ignored inside this block: for the save of a run that is stopping. A second SIGINT
+    would otherwise cut that save short and lose the steps since the last checkpoint: a second Ctrl+C, or a stop
+    that signals every process of a systemd unit (systemctl kill) while the overnight runner also forwards it
+    to each run. Signal handlers can only be set from the main thread; elsewhere this does nothing."""
+    if threading.current_thread() is not threading.main_thread():
+        yield
+        return
+    previous = signal.signal(signal.SIGINT, signal.SIG_IGN)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGINT, previous)
 
 
 def atomic_save_model(model: BaseAlgorithm, path: Path) -> None:
