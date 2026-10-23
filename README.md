@@ -48,6 +48,7 @@ OPERATOR_EMBEDDINGS="one-hot compositional-tree" SEEDS="0 1 2" ./scripts/start_o
 ./scripts/watch_best_policies.py                             # the best trained policy per skill
 ./scripts/check_policy_progress.py outputs/<run>             # is a trained policy stuck, or slowly getting there?
 ./scripts/wrong_embedding_control.py outputs/<run> --skill unstack-raised --as unstack   # does it read the operator?
+./scripts/explore_embeddings.py --run outputs/<run> --serve  # RQ5: its operator embeddings in 2-D / 3-D, and how alike they are
 ./scripts/sample_repair_scenario.sh                          # a PPO repair scenario in a few hours (pickup -> pickup-raised)
 LOGDIR=outputs/overnight_<date> ./scripts/start_tensorboard.sh
 ```
@@ -71,6 +72,7 @@ are reference.
 | `docs/related_work.md` | the closest prior work for each research question, what this project adds, and references |
 | `docs/policy_inputs.md` | the policy's observation: state, operator embedding, grounding slots |
 | `docs/operator_embeddings.md` | every operator embedding condition (one-hot, random, text, multi-hot, trainable, compositional), with worked examples |
+| `docs/embedding_explorer.md` | `scripts/explore_embeddings.py`: plotting and comparing operator embeddings and their parts (RQ5) |
 | `docs/component_diagrams.md` | component map, one training episode, class diagram (`.html` renders them in a browser) |
 
 ## Use of AI
