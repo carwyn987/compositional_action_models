@@ -233,3 +233,55 @@ def test_intermediates_end_in_the_embedding(architecture):
             torch.testing.assert_close(stages["and eff"], model.conjunction(stages["and-sum eff"]))
             torch.testing.assert_close(stages["pre"], model.precondition(stages["and pre"]))
             torch.testing.assert_close(stages["eff"], model.effect(stages["and eff"]))
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("stage_normalization", [False, True])
+def test_one_literal_outgrowing_the_others_collapses_operators_only_without_stage_normalization(stage_normalization):
+    """The collapse seen in training (docs/results.md, RQ3 experiment 2): pickup-raised and unstack-raised became one
+    embedding, pickup and unstack nearly one, and only pickup and pickup-raised stayed apart. Growing one component,
+    (raised ?o)'s predicate embedding, 1e4 times reproduces exactly that without stage normalization (the control):
+    every operator with the literal, as (raised ?o) or (not (raised ?o)), becomes the point its sign gives. With it,
+    each literal's conjunct keeps its magnitude and the embeddings do not move."""
+    import gymnasium as gym
+
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS, compositional_layout
+    from cam.skills.registry import build_skill
+
+    config = parse_args(["--skills", "pickup", "--operator-encoder", "compositional", "--compositional-name", "none"])
+    layout = compositional_layout(config)
+    skills = [build_skill(name, config) for name in ("pickup", "pickup-raised", "unstack", "unstack-raised")]
+    encoder = OPERATOR_ENCODERS["compositional"](config, skills)
+    x = torch.as_tensor(np.stack([encoder.encode(skill.symbolic_action_model) for skill in skills]))
+    space = gym.spaces.Dict({"observation": gym.spaces.Box(-np.inf, np.inf, (5,)),
+                             "operator_embedding": gym.spaces.Box(-np.inf, np.inf, (layout.size,))})
+    torch.manual_seed(0)
+    extractor = CompositionalPolicyFeaturesExtractor(space, TreeComposition, layout, 32, 256,
+                                                     {"stage_normalization": stage_normalization})
+
+    def cosines() -> np.ndarray:
+        """pickup-raised / unstack-raised, pickup / unstack, pickup / pickup-raised."""
+        with torch.no_grad():
+            embeddings = torch.nn.functional.normalize(extractor.operator_embedding(x), dim=1)
+        similarity = (embeddings @ embeddings.T).numpy()
+        return np.array([similarity[1, 3], similarity[0, 2], similarity[0, 1]])
+
+    before = cosines()
+    with torch.no_grad():
+        extractor.composition.components.predicate_embedding.weight[layout.predicates.index("raised") + 1] *= 1e4
+    after = cosines()
+    if stage_normalization:
+        np.testing.assert_allclose(after, before, atol=0.01)
+    else:
+        assert after[0] > 0.9999 and after[1] > 0.999 and after[2] < 0.9 < before[2]
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("architecture", ARCHITECTURES)
+def test_stage_normalization_adds_no_parameters(architecture):
+    """Its LayerNorms have no gain or bias, so a model saved without it has exactly the parameters, and without
+    the option (the default) computes exactly as it was trained."""
+    def parameters(**options):
+        return {name: tuple(p.shape) for name, p in architecture(LAYOUT, 16, 32, **options).named_parameters()}
+
+    assert parameters(stage_normalization=True) == parameters() == parameters(stage_normalization=False)

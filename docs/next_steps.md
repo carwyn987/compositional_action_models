@@ -85,19 +85,6 @@ In rough priority order.
 3. **Putdown's two setups are mixed in its metrics.** Each episode starts after pickup (held low) or
    pickup-raised (held high), at random, and the success rate averages both. Record the setup chain with
    each evaluation episode and report them separately.
-4. **The composition's scale explodes, and the compositional embedding collapses (first priority).** With
-   `--composition-weight-decay 0.01`, `operator_embedding_magnitude_before_normalization/*` grew from about 0.8 to
-   1e3–1e10 in 300–450k steps (`docs/results.md`, RQ3 Experiment 2), largest for operators with `(raised ?o)`, and
-   after the extractor's normalization unstack-raised's embedding was pickup-raised's (cosine 1.000) and pickup's
-   nearly unstack's (0.91–0.99). Every compositional result waits on this. Remedies:
-
-   | remedy | how it works | trade-off |
-   | --- | --- | --- |
-   | function-preserving rescaling | LayerNorm ignores the scale of its input, so periodically dividing the composition's last layer by its current output magnitude changes nothing the policy computes and resets the raw magnitude to about 1 | exact, no tuning; only the last layer is reset, and Adam's moment estimates briefly mismatch |
-   | bounded components | `nn.Embedding(..., max_norm=1)` for the type, variable and predicate embeddings, plus spectral norm on every composition layer | raw output bounded by construction; constrains capacity, and spectral norm costs compute every step |
-   | normalize after every stage | LayerNorm/RMSNorm after TYPED, LITERAL, AND, PRE/EFF, OPERATOR | bounds activations, but the weights can still drift; best combined with weight decay |
-   | norm-aware optimizer (LAMB/LARS) | step size proportional to ‖w‖ | treats the symptom; a different optimizer for one module |
-   | penalty on the raw magnitude | a backward hook adds the gradient of λ(‖raw‖ − 1)² | direct, but hacky inside Stable-Baselines3's losses |
 
 ## 4. Features to add
 
