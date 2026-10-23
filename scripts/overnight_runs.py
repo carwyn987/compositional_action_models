@@ -34,7 +34,8 @@ How it runs
 
 Groups
   learnability  each skill alone (BASE_SKILLS and every repaired skill), LEARNABILITY_EMBEDDING: can it be trained at
-                all, and how fast? Also the "individual policy" baseline for RQ4 (hypernetworks).
+                all, and how fast? Seed 0, and a repaired skill every one of SEEDS: its runs are the from-scratch
+                baseline of the repairs' transfer gain. Also the "individual policy" baseline for RQ4 (hypernetworks).
   rq1           RQ1: one shared policy on BASE_SKILLS for each operator embedding condition (OPERATOR_EMBEDDINGS)
                 and seed: steps to threshold, AUC and final success per condition. Conditions whose embedding
                 carries the operator's name (text, compositional-*) run once per OPERATOR_NAMES: exclude, as
@@ -377,18 +378,24 @@ def build_plan() -> list[Run]:
     if "learnability" in RUN_GROUPS:
         for skill in dict.fromkeys(BASE_SKILLS + REPAIRED):
             output = OUT / "learnability" / skill
-            runs.append(Run(
-                label=f"learnability_{skill}", group="learnability", title=f"Learnability · {skill}",
-                what=(f"one {ALGORITHM.upper()} policy trained on {skill} alone ({LEARNABILITY_EMBEDDING} embedding), "
-                      f"{LEARN_STEPS:,} steps"),
-                why=(f"can {skill} be learned at all, and how fast? If not, no result that uses it means anything. "
-                     "Also the single-skill baseline for RQ4 (hypernetworks vs individual policies)."),
-                steps=LEARN_STEPS, condition=LEARNABILITY_EMBEDDING, output=output,
-                embedding_options=tuple(condition_options(LEARNABILITY_EMBEDDING)),
-                command=["main.py", "--skills", skill, *condition_options(LEARNABILITY_EMBEDDING),
-                         "--total-timesteps", str(LEARN_STEPS), "--seed", "0", *COMMON, "--output-dir", str(output),
-                         "--eval-interval", str(LEARN_EVAL_INTERVAL)],
-            ))
+            # a repaired operator's runs are the from-scratch baseline its repairs' steps are compared with, so it
+            # has the repairs' seeds; a training skill's run (can it be learned at all?) has seed 0
+            for seed in SEEDS if skill in REPAIRED else [0]:
+                runs.append(Run(
+                    label=f"learnability_{skill}" + (f"_seed{seed}" if seed else ""), group="learnability",
+                    title=f"Learnability · {skill}" + (f" · seed {seed}" if seed else ""),
+                    what=(f"one {ALGORITHM.upper()} policy trained on {skill} alone ({LEARNABILITY_EMBEDDING} "
+                          f"embedding), {LEARN_STEPS:,} steps"),
+                    why=(f"can {skill} be learned at all, and how fast? If not, no result that uses it means anything. "
+                         + (f"Also the from-scratch baseline of the repairs to {skill} (their transfer gain). "
+                            if skill in REPAIRED else "")
+                         + "Also the single-skill baseline for RQ4 (hypernetworks vs individual policies)."),
+                    steps=LEARN_STEPS, condition=LEARNABILITY_EMBEDDING, output=output,
+                    embedding_options=tuple(condition_options(LEARNABILITY_EMBEDDING)),
+                    command=["main.py", "--skills", skill, *condition_options(LEARNABILITY_EMBEDDING),
+                             "--total-timesteps", str(LEARN_STEPS), "--seed", str(seed), *COMMON,
+                             "--output-dir", str(output), "--eval-interval", str(LEARN_EVAL_INTERVAL)],
+                ))
     for seed in SEEDS:
         for condition, embedding, options, description in conditions():
             rq1_label, rq1_output = f"rq1_{condition}_seed{seed}", OUT / "rq1" / f"{condition}_seed{seed}"
