@@ -160,8 +160,8 @@ set by each layer's weight growth (not measured).
 
 `--composition-weight-decay` (default 0.01, compositional runs only; `CompositionWeightDecayCallback`) is
 decoupled weight decay, as in AdamW, on the composition alone: after each gradient update, every parameter
-under each features extractor's `composition` (actor and critic for SAC, the shared one for PPO) is
-multiplied by (1 − lr·wd). Weight decay shrinks every parameter toward zero and the learning signal re-grows
+under each distinct features extractor's `composition` (for SAC the one actor and critic share, not the target
+critic's copy, which follows by Polyak averaging; for PPO the shared one) is multiplied by (1 − lr·wd), once. Weight decay shrinks every parameter toward zero and the learning signal re-grows
 what it needs, so the scale settles where the two balance. Too strong, and the composition underfits and
 operators blur together; it also shrinks the embeddings of rarely seen predicates, which get few updates to
 recover. Tune wd by watching `operator_embedding_magnitude_before_normalization/*` in TensorBoard: it should
