@@ -6,15 +6,16 @@
 
 Sections:
     1. runs         every run: finished or not, last step, stop reason, warnings / errors in its log
-    2. conditions   per condition (runs differing only in seed): mean ± std over seeds of steps and episodes
-                    to threshold, AUC and final success rate, per skill, deterministic and stochastic
+    2. conditions   per condition (runs differing only in seed): mean ± std over seeds, with a bootstrap 95%
+                    confidence interval of the mean, of steps and episodes to threshold, AUC and final success
+                    rate, per skill, deterministic and stochastic
     3. curves       per run and skill: deterministic success rate at evenly spaced evaluations
     4. training     per run: start -> end of key Stable-Baselines3 statistics from TensorBoard (rewards,
                     entropy / action std, KL, explained variance, losses) and the operator embedding
                     magnitudes logged during training, flagging NaN or exploding values
     5. added skills per run where a skill was added or replaced after training started (repair / new
                     skill runs): the step it was added, its zero-shot success rate there, and the steps to
-                    threshold from there, per condition (mean ± std over seeds); and what the other skills
+                    threshold from there, per condition (as in section 2); and what the other skills
                     forgot: their mean level before, lowest after and final, and the steps until all were
                     back at their level
     6. embeddings   per run with a learned operator embedding (trainable or compositional): the final
@@ -39,13 +40,64 @@ TRAINING_TAGS = [
 ]
 
 
-def mean_std(values: list) -> str:
+def censored(values: list, trained: list) -> tuple[list, int]:
+    """A time to reach something over seeds (e.g. steps to threshold), with each seed that never got there (None)
+    counted as what it trained (trained: each seed's training experience), and the number of such seeds. Left out,
+    those seeds would make a condition that often fails look fast. Counted so, each is at most its true time, so the
+    mean, both ends of its bootstrap interval (each resample's mean) and a transfer gain from them are lower bounds,
+    as rq1_budget in overnight_runs.py counts a skill that never reached the threshold as all its steps."""
+    never = sum(value is None and steps is not None for value, steps in zip(values, trained))
+    return [steps if value is None else value for value, steps in zip(values, trained)], never
+
+
+def mean_std(values: list, trained: list | None = None) -> str:
+    """Mean ± std over seeds and, from 2 seeds on, the bootstrap 95% confidence interval of the mean [low, high];
+    seeds without a value are left out. With trained, a time to reach something (see censored): ≥ marks lower
+    bounds, followed by the number of seeds that never got there."""
+    values, never = censored(values, trained) if trained is not None else (values, 0)
     values = [v for v in values if v is not None]
-    if not values:
+    if len(values) == never:
         return "never"
     if len(values) == 1:
         return f"{values[0]:.3g}"
-    return f"{statistics.mean(values):.3g} ± {statistics.stdev(values):.2g}"
+    low, high = bootstrap_interval(values)
+    return (f"{'≥' if never else ''}{statistics.mean(values):.3g} ± {statistics.stdev(values):.2g}"
+            f" [{low:.3g}, {high:.3g}]{f' ({never} never)' if never else ''}")
+
+
+def bootstrap_interval(values: list, confidence: float = 0.95, resamples: int = 10_000) -> tuple[float, float]:
+    """Percentile bootstrap confidence interval of the mean: the middle `confidence` of the means of `resamples`
+    resamples (with replacement) of values, drawn from a fixed seed so the same runs always give the same report.
+    It never reaches beyond the values' range, and with 3 values or fewer it is that range, which holds the true
+    mean less often than `confidence` says (3 times in 4 for 3 values from a symmetric distribution)."""
+    import numpy as np
+
+    values = np.asarray(values, dtype=float)
+    means = values[np.random.default_rng(0).integers(len(values), size=(resamples, len(values)))].mean(axis=1)
+    low, high = np.quantile(means, [(1 - confidence) / 2, (1 + confidence) / 2])
+    return float(low), float(high)
+
+
+def training_experience(metrics: dict, skill: str, measure: str = "steps") -> int | None:
+    """Training experience in measure (steps, episodes or skill_steps) from the skill's first evaluation to its
+    last: what a run that never reached the threshold trained without reaching it (None if not recorded)."""
+    points = [point for point in metrics["curves"]["deterministic"]["points"] if skill in point["result"]]
+    if not points:
+        return None
+    if measure == "steps":
+        return points[-1]["step"] - points[0]["step"]
+    first, last = points[0].get("progress"), points[-1].get("progress")
+    if not (first and last):
+        return None
+    if measure == "episodes":
+        return last["episodes"] - first["episodes"]
+    return last[measure].get(skill, 0) - first[measure].get(skill, 0)
+
+
+def condition_name(run: Path) -> str:
+    """The run's folder and run name without their seeds: runs of one condition that differ only in seed
+    (rq1/one-hot_seed0/<name>_seed0 and rq1/one-hot_seed1/<name>_seed1) share it."""
+    return re.sub(r"_seed\d+(?=/|$)", "", f"{run.parent.name}/{run.name}")
 
 
 def section_runs(runs: list[Path], folder: Path) -> list[str]:
@@ -71,25 +123,31 @@ def load_metrics(run: Path) -> dict | None:
 
 
 def section_conditions(runs: list[Path]) -> list[str]:
-    lines = ["2. CONDITIONS (mean ± std over seeds; steps / episodes to threshold count from the skill's zero-shot point; "
+    lines = ["2. CONDITIONS (mean ± std over seeds [bootstrap 95% confidence interval of the mean, from 2 seeds]; "
+             "≥ ... (k never): k seeds never reached the threshold and count as what they trained, so the mean and "
+             "interval are lower bounds; steps / episodes to threshold count from the skill's zero-shot point; "
              "on skill: of those steps, the ones spent on the skill itself)"]
     conditions: dict[str, list[dict]] = {}
     for run in runs:
         metrics = load_metrics(run)
         if metrics:
-            conditions.setdefault(f"{run.parent.name}/{re.sub(r'_seed\d+$', '', run.name)}", []).append(metrics)
+            conditions.setdefault(condition_name(run), []).append(metrics)
     for condition, metrics_list in sorted(conditions.items()):
         lines.append(f"   {condition}  ({len(metrics_list)} seeds)")
         for mode in ("deterministic", "stochastic"):
             skills = sorted({skill for metrics in metrics_list for skill in metrics["summary"][mode]})
             for skill in skills:
                 values = [metrics["summary"][mode].get(skill, {}) for metrics in metrics_list]
+                steps, skill_steps, episodes = (
+                    mean_std([v.get(f"{measure}_to_threshold") for v in values],
+                             [training_experience(metrics, skill, measure) for metrics in metrics_list])
+                    for measure in ("steps", "skill_steps", "episodes"))
                 lines.append(
-                    f"     {mode[:5]} {skill:10s} steps {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
-                    f"  on skill {mean_std([v.get('skill_steps_to_threshold') for v in values]):>16s}"
-                    f"  episodes {mean_std([v.get('episodes_to_threshold') for v in values]):>14s}"
-                    f"  auc {mean_std([v.get('auc') for v in values]):>12s}"
-                    f"  final {mean_std([v.get('final_success_rate') for v in values]):>12s}"
+                    f"     {mode[:5]} {skill:10s} steps {steps:>34s}"
+                    f"  on skill {skill_steps:>34s}"
+                    f"  episodes {episodes:>34s}"
+                    f"  auc {mean_std([v.get('auc') for v in values]):>26s}"
+                    f"  final {mean_std([v.get('final_success_rate') for v in values]):>24s}"
                 )
     return lines
 
@@ -141,14 +199,15 @@ def section_added_skills(runs: list[Path]) -> list[str]:
     gain: the steps the skill needed from scratch (its learnability run in the same folder) divided by the steps it
     needed on itself after being added."""
     lines = ["5. ADDED SKILLS (added or replaced after training started: step added, zero-shot success there "
-             "(deterministic / stochastic), steps to threshold from there; mean ± std over seeds)"]
+             "(deterministic / stochastic), steps to threshold from there; over seeds as in section 2)"]
     conditions: dict[str, list[tuple]] = {}
-    from_scratch: dict[str, list] = {}  # skill -> deterministic steps to threshold in its learnability runs
+    from_scratch: dict[str, list] = {}  # skill -> (deterministic steps to threshold, steps trained) per learnability run
     for run in runs:
         metrics = load_metrics(run)
         if metrics and run.parent.parent.name == "learnability":
             from_scratch.setdefault(run.parent.name, []).append(
-                metrics["summary"]["deterministic"].get(run.parent.name, {}).get("steps_to_threshold"))
+                (metrics["summary"]["deterministic"].get(run.parent.name, {}).get("steps_to_threshold"),
+                 training_experience(metrics, run.parent.name)))
     for run in runs:
         metrics = load_metrics(run)
         if not metrics:
@@ -164,8 +223,9 @@ def section_added_skills(runs: list[Path]) -> list[str]:
             if step == 0:
                 continue
             summary = {mode: metrics["summary"][mode].get(skill, {}) for mode in ("deterministic", "stochastic")}
-            condition = f"{run.parent.name}/{re.sub(r'_seed\d+$', '', run.name)}"
-            conditions.setdefault(f"{condition} {skill}", []).append((step, summary, removed, metrics.get("retention")))
+            trained = {measure: training_experience(metrics, skill, measure) for measure in ("steps", "skill_steps")}
+            conditions.setdefault(f"{condition_name(run)} {skill}", []).append(
+                (step, summary, removed, metrics.get("retention"), trained))
     for key, entries in sorted(conditions.items()):
         removed = entries[0][2]
         lines.append(f"   {key}  ({len(entries)} seeds; added at step {mean_std([e[0] for e in entries])}"
@@ -176,29 +236,36 @@ def section_added_skills(runs: list[Path]) -> list[str]:
                          "original behaviour already satisfies the repaired operator")
         for mode in ("deterministic", "stochastic"):
             values = [e[1][mode] for e in entries]
-            lines.append(f"     {mode[:5]}  zero-shot {mean_std([v.get('zero_shot_success_rate') for v in values]):>12s}"
-                         f"  steps to threshold {mean_std([v.get('steps_to_threshold') for v in values]):>16s}"
-                         f"  on skill {mean_std([v.get('skill_steps_to_threshold') for v in values]):>16s}"
-                         f"  final {mean_std([v.get('final_success_rate') for v in values]):>10s}")
+            steps, skill_steps = (
+                mean_std([v.get(f"{measure}_to_threshold") for v in values], [e[4][measure] for e in entries])
+                for measure in ("steps", "skill_steps"))
+            lines.append(f"     {mode[:5]}  zero-shot {mean_std([v.get('zero_shot_success_rate') for v in values]):>24s}"
+                         f"  steps to threshold {steps:>34s}"
+                         f"  on skill {skill_steps:>34s}"
+                         f"  final {mean_std([v.get('final_success_rate') for v in values]):>24s}")
         skill = key.rsplit(" ", 1)[1]
         if skill in from_scratch:
-            alone = [steps for steps in from_scratch[skill] if steps is not None]
+            alone, never = censored(*zip(*from_scratch[skill]))
+            alone = [steps for steps in alone if steps is not None]
             after = [e[1]["deterministic"].get("skill_steps_to_threshold") for e in entries]
-            if alone and after and all(steps is not None for steps in after):
+            if len(alone) > never and after and all(steps is not None for steps in after):
                 gain = ("zero-shot" if statistics.mean(after) == 0 else
-                        f"{statistics.mean(alone) / statistics.mean(after):.2f}x (from scratch / after the repair)")
+                        f"{'≥' if never else ''}{statistics.mean(alone) / statistics.mean(after):.2f}x "
+                        "(from scratch / after the repair)")
             else:
-                gain = "n/a: " + ("never reached from scratch" if not alone else "not reached after the repair")
-            lines.append(f"     from scratch (learnability)  steps to threshold {mean_std(alone):>16s}  transfer gain {gain}")
-        retentions = [e[3] for e in entries if e[3] and e[3]["skills"]]
+                gain = "n/a: " + ("never reached from scratch" if len(alone) == never else "not reached after the repair")
+            lines.append(f"     from scratch (learnability)  steps to threshold {mean_std(*zip(*from_scratch[skill])):>34s}"
+                         f"  transfer gain {gain}")
+        retentions = [(e[3], e[4]["steps"]) for e in entries if e[3] and e[3]["skills"]]
         if retentions:
             def mean_of(key: str) -> list:
-                return [statistics.mean(s[key] or 0 for s in r["skills"].values()) for r in retentions]
-            back = [r["all_recovered_at"] - r["added_at"] for r in retentions if r["all_recovered_at"] is not None]
-            lines.append(f"     others (mean over skills)  before {mean_std(mean_of('level_before')):>10s}"
-                         f"  lowest after {mean_std(mean_of('lowest_after')):>10s}"
-                         f"  final {mean_std(mean_of('final')):>10s}"
-                         f"  all back after {mean_std(back):>10s} steps ({len(back)} of {len(retentions)} seeds)")
+                return [statistics.mean(s[key] or 0 for s in r["skills"].values()) for r, _ in retentions]
+            back = [r["all_recovered_at"] - r["added_at"] if r["all_recovered_at"] is not None else None
+                    for r, _ in retentions]
+            lines.append(f"     others (mean over skills)  before {mean_std(mean_of('level_before')):>24s}"
+                         f"  lowest after {mean_std(mean_of('lowest_after')):>24s}"
+                         f"  final {mean_std(mean_of('final')):>24s}"
+                         f"  steps until all back {mean_std(back, [steps for _, steps in retentions]):>34s}")
     if len(lines) == 1:
         lines.append("   none")
     return lines
