@@ -125,6 +125,15 @@ Compare whole-operator text embeddings, aggregate compositional embeddings (one 
 operator's literals) and slot-based compositional embeddings, with the identity conditions as baselines. Aggregate over orders and seeds for
 statistical significance.
 
+The overnight runner's `rq2` experiment (`src/cam/experiments/research_experiments.py`, which gives its design and
+the metrics to read) runs this on four skills, the corners of a square: pickup, unstack, pickup-raised and
+unstack-raised (on the table or on a block, held low or raised), in shuffled orders, one skill per stage. Each
+skill's literals are all in its two neighbours, so in every order the last skill added has coverage 1 by the skills
+before it, which zero-shot success needs; an earlier one may lack a literal. `rq2-add-unstack-raised` adds a
+single skill: unstack-raised, to a policy trained on the other three together. A stage starts only once the one
+before reached the threshold, and continues the same run (`--repair-mode retain`, so that no earlier skill is
+forgotten).
+
 **Metrics.** The new skill's zero-shot success and steps to threshold; retention of the earlier skills.
 
 **Interpretation.** How far the shared policy generalizes to new skills, including zero-shot. Retention shows
