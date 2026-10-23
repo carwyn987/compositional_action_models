@@ -26,7 +26,7 @@ How it runs
     while runs go, their progress (steps, steps/s, time left) and the overall time left; when one ends,
     its outcome. A repair run waits for the RQ1 run it continues, an rq2 stage for the stage before.
   * Ctrl+C stops every running run after it saves. Starting the same command again skips finished runs and
-    resumes interrupted ones from their last save.
+    resumes interrupted ones from their last save (an interrupted repair starts over from its rq1 run).
   * Before anything long starts (fail fast): the text backend is checked and every operator text the runs
     need is embedded and cached (TEXT_BACKEND=openai needs the API key and network), the device is reported,
     and every skill's scripted policy must succeed at least once in 3 episodes (which checks each skill's
@@ -805,8 +805,8 @@ class Runner:
         run.command[run.command.index("--total-timesteps") + 1] = str(self.rq1_steps)
 
     def prepare(self, run: Run) -> list[str] | None:
-        """The command to run: a new run, a repair copied from its rq1 run, a later rq2 stage continuing the run of its
-        chain, or a resume of an interrupted run."""
+        """The command to run: a new run, a repair copied from its rq1 run (also when interrupted), a later rq2 stage
+        continuing the run of its chain, or a resume of an interrupted run."""
         if run.group == "rq1" and RQ1_AUTO:
             self.set_rq1_budget(run)
         run_directory = run.run_directory()
@@ -817,6 +817,13 @@ class Runner:
                 self.failed.add(run.label)
                 return None
             command[command.index("--run-directory") + 1] = str(run_directory)
+        if run.copy_from is not None and run_directory is not None:
+            # an interrupted repair starts over from its rq1 run: resumed, it would reload the rq1 run's replay buffer
+            # (a repair saves none) with the replaced skill's transitions back in, and its config.json would no longer
+            # show that it replaced a skill (main.py --reset-replaced-skills)
+            say("   restarting an interrupted repair from its rq1 run")
+            shutil.rmtree(run_directory)
+            run_directory = None
         if run.copy_from is not None and run_directory is None:
             sources = sorted(path.parent for path in run.copy_from.glob("*/model.zip"))
             if not sources:
@@ -824,15 +831,11 @@ class Runner:
                 self.failed.add(run.label)
                 return None
             shutil.copytree(sources[0], run.output, copy_function=link_replay_buffer)
-            base = json.loads((run.output / "metrics.json").read_text())["progress"]["steps"]
-            (run.output / "repair_base_steps.txt").write_text(str(base))
             return run.command
         if run_directory is not None and (run_directory / "model.zip").exists():  # interrupted earlier
             metrics = json.loads((run_directory / "metrics.json").read_text())
             done = metrics["progress"]["steps"]
-            if run.copy_from is not None:
-                base = int((run_directory / "repair_base_steps.txt").read_text())
-            elif run.stage > 1:  # a later rq2 stage: from where its skills were added (None: it has not started)
+            if run.stage > 1:  # a later rq2 stage: from where its skills were added (None: it has not started)
                 base = added_at(metrics, run.added)
                 if base is None:
                     return command
