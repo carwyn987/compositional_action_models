@@ -8,6 +8,7 @@ import torch  # noqa: E402
 from stable_baselines3 import SAC  # noqa: E402
 
 from cam.training.multi_task_sac import MultiTaskSAC, embedding_key  # noqa: E402
+from cam.training.stable_baselines3_trainer import forget_replaced_skills  # noqa: E402
 
 PRECISE, FREE = np.eye(2, dtype=np.float32)
 
@@ -104,3 +105,48 @@ def test_temperatures_and_slots_survive_save_and_load(tmp_path):
     loaded = MultiTaskSAC.load(tmp_path / "model.zip", device="cpu")
     assert loaded.skill_slots == sac.skill_slots
     assert torch.equal(loaded.log_ent_coef.detach(), sac.log_ent_coef.detach())
+
+
+@pytest.mark.unit
+def test_a_reset_slot_is_one_no_batch_has_used(tmp_path):
+    """Both skills trained, saved and loaded as a resume loads them. Resetting the precise skill's slot gives it what
+    a slot no batch has used (the one a new embedding would get) has: the initial temperature and zero Adam moments.
+    The free skill's slot stays as it was. Control: before the reset, the precise slot differs from an unused one."""
+    sac = model(learning_starts=50)
+    sac.learn(150)
+    sac.save(tmp_path / "model.zip")
+    loaded = MultiTaskSAC.load(tmp_path / "model.zip", device="cpu")
+    adam = loaded.ent_coef_optimizer.state[loaded.log_ent_coef]
+    precise, free = (loaded.skill_slots[embedding_key(embedding)] for embedding in (PRECISE, FREE))
+    unused = len(loaded.skill_slots)
+
+    def slot(index: int) -> list[float]:
+        return [float(loaded.log_ent_coef.detach()[index]), float(adam["exp_avg"][index]),
+                float(adam["exp_avg_sq"][index])]
+
+    free_before = slot(free)
+    assert slot(precise) != slot(unused) == [loaded.initial_log_ent_coef, 0.0, 0.0]
+    assert loaded.reset_temperatures([PRECISE]) == [precise]
+    assert slot(precise) == slot(unused)
+    assert slot(free) == free_before
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("algorithm", [SAC, MultiTaskSAC])
+def test_forgetting_a_replaced_skill_removes_its_transitions_and_resets_its_own_temperature(algorithm):
+    """After training both skills, forgetting the precise one (as a repair that replaces it does) removes its
+    transitions from the replay buffer, keeping every one of the free skill's. MultiTaskSAC resets the precise
+    skill's temperature to the initial one and keeps the free skill's; SAC keeps its one temperature, which every
+    skill (and a new one) trains with."""
+    sac = model(algorithm, learning_starts=50)
+    sac.learn(150)
+    stored = sac.replay_buffer.observations["operator_embedding"][: sac.replay_buffer.size(), 0]
+    free_transitions = int((stored == FREE).all(axis=1).sum())
+    precise, free = temperature(sac, PRECISE), temperature(sac, FREE)
+    assert precise < 1.0 and 0 < free_transitions < 150
+
+    forget_replaced_skills(sac, {"precise": PRECISE})
+    stored = sac.replay_buffer.observations["operator_embedding"][: sac.replay_buffer.size(), 0]
+    assert sac.replay_buffer.size() == free_transitions and (stored == FREE).all()
+    assert temperature(sac, FREE) == free
+    assert temperature(sac, PRECISE) == (1.0 if algorithm is MultiTaskSAC else precise)

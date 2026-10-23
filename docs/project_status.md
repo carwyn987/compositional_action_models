@@ -250,6 +250,19 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   repaired skill is at the threshold and every other skill has recovered (`--recovery-tolerance`, 0.1): the
   cost of a repair without forgetting.
 
+A resume that replaces skills of the run (leaves them out of `--skills` while adding others, as a repair does;
+one that only adds skills, as an rq2 stage does, replaces none) first removes what the model holds of them besides
+its network (`forget_replaced_skills` in `stable_baselines3_trainer.py`): their transitions in the loaded replay
+buffer, found by their operator embedding as the run encoded it, and, with multi-task SAC, their temperature
+slots, reset to the initial temperature with zero Adam moments, as a slot no batch has used. A replaced skill is
+no longer part of the task: its transitions' rewards are for effects it no longer has, and under repair-hidden
+their inputs are exactly the repaired operator's, so the critic would get contradictory targets in the very
+states the repair changes until new transitions replaced them; its temperature (about 0.05 once learned) was
+tuned to a behaviour no longer wanted. This holds alike for repair-visible and repair-hidden and every operator
+embedding: under repair-hidden the reset slot is the repaired operator's own, so it explores as a new embedding's
+does. SAC's one temperature is every skill's, and what a new skill gets, so it is kept.
+`--no-reset-replaced-skills` keeps both (an ablation).
+
 ## 4. Scripts
 - **`scripts/start_overnight.sh`:** checks the environment (ignores the shell's `PYTHONPATH`, e.g. ROS),
   runs the unit tests, writes `run_info.txt` (commit and settings), blocks sleep, then runs
@@ -302,12 +315,14 @@ operator embedding's magnitude (`operator_embedding_magnitude/*`, and for compos
   - **order:** runs start in plan order, the most informative first: every learnability run, then every rq1
     run, then the repairs, then the rq2 chains;
   - **replay buffers:** rq1 runs save theirs (about 1 GB each), and each repair starts from it (hard-linked,
-    not copied, and not saved again), so the skills it was trained on keep being replayed; an rq2 chain's run saves
-    its buffer with every checkpoint, so each stage keeps replaying the earlier stages' skills. A run resumed
+    not copied, and not saved again), so the skills it was trained on keep being replayed; the replaced skill's
+    transitions are removed in memory at the start (§3), and the linked file is only read. An rq2 chain's run
+    saves its buffer with every checkpoint, so each stage keeps replaying the earlier stages' skills. A run resumed
     without a buffer acts without updating for its first 5k steps (`RESUME_WARMUP_STEPS`), instead of training
     on the few transitions collected since the resume (in the 2026-10-11 repairs, resumed without buffers, the
     critic fitted those and the other skills' success dipped);
-  - Ctrl+C saves and stops every run, and the same command resumes;
+  - Ctrl+C saves and stops every run, and the same command resumes (an interrupted repair starts over from its rq1
+    run, so it starts as a repair does: without the replaced skill's transitions);
   - outputs: run directories per group, `logs/`, `failed.txt`, `summary.csv`, and `review.txt` at the end.
 - **`scripts/review_runs.py`:** report covering runs, per-condition metrics (over seeds, with bootstrap 95% CIs:
   §3), curves, TensorBoard training statistics including embedding magnitudes, added and repaired skills (each
