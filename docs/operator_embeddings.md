@@ -16,7 +16,8 @@ the pickup operator below, computed with the default settings (`--operator-embed
 Two places do the work. In the environment, `PolicyObservationWrapper` calls an `OperatorEncoder` once
 per operator and puts the result in the observation. In the policy, the features extractor (its first
 module) turns that observation entry into the operator part of the MLP input. Only the extractor has
-trainable parameters, so only that half changes during training.
+trainable parameters, so only that half changes during training. `docs/embedding_explorer.md` shows how to plot and
+compare any of these embeddings, and the parts the compositional ones are built from.
 
 ## Overview: every encoder
 
