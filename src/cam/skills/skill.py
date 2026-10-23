@@ -29,6 +29,10 @@ class Skill(ABC):
     # random. Fetch resets with every block on the table, so stack needs (("pickup",),), unstack
     # (("pickup", "stack"),), and putdown (("pickup",), ("pickup-raised",)): held low or held high.
     setup_skills: tuple[tuple[str, ...], ...] = ()
+    # Whether the gripper is moved away after the setup chain (SkillEnvironment's retreat): for a skill whose setup
+    # ends with the empty gripper around the block it acts on (unstack: stack releases the block there), so the skill
+    # starts with an approach, as pickup does, instead of a close and a short lift
+    retreat_after_setup: bool = False
 
     def __init__(self, config: dict):
         self.config = config

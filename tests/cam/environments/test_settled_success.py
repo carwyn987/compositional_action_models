@@ -41,11 +41,12 @@ class ScriptedUnstackRaised:
 
 @pytest.mark.integration
 def test_a_constant_lift_passes_through_the_raised_band_without_stopping_in_it():
-    """unstack's setup leaves the open gripper around the top block, so closing and lifting at a constant 1 cm per
-    step carries it up through the raised band, held there for more than the 5 steps settled success asks. Without
+    """Without its retreat, unstack's setup leaves the open gripper around the top block, so closing and lifting at a
+    constant 1 cm per step carries it up through the raised band, held there for more than the 5 steps settled success asks. Without
     the at-rest condition (the control) that counts as unstack-raised; with it, it does not. The scripted policy,
     which stops in the band, still succeeds."""
     env = unstack_raised_environment()
+    env.env.env.retreat = None
 
     def lift(obs, info):
         return np.array([0.0, 0.0, 0.2, -0.05])

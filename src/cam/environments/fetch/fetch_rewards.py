@@ -175,8 +175,8 @@ class FetchPickupReward(RewardFunction):
 
     Progress terms reward the change since the previous step; each stage's bonus
     is paid once per episode. The lift is measured from rest_height (the table).
-    An episode that starts with the open gripper already around the block (unstack's setup leaves it there, after
-    placing the block) counts the approach stages as done, without their bonuses, so closing is rewarded from its
+    An episode that starts with the open gripper already around the block (a setup that ends with it there, e.g.
+    unstack's without its retreat) counts the approach stages as done, without their bonuses, so closing is rewarded from its
     first step: otherwise only getting 4 cm above the block first would open the close and grip stages.
     """
 

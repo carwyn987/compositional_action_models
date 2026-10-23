@@ -7,7 +7,7 @@
 #   STEPS=2000000 ./scripts/sample_repair_scenario.sh   # a longer training run (see the settings below)
 #
 # Steps
-#   check     (seconds) a constant close-and-lift from unstack's setup must not count as unstack-raised: lifting on and
+#   check     (seconds) a constant close-and-lift from unstack's setup (no retreat) must not count as unstack-raised: lifting on and
 #             on through the raised band is not stopping in it (tests/cam/environments/test_settled_success.py)
 #   train     three PPO runs side by side:
 #               unstack    one-hot, unstack alone, UNSTACK_STEPS

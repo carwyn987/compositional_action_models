@@ -7,7 +7,9 @@ task over one or more skills. Each episode is one grounded action of one skill
     reset  choose the episode's skill (options={"skill": name}, otherwise the
            next skill in turn, or by competence), reset the scene, run that skill's setup chain
            (one of skill.setup_skills, e.g. pickup before putdown) to reach a state
-           where it applies, then choose a random grounding whose
+           where it applies, move the gripper away for skills that ask for it
+           (retreat_after_setup: unstack, whose setup ends with the gripper around
+           the block), then choose a random grounding whose
            preconditions hold and that is feasible in the scene (feasible: e.g.
            a push with no other block in its path, which could only fail)
     step   the episode ends (terminated) once the grounding's effects have held for
@@ -25,7 +27,7 @@ task over one or more skills. Each episode is one grounded action of one skill
 Each setup skill is executed like an episode of its own: a random applicable
 grounding is chosen and its policy acts until that grounding's effects hold.
 If a setup skill has no applicable grounding or does not succeed within
-max_steps_per_setup_skill, or no grounding is feasible, the scene is reset and
+max_steps_per_setup_skill (the retreat as well), or no grounding is feasible, the scene is reset and
 setup starts over, up to max_setup_attempts times (many: a diagonal push's path
 is clear in about one scene in four, and a skill without setup resamples in
 one reset).
@@ -43,9 +45,10 @@ them. Put the episode step limit outside: TimeLimit(SkillEnvironment(...), n).
 
 import logging
 from collections import deque
-from typing import Callable
+from typing import Callable, Protocol
 
 import gymnasium as gym
+import numpy as np
 
 from cam.domain.symbolic_action_model import GroundedSymbolicActionModel, groundings
 from cam.policies.policy import Policy
@@ -54,6 +57,16 @@ from cam.skills.registry import build_skill
 from cam.skills.skill import Skill
 
 logger = logging.getLogger(__name__)
+
+class Retreat(Protocol):
+    """Moves the gripper away after a setup chain (environment-specific, e.g. FetchScriptedRetreatPolicy)."""
+
+    def reset(self, info: dict, rng: np.random.Generator) -> None:
+        """Choose where to move, from the state after setup (info) and the environment's random generator."""
+
+    def __call__(self, obs, info: dict) -> np.ndarray | None:
+        """The next action, or None once the gripper is there."""
+
 
 # Competence sampling: a skill's recent success is over its last this many episodes in this environment ...
 COMPETENCE_WINDOW = 20
@@ -88,6 +101,7 @@ class SkillEnvironment(gym.Wrapper):
         competence_sampling: bool = False,
         at_rest: Callable[[GroundedSymbolicActionModel, list[dict]], bool] | None = None,
         feasible: Callable[[GroundedSymbolicActionModel, dict], bool] | None = None,
+        retreat: Retreat | None = None,
     ):
         super().__init__(env)
         self.success_hold_steps = success_hold_steps
@@ -100,6 +114,8 @@ class SkillEnvironment(gym.Wrapper):
         # (grounding, info) -> whether it can be carried out in this scene without failing (e.g. a push with another
         # block in its path cannot); groundings for which it is False are not chosen (None: every grounding can)
         self.feasible = feasible
+        # moves the gripper away after the setup chain of a skill with retreat_after_setup (None: it stays)
+        self.retreat = retreat
         self.held_infos: deque = deque(maxlen=max(success_hold_steps, 1))
         self.shared_reward = shared_reward  # reward terms added for every skill
         self.failure_penalty = failure_penalty  # subtracted on the step a failure ends the episode
@@ -148,6 +164,10 @@ class SkillEnvironment(gym.Wrapper):
             obs, info, setup = self._run_setup_chain(obs, info)
             if setup is None:
                 continue
+            if self.skill.retreat_after_setup and self.retreat is not None:
+                obs, info, moved = self._retreat(obs, info)
+                if not moved:
+                    continue
             grounded = self._choose_grounding(self.skill, info)
             if grounded is None:
                 logger.debug("setup resampled: no applicable grounding of %s after setup", self.skill.name)
@@ -267,6 +287,18 @@ class SkillEnvironment(gym.Wrapper):
             logger.debug("setup succeeded: %s in %d steps", grounded, steps)
             setup.append((grounded, steps))
         return obs, info, setup
+
+    def _retreat(self, obs, info):
+        """Move the gripper away with retreat, at most max_steps_per_setup_skill steps; moved=False if it did not get
+        there."""
+        self.retreat.reset(info, self.np_random)
+        for _ in range(self.max_steps_per_setup_skill):
+            action = self.retreat(obs, info)
+            if action is None:
+                return obs, info, True
+            obs, _, _, _, info = self.env.step(action)
+        logger.info("setup failed: the retreat did not get there within %d steps", self.max_steps_per_setup_skill)
+        return obs, info, False
 
     def _choose_grounding(self, skill: Skill, info: dict) -> GroundedSymbolicActionModel | None:
         candidates = [grounded for grounded in skill.applicable_groundings(info["facts"], info["objects"])
