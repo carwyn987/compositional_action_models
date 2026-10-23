@@ -7,6 +7,7 @@ import re
 import subprocess
 import sys
 from itertools import permutations
+from pathlib import Path
 
 import pytest
 
@@ -46,6 +47,49 @@ def test_rq1_runs_wait_for_the_learnability_runs_only_with_an_automatic_budget(m
         monkeypatch.setattr(overnight_runs, name, value)
     (rq1,) = [run for run in overnight_runs.build_plan() if run.group == "rq1"]
     assert rq1.depends_on == (("learnability_pickup", "learnability_putdown") if auto else ())
+
+
+@pytest.mark.unit
+def test_a_repaired_operator_is_learned_from_scratch_with_every_seed_of_its_repairs(monkeypatch):
+    """The from-scratch baseline of a repair's transfer gain has the repairs' seeds, so it is compared with an
+    interval like theirs; a training skill's learnability run (the gate) stays at seed 0, under the label earlier
+    folders have, so their finished runs are skipped."""
+    for name, value in (("RUN_GROUPS", ["learnability"]), ("SEEDS", [0, 1, 2]), ("BASE_SKILLS", ["pickup", "unstack"]),
+                        ("REPAIRS", [("unstack", "unstack-raised")]), ("REPAIRED", ["unstack-raised"])):
+        monkeypatch.setattr(overnight_runs, name, value)
+    runs = overnight_runs.build_plan()
+    assert [run.label for run in runs] == ["learnability_pickup", "learnability_unstack", "learnability_unstack-raised",
+                                           "learnability_unstack-raised_seed1", "learnability_unstack-raised_seed2"]
+    assert [run.command[run.command.index("--seed") + 1] for run in runs] == ["0", "0", "0", "1", "2"]
+    assert len({run.output for run in runs if "unstack-raised" in run.label}) == 1  # one folder, a run per seed
+
+
+@pytest.mark.unit
+def test_each_seed_of_a_repaired_operators_learnability_runs_its_own_run(tmp_path, monkeypatch):
+    """The seeds' runs share the operator's learnability folder: with seed 0's run finished there, seed 1's run
+    starts anew, and an interrupted seed 1 run resumes itself. Control: seed 0's run finds its own."""
+    for name, value in (("RUN_GROUPS", ["learnability"]), ("SEEDS", [0, 1]), ("BASE_SKILLS", ["unstack"]),
+                        ("REPAIRS", [("unstack", "unstack-raised")]), ("REPAIRED", ["unstack-raised"]),
+                        ("OUT", tmp_path)):
+        monkeypatch.setattr(overnight_runs, name, value)
+    seed0, seed1 = [run for run in overnight_runs.build_plan() if "unstack-raised" in run.label]
+
+    def saved_run(seed: int, steps: int) -> Path:
+        run = seed0.output / f"unstack-raised_mtsac_multi-hot_shaped_seed{seed}"
+        run.mkdir(parents=True)
+        (run / "config.json").write_text(json.dumps({"seed": seed}))
+        (run / "model.zip").write_text("")
+        (run / "metrics.json").write_text(json.dumps({"progress": {"steps": steps}}))
+        return run
+
+    finished = saved_run(0, overnight_runs.LEARN_STEPS)
+    runner = overnight_runs.Runner([seed0, seed1])
+    assert seed0.run_directory() == finished and runner.prepare(seed0) is None  # at its budget
+    assert seed1.run_directory() is None and runner.prepare(seed1) == seed1.command
+    interrupted = saved_run(1, 60_000)
+    command = runner.prepare(seed1)
+    assert command[command.index("--run-directory") + 1] == str(interrupted)
+    assert command[command.index("--total-timesteps") + 1] == str(overnight_runs.LEARN_STEPS - 60_000)
 
 
 @pytest.mark.unit
