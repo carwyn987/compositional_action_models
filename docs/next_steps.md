@@ -167,13 +167,14 @@ In rough priority order.
     `push-beside`);
   - repair-visible and repair-hidden variants, and the invalid-repair flag.
 - *Next:*
-  - replicate the first experiment (`docs/results.md`: unstack-raised, no zero-shot transfer, no speed-up, more
-    forgetting with the compositional embedding) under RQ3's protocol with seeds, repair-hidden and the
-    from-scratch baseline;
-  - test its working hypothesis, that a few operators are too few for a literal to get a meaning of its own:
-    repairs whose new literals several training operators share (the pushes; or new operators that use
-    `(raised ?o)` in other contexts, e.g. raise and lower skills on a held block), against the same repairs from
-    fewer operators;
+  - confirm Experiment 3 (`docs/results.md`: unstack-raised; from scratch slowest, one-hot repair-hidden fastest,
+    compositional-tree no faster than a new one-hot code) on the GPU with the 300k-step protocol;
+  - test the working hypothesis, that a few operators are too few for a literal to get a meaning of its own (in
+    Experiment 3 pickup's and unstack's embeddings were nearly one, so unstack-raised's carried nothing of
+    unstack's behaviour): training operators whose behaviour differs where their literals do, so the composition
+    has to tell them apart (e.g. putdown and stack for `(on ?o ?u)` against `(on-table ?o)`); repairs whose new
+    literals several training operators share (the pushes; or new operators that use `(raised ?o)` in other
+    contexts, e.g. raise and lower skills on a held block); each against the same repair from fewer operators;
   - push-beside reached only 0.60 alone in 300k steps (2026-10-21) and was still improving; until it reaches the
     threshold, place-beside's `(beside ?o ?u)` is trained but not learned, and that pair says little.
 
