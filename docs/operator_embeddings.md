@@ -16,8 +16,11 @@ the pickup operator below, computed with the default settings (`--operator-embed
 Two places do the work. In the environment, `PolicyObservationWrapper` calls an `OperatorEncoder` once
 per operator and puts the result in the observation. In the policy, the features extractor (its first
 module) turns that observation entry into the operator part of the MLP input. Only the extractor has
-trainable parameters, so only that half changes during training. `docs/embedding_explorer.md` shows how to plot and
-compare any of these embeddings, and the parts the compositional ones are built from.
+trainable parameters, so only that half changes during training. With SAC the actor and critic share the
+extractor, and the critic's TD loss trains it (`--operator-embedding-loss critic`, the default; the actor reads it
+without gradients) or the actor loss does (`actor`); PPO trains it with its one loss (`docs/project_status.md`, §2).
+`docs/embedding_explorer.md` shows how to plot and compare any of these embeddings, and the parts the compositional
+ones are built from.
 
 ## Overview: every encoder
 
@@ -38,7 +41,7 @@ flowchart TB
 
     obs[/"obs['operator_embedding']<br/>float32 vector: 256 for one-hot, multi-hot, random, text;<br/>131 (the structure array) for compositional"/]
 
-    subgraph pol["Policy side: features extractor, trained with the RL losses"]
+    subgraph pol["Policy side: features extractor, trained by an RL loss (SAC: --operator-embedding-loss)"]
         direction TB
         default["Stable-Baselines3 default extractor<br/>passes the vector through unchanged"]
         trainable["TrainableOperatorEmbeddingExtractor<br/>(--trainable-operator-embedding)<br/>W @ vector, W 256 x 256 starting at the identity"]

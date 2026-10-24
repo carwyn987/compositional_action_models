@@ -29,7 +29,7 @@ from stable_baselines3.common.base_class import BaseAlgorithm
 from stable_baselines3.common.callbacks import BaseCallback
 from stable_baselines3.common.monitor import Monitor
 
-from cam.policies.feature_extractors import features_extractors
+from cam.policies.feature_extractors import OperatorEmbeddingSACPolicy, features_extractors
 from cam.training.checkpointing import (
     PeriodicSaveCallback,
     atomic_save_model,
@@ -248,6 +248,7 @@ def train_stable_baselines3(
     save_replay_buffer: bool = False,
     on_save: list[Callable[[], None]] | None = None,
     policy_kwargs: dict | None = None,
+    operator_embedding_loss: str = "critic",
     device: str = "auto",
     resume_warmup_steps: int = RESUME_WARMUP_STEPS,
 ) -> BaseAlgorithm:
@@ -262,7 +263,10 @@ def train_stable_baselines3(
     model.zip, replay_buffer.pkl if save_replay_buffer (off-policy algorithms; can be large),
     and calls each on_save function (e.g. writing metrics).
 
-    policy_kwargs go to a new model's policy (e.g. a features extractor); a resumed model keeps its own.
+    policy_kwargs go to a new model's policy (e.g. a features extractor); a resumed model keeps its own. A new SAC
+    or mtsac model's policy is OperatorEmbeddingSACPolicy, whose features extractor, when the actor and critic share
+    it, is trained by the loss operator_embedding_loss names ("critic" or "actor"). PPO's policy is Stable-Baselines3's
+    own: its one loss, of actor and value function together, trains a shared extractor, so the option does not apply.
     device is the torch device for the policy ("auto": a CUDA GPU if available, else cpu).
 
     An off-policy model resumed without a saved replay buffer makes no gradient updates for its first
@@ -290,13 +294,15 @@ def train_stable_baselines3(
                 logger.info("no saved replay buffer: no updates for the first %d steps", resume_warmup_steps)
         logger.info("resuming %s from step %d", algorithm, model.num_timesteps)
     else:
+        policy, options = (("MultiInputPolicy", {"log_std_init": PPO_LOG_STD_INIT}) if algorithm == "ppo"
+                           else (OperatorEmbeddingSACPolicy, {"operator_embedding_loss": operator_embedding_loss}))
         model = ALGORITHMS[algorithm](
-            "MultiInputPolicy",
+            policy,
             monitored_env,
             seed=seed,
             verbose=1,
             tensorboard_log=str(run_directory / "tensorboard"),
-            policy_kwargs=({"log_std_init": PPO_LOG_STD_INIT} if algorithm == "ppo" else {}) | (policy_kwargs or {}),
+            policy_kwargs=options | (policy_kwargs or {}),
             device=device,
             **(HYPERPARAMETERS[algorithm] | (hyperparameter_overrides or {})),
         )

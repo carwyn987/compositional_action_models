@@ -63,10 +63,11 @@ LOCKED_ON_RESUME = [
     "component_embedding_dim", "max_operator_literals", "max_predicate_arity", "compositional_name", "slots",
     "slot_iterations", "composition_normalization",
     "symbolic_action_model_format",
+    "operator_embedding_loss",
 ]
-# For a config.json without one of these keys (a run saved before the option existed), the value that run trained
-# with, where it differs from the option's default.
-SAVED_WITHOUT_THE_OPTION = {"composition_normalization": "output"}
+# A run saved before one of these options (its config.json has no key for it) trained with this value, not the
+# option's default. A run missing any other key had its default.
+SAVED_WITHOUT_THE_OPTION = {"composition_normalization": "output", "operator_embedding_loss": "actor"}
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -143,6 +144,13 @@ def build_parser() -> argparse.ArgumentParser:
         help="pass the operator embedding through a learnable matrix initialised to the identity, trained with "
         "the policy: with --operator-encoder random, a learnable vector per operator starting at its random "
         "vector; with multi-hot, a learnable compositional (sum) embedding",
+    )
+    training.add_argument(
+        "--operator-embedding-loss", choices=["critic", "actor"], default="critic",
+        help="sac, mtsac: the loss that trains a learned operator embedding (trainable or compositional), whose "
+        "features extractor the actor and critic share: critic, the critic's TD loss, the actor reading the embedding "
+        "without gradients; actor, the actor loss, the critic reading it without gradients (Stable-Baselines3's own "
+        "choice). No effect on PPO, whose one loss trains its shared extractor",
     )
     training.add_argument(
         "--operator-embedding-dim", type=int, default=256,
@@ -304,7 +312,8 @@ def parse_args(argv: list[str] | None = None) -> dict:
         saved = SAVED_WITHOUT_THE_OPTION | {
             key: value for key, value in json.loads(config_path.read_text()).items() if key not in PER_INVOCATION}
         explicit = explicit_options(argv)
-        # a key missing from config.json: a run saved before the option, which had its default
+        # a key missing from config.json: a run saved before the option, which had its default (or, filled in above,
+        # the value in SAVED_WITHOUT_THE_OPTION)
         changed = [key for key in LOCKED_ON_RESUME
                    if key in explicit and explicit[key] != saved.get(key, parser.get_default(key))]
         if changed:
@@ -343,7 +352,8 @@ def run_name(config: dict) -> str:
 
 def policy_kwargs(config: dict) -> dict | None:
     """Policy options for a new model: the features extractor of a compositional or trainable operator
-    embedding, shared by actor and critic (for SAC, then trained through the critic loss)."""
+    embedding, shared by actor and critic. With SAC it is trained by the loss --operator-embedding-loss names
+    (train_stable_baselines3 passes it to OperatorEmbeddingSACPolicy), with PPO by its one loss."""
     if config["operator_encoder"] == "compositional":
         from cam.representations.compositional.extractor import CompositionalPolicyFeaturesExtractor
 
@@ -433,6 +443,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             save_replay_buffer=config["save_replay_buffer"],
             on_save=on_save,
             policy_kwargs=policy_kwargs(config),
+            operator_embedding_loss=config["operator_embedding_loss"],
             device=config["device"],
         )
     finally:
