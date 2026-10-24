@@ -197,7 +197,8 @@ def test_a_repair_starts_without_the_replaced_skills_transitions_and_temperature
     """An mtsac one-hot run on pickup and unstack (100 steps, replay buffer saved, unstack's temperature set to 0.05 as
     if converged) is copied as the overnight runner copies it for a repair, its buffer hard-linked, and resumed for
     10 steps with unstack replaced by unstack-raised, which alone trains. Repair-hidden (unstack-raised gets unstack's
-    code): the buffer holds pickup's transitions and the 10 new ones, and the shared slot is back at temperature 1.
+    code): the buffer holds pickup's transitions and the 10 new ones, and the shared slot is reset to a new skill's
+    temperature, the trained skills' mean (here pickup's 0.2), or 1 with --new-skill-temperature initial.
     Repair-visible: unstack's transitions go and its slot is reset too; unstack-raised's are the 10 new ones. Control
     (--no-reset-replaced-skills): unstack's transitions, with the same input as the new ones, stay, and so does its
     temperature. The rq1 run's buffer file is never written."""
@@ -249,6 +250,7 @@ def test_a_repair_starts_without_the_replaced_skills_transitions_and_temperature
     hidden = ["--operator-identity-aliases", "unstack-raised=unstack"]
     after = {}
     for variant, variant_options in (("hidden", hidden), ("visible", []),
+                                     ("hidden-initial", [*hidden, "--new-skill-temperature", "initial"]),
                                      ("hidden-kept", [*hidden, "--no-reset-replaced-skills"])):
         run = shutil.copytree(rq1, tmp_path / variant, copy_function=link_replay_buffer)
         main(["--run-directory", str(run), "--skills", "pickup", "unstack-raised", "--stop-skills", "unstack-raised",
@@ -258,8 +260,9 @@ def test_a_repair_starts_without_the_replaced_skills_transitions_and_temperature
         assert os.path.samefile(run / "replay_buffer.pkl", rq1 / "replay_buffer.pkl")
 
     pickup = before["pickup"]
-    assert after["hidden"] == ({"pickup": pickup, "unstack": 10, "unstack-raised": 0}, [0.2, 1.0])
-    assert after["visible"] == ({"pickup": pickup, "unstack": 0, "unstack-raised": 10}, [0.2, 1.0])
+    assert after["hidden"] == ({"pickup": pickup, "unstack": 10, "unstack-raised": 0}, [0.2, 0.2])
+    assert after["visible"] == ({"pickup": pickup, "unstack": 0, "unstack-raised": 10}, [0.2, 0.2])
+    assert after["hidden-initial"] == ({"pickup": pickup, "unstack": 10, "unstack-raised": 0}, [0.2, 1.0])
     assert after["hidden-kept"] == ({"pickup": pickup, "unstack": before["unstack"] + 10, "unstack-raised": 0},
                                     [0.2, 0.05])
     assert hashlib.sha256((rq1 / "replay_buffer.pkl").read_bytes()).hexdigest() == digest
