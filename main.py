@@ -52,7 +52,7 @@ MODES = ["train-evaluate", "train", "evaluate"]
 # Options for one invocation only: not taken from a resumed run's config.json.
 PER_INVOCATION = [
     "mode", "run_directory", "stop_skills", "patience", "eval_skills", "render", "device", "repair_mode",
-    "recovery_tolerance", "reset_replaced_skills",
+    "recovery_tolerance", "reset_replaced_skills", "new_skill_temperature",
 ]
 # With --repair-mode, the stop needs this many evaluations in a row (each of --eval-episodes, about ±0.1 at 20)
 REPAIR_CONSECUTIVE_EVALUATIONS = 2
@@ -292,8 +292,14 @@ def build_parser() -> argparse.ArgumentParser:
         "--reset-replaced-skills", action=argparse.BooleanOptionalAction, default=True,
         help="when the resume replaces skills of the run (leaves them out of --skills while adding others, as a "
         "repair does): remove their transitions from the loaded replay buffer and, with mtsac, reset their "
-        "temperatures to the initial one, so the repaired skill starts as a new one would, also with "
-        "--operator-identity-aliases; --no-reset-replaced-skills keeps both (an ablation)",
+        "temperatures to a new skill's (--new-skill-temperature), so the repaired skill starts as a new one would, "
+        "also with --operator-identity-aliases; --no-reset-replaced-skills keeps both (an ablation)",
+    )
+    repair.add_argument(
+        "--new-skill-temperature", choices=["trained-mean", "initial"], default="trained-mean",
+        help="mtsac: the temperature a skill new to the run (an operator embedding it has not trained, as a repair or "
+        "an rq2 stage adds) starts with, and a replaced skill's reset one: trained-mean, the mean of the skills the "
+        "run trained; initial, as a new run's skills start",
     )
     return parser
 
@@ -471,6 +477,7 @@ def train(config: dict, env: gym.Env, skills: list[Skill], run_directory: Path, 
             on_save=on_save,
             policy_kwargs=policy_kwargs(config),
             operator_embedding_loss=config["operator_embedding_loss"],
+            new_skill_temperature=config["new_skill_temperature"],
             device=config["device"],
             replaced_skills=replaced,
         )
