@@ -108,14 +108,18 @@ def test_temperatures_and_slots_survive_save_and_load(tmp_path):
 
 
 @pytest.mark.unit
-def test_a_reset_slot_is_one_no_batch_has_used(tmp_path):
+@pytest.mark.parametrize("new_skill_temperature", ["initial", "trained-mean"])
+def test_a_reset_slot_is_one_a_new_skill_would_get(tmp_path, new_skill_temperature):
     """Both skills trained, saved and loaded as a resume loads them. Resetting the precise skill's slot gives it what
-    a slot no batch has used (the one a new embedding would get) has: the initial temperature and zero Adam moments.
-    The free skill's slot stays as it was. Control: before the reset, the precise slot differs from an unused one."""
+    a new embedding's slot gets: with initial, what a slot no batch has used has (the initial temperature and zero
+    Adam moments); with trained-mean, the mean temperature of the slots not reset (here the free skill's) and zero
+    moments. The free skill's slot stays as it was. Control: before the reset, the precise slot differs from an
+    unused one."""
     sac = model(learning_starts=50)
     sac.learn(150)
     sac.save(tmp_path / "model.zip")
     loaded = MultiTaskSAC.load(tmp_path / "model.zip", device="cpu")
+    loaded.new_skill_temperature = new_skill_temperature
     adam = loaded.ent_coef_optimizer.state[loaded.log_ent_coef]
     precise, free = (loaded.skill_slots[embedding_key(embedding)] for embedding in (PRECISE, FREE))
     unused = len(loaded.skill_slots)
@@ -127,8 +131,27 @@ def test_a_reset_slot_is_one_no_batch_has_used(tmp_path):
     free_before = slot(free)
     assert slot(precise) != slot(unused) == [loaded.initial_log_ent_coef, 0.0, 0.0]
     assert loaded.reset_temperatures([PRECISE]) == [precise]
-    assert slot(precise) == slot(unused)
+    expected = loaded.initial_log_ent_coef if new_skill_temperature == "initial" else free_before[0]
+    assert slot(precise) == pytest.approx([expected, 0.0, 0.0])
     assert slot(free) == free_before
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("new_skill_temperature", ["initial", "trained-mean"])
+def test_a_skill_new_to_a_trained_run_starts_at_the_temperature_chosen(new_skill_temperature):
+    """A new run's skills appear in its first batch and all start at the initial temperature either way. A skill
+    added later (a new operator embedding, as a repair or an rq2 stage adds) starts at the mean of the trained skills'
+    temperatures with trained-mean, and at the initial one with initial (the control)."""
+    sac = model(learning_starts=50)
+    sac.new_skill_temperature = new_skill_temperature
+    first = sac.skill_slot_indices(torch.as_tensor(np.stack([PRECISE, FREE])))
+    assert torch.exp(sac.log_ent_coef.detach()[first]).tolist() == [1.0, 1.0]
+    sac.learn(150)
+    trained = sac.log_ent_coef.detach()[first].mean().item()
+    (added,) = sac.skill_slot_indices(torch.as_tensor(np.stack([np.array([0.5, 0.5], np.float32)]))).tolist()
+    expected = trained if new_skill_temperature == "trained-mean" else sac.initial_log_ent_coef
+    assert added == 2 and sac.log_ent_coef.detach()[added].item() == pytest.approx(expected)
+    assert trained < sac.initial_log_ent_coef  # the two choices differ: the trained skills' temperatures fell
 
 
 @pytest.mark.unit
@@ -136,8 +159,8 @@ def test_a_reset_slot_is_one_no_batch_has_used(tmp_path):
 def test_forgetting_a_replaced_skill_removes_its_transitions_and_resets_its_own_temperature(algorithm):
     """After training both skills, forgetting the precise one (as a repair that replaces it does) removes its
     transitions from the replay buffer, keeping every one of the free skill's. MultiTaskSAC resets the precise
-    skill's temperature to the initial one and keeps the free skill's; SAC keeps its one temperature, which every
-    skill (and a new one) trains with."""
+    skill's temperature to a new skill's (by default the mean of the others', here the free skill's) and keeps the
+    free skill's; SAC keeps its one temperature, which every skill (and a new one) trains with."""
     sac = model(algorithm, learning_starts=50)
     sac.learn(150)
     stored = sac.replay_buffer.observations["operator_embedding"][: sac.replay_buffer.size(), 0]
@@ -149,4 +172,4 @@ def test_forgetting_a_replaced_skill_removes_its_transitions_and_resets_its_own_
     stored = sac.replay_buffer.observations["operator_embedding"][: sac.replay_buffer.size(), 0]
     assert sac.replay_buffer.size() == free_transitions and (stored == FREE).all()
     assert temperature(sac, FREE) == free
-    assert temperature(sac, PRECISE) == (1.0 if algorithm is MultiTaskSAC else precise)
+    assert temperature(sac, PRECISE) == pytest.approx(free if algorithm is MultiTaskSAC else precise)
