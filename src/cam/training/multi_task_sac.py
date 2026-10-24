@@ -39,7 +39,7 @@ class MultiTaskSAC(SAC):
         super()._setup_model()
         if self.ent_coef_optimizer is None:
             raise ValueError("MultiTaskSAC learns its temperatures: ent_coef must be 'auto' or 'auto_<initial value>'")
-        initial = float(self.log_ent_coef.detach()[0])
+        self.initial_log_ent_coef = initial = float(self.log_ent_coef.detach()[0])
         self.log_ent_coef = th.full((self.max_skills,), initial, device=self.device).requires_grad_(True)
         self.ent_coef_optimizer = th.optim.Adam([self.log_ent_coef], lr=self.lr_schedule(1))
 
@@ -55,6 +55,23 @@ class MultiTaskSAC(SAC):
                 self.skill_slots[key] = len(self.skill_slots)
             slots.append(self.skill_slots[key])
         return th.as_tensor(slots, device=operator_embeddings.device)[inverse]
+
+    def reset_temperatures(self, operator_embeddings) -> list[int]:
+        """Puts the temperature slots of operator_embeddings back as a slot no batch has used yet: the initial
+        temperature, and zero moments in its entries of the temperature optimizer's Adam state (an unused slot's
+        gradients are zero, and the step count is shared by every slot). A repaired operator that keeps its
+        original's embedding (repair-hidden) then explores as one given a new embedding does, instead of with the
+        original's converged temperature. Returns the slots reset; an embedding without a slot has nothing to reset."""
+        slots = sorted({self.skill_slots[key] for key in map(embedding_key, operator_embeddings)
+                        if key in self.skill_slots})
+        if slots:
+            with th.no_grad():
+                self.log_ent_coef[slots] = self.initial_log_ent_coef
+            state = self.ent_coef_optimizer.state.get(self.log_ent_coef, {})
+            for moment in ("exp_avg", "exp_avg_sq"):
+                if moment in state:
+                    state[moment][slots] = 0.0
+        return slots
 
     def skill_temperatures(self) -> dict[str, float]:
         """Each named skill's temperature, named from the training environment's operator embeddings (skills
