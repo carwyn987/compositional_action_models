@@ -141,8 +141,8 @@ isolated) until it reaches 0.95 on two evaluations in a row (at most 150k steps)
 compositional-tree without the operator's name (repair-visible), and the control one-hot repair-hidden, where
 unstack-raised gets exactly unstack's code. Seeds 0, 1 and 2; the from-scratch baseline is unstack-raised's
 learnability run with the retreat (80k steps). Settings as Experiment 1, commit `6731e4f5` (composition weight
-decay applied once); intervals are the bootstrap 95% intervals of the mean over the three seeds, which with three
-seeds are the seeds' range.
+decay applied once); intervals are 95% confidence intervals (CIs) of the mean via bootstrap resampling of the three seeds' values,
+which with three seeds are the seeds' range.
 
 **The repair.**
 
@@ -195,3 +195,66 @@ growth is likely in Experiment 1 (not checked there).
 check on short trainings that the embeddings of pickup, pickup-raised, unstack and unstack-raised stay apart, and
 run this experiment again: the comparison with one-hot's 37k is then the test of RQ3 on this pair. Then the working
 hypothesis of Experiment 1.
+
+### Experiment 3, 2026-10-24: the same repair with the embedding and the repair start fixed (CPU, three seeds)
+
+**Changes since Experiment 2.** The composition normalizes every stage (`--composition-normalization every-stage`)
+and the critic's loss trains the shared operator embedding (`--operator-embedding-loss critic`); a repair starts
+without the replaced skill's transitions and with its temperature slot reset (`--reset-replaced-skills`); and a
+skill new to a trained run starts at the trained skills' mean temperature (`--new-skill-temperature trained-mean`).
+Each is described in `docs/project_status.md` §2–§3.
+
+**Design.** As Experiment 2 (pickup, pickup-raised and unstack; then unstack replaced by unstack-raised, trained
+alone until 0.95 on two evaluations in a row; one-hot repair-visible and repair-hidden, compositional-tree without
+the name; seeds 0–2), on this machine's CPU instead of the GPU, so with a shorter protocol: each shared policy
+trained until every skill had reached 0.95 (evaluated every 10k steps), then 30k steps more, instead of 300k steps;
+unstack-raised alone from scratch for 200k steps per seed. Rounds 2 and 3 repaired the same shared policies as round
+1, so each round's conditions differ only in how the repair starts. Commits: the one-hot shared policies and the
+runs from scratch at `7a0e1243` (which trains them as the later code does), the compositional shared policies at
+`f57a6c14`, round 1's repairs at `8cbd49f2`; round 2's trained-mean temperature is `--new-skill-temperature`'s
+commit, and the options round 2 and 3 also tried were not kept.
+
+**The shared policies (RQ1 on three skills).** Every seed of both conditions learned all three skills, the
+compositional one in about the same steps or fewer (mean over seeds, steps until 0.95):
+
+| | pickup | pickup-raised | unstack |
+| --- | --- | --- | --- |
+| one-hot | 150k | 167k | 133k |
+| compositional-tree, no name | 147k | 143k | 113k |
+
+The composition stayed bounded (raw magnitudes 100–370, against 1e3–1e10 in Experiment 2) and kept apart the
+operators whose behaviour differs: pickup and pickup-raised at cosine 0.47–0.77. Pickup and unstack, which need
+almost the same motion, it kept nearly together (cosine 0.98–1.00).
+
+**The repair: steps until unstack-raised reached 0.95** (per seed, then the mean):
+
+| how the repair starts | one-hot, repair-hidden (unstack's code) | one-hot, repair-visible | compositional-tree |
+| --- | --- | --- | --- |
+| round 1: replaced skill reset, temperature 1 | 40k, 30k, 30k → 33k | 50k, 50k, 40k → 47k | 50k, 100k, 30k → 60k |
+| round 2: and a new skill's temperature the trained mean | **20k, 30k, 20k → 23k** | 50k, 40k, 20k → 37k | 40k, 50k, 20k → 37k |
+| round 2: the embedding frozen during the repair | | | 40k, never, 40k |
+| round 3: the trained mean, and 5k steps of critic only | 40k, 40k, 20k → 33k | 30k, 40k, 40k → 37k | 30k, never, 30k |
+
+Learning unstack-raised from scratch never reached 0.95 within 200k steps in any of the three seeds: in their last
+200 episodes about 70% dropped the block and 25% disturbed the one below. (Experiment 2's GPU seed reached it at
+80k; one of four seeds so far.) Zero-shot success was 0 everywhere except one compositional seed, at 0.20.
+
+**Reading.**
+
+- **From scratch is by far the slowest**, and unreliable: one seed in four within 200k steps.
+- **A repair that keeps the operator's identity is now the fastest**: one-hot repair-hidden takes 23k steps where
+  Experiment 2's took 120k. Without the replaced skill's contradicting transitions and with a fresh temperature,
+  starting from unstack's exact behaviour, which only has to lift further at the end, is an advantage.
+- **The compositional embedding no longer collapses, but gives no gain over an identifier**: 37k steps, as a new
+  one-hot code. Its geometry shows why: unstack-raised's embedding lies near pickup-raised's (they share the effect
+  `(raised ?o)`), but nothing ties it to unstack's behaviour, because pickup's and unstack's embeddings are nearly
+  one. Three operators gave the composition no reason to tell `(on ?o ?u)` from `(on-table ?o)`: the state already
+  tells the policy which to do. This is the working hypothesis of Experiment 1, now with a mechanism.
+- **Rejected starts:** freezing the embedding during the repair, and training only the critic first (which kept the
+  one compositional zero-shot success at 0.20 through its first 4k steps, as intended, but left another seed
+  unrepaired within 150k steps and slowed repair-hidden). Neither is in the code.
+- **The trained-mean temperature** sped up every condition (by 20–40%) and is the default.
+
+**Next.** Run this on the GPU with the 300k-step protocol of Experiment 2 to confirm it. Then test the working
+hypothesis directly: add training operators that need `(on ?o ?u)` and `(on-table ?o)` told apart by behaviour (e.g.
+putdown and stack, whose behaviour differs where their literals do), and repair unstack to unstack-raised again.
