@@ -121,7 +121,7 @@ def remove_transitions(replay_buffer: DictReplayBuffer, operator_embeddings: lis
 
 def forget_replaced_skills(model: BaseAlgorithm, operator_embeddings: dict[str, np.ndarray]) -> None:
     """At a resume that replaces skills (a repair), removes what the model holds of them besides its network: their
-    transitions in the replay buffer and, for MultiTaskSAC, their temperatures (reset to the initial one).
+    transitions in the replay buffer and, for MultiTaskSAC, their temperatures (reset to a new skill's).
     operator_embeddings: each replaced skill's operator embedding, as the run being resumed encoded it.
 
     A replaced skill is no longer part of the task. Its transitions' rewards are for effects the skill no longer has,
@@ -136,8 +136,9 @@ def forget_replaced_skills(model: BaseAlgorithm, operator_embeddings: dict[str, 
                     names, removed, replay_buffer.size())
     if isinstance(model, MultiTaskSAC):
         slots = model.reset_temperatures(operator_embeddings.values())
-        logger.info("replaced skills %s: temperature slots %s reset to %.3g",
-                    names, slots, float(np.exp(model.initial_log_ent_coef)))
+        temperatures = ", ".join(f"{value:.3g}" for value in np.exp(model.log_ent_coef.detach().cpu().numpy()[slots]))
+        logger.info("replaced skills %s: temperature slots %s reset to %s (%s)",
+                    names, slots, temperatures, model.new_skill_temperature)
     elif replay_buffer is not None:
         logger.info("replaced skills %s: SAC's one temperature, every skill's, is kept", names)
 
@@ -299,6 +300,7 @@ def train_stable_baselines3(
     device: str = "auto",
     resume_warmup_steps: int = RESUME_WARMUP_STEPS,
     replaced_skills: dict[str, np.ndarray] | None = None,
+    new_skill_temperature: str = "trained-mean",
 ) -> BaseAlgorithm:
     """Train an SB3 model on env for total_timesteps environment steps and save it to run_directory.
 
@@ -344,6 +346,8 @@ def train_stable_baselines3(
             elif resume_warmup_steps > 0:
                 warmup = [ResumeWarmupCallback(resume_warmup_steps)]
                 logger.info("no saved replay buffer: no updates for the first %d steps", resume_warmup_steps)
+        if isinstance(model, MultiTaskSAC):
+            model.new_skill_temperature = new_skill_temperature
         if replaced_skills:
             forget_replaced_skills(model, replaced_skills)
         logger.info("resuming %s from step %d", algorithm, model.num_timesteps)
