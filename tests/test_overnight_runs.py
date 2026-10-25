@@ -437,3 +437,25 @@ def test_the_review_reports_every_addition_of_a_chain_with_its_own_retention(tmp
     assert re.search(r"lowest after\s+0.2 ", unstack) and re.search(r"lowest after\s+0.6 ", raised)
     unstack, raised = entries(retention=retention(300, 0.6))
     assert "lowest after" not in unstack and re.search(r"lowest after\s+0.6 ", raised)
+
+
+@pytest.mark.unit
+def test_an_interrupted_repair_starts_over_from_its_rq1_run(tmp_path, monkeypatch):
+    """Resumed, an interrupted repair would reload its rq1 run's replay buffer with the replaced skill's transitions
+    back in, and its config.json would no longer show the replacement; so it starts over from a fresh copy of its rq1
+    run, with its whole step budget. Control: a repair not started yet is copied the same way."""
+    monkeypatch.setattr(overnight_runs, "OUT", tmp_path)
+    rq1 = tmp_path / "rq1" / "one-hot_seed0" / "run"
+    rq1.mkdir(parents=True)
+    for name in ("config.json", "model.zip", "metrics.json"):
+        (rq1 / name).write_text("{}")
+    (rq1 / "replay_buffer.pkl").write_text("the rq1 run's transitions")
+    repair = tmp_path / "repair" / "unstack-raised" / "one-hot_repair-visible_isolated_seed0"
+    command = ["main.py", "--run-directory", str(repair), "--total-timesteps", "150000"]
+    run = overnight_runs.Run("repair_unstack-raised", "repair", "", "", "", 150_000, "one-hot", repair, command,
+                             copy_from=rq1.parent)
+    runner = overnight_runs.Runner([run])
+    assert runner.prepare(run) == command and (repair / "replay_buffer.pkl").samefile(rq1 / "replay_buffer.pkl")
+    (repair / "model.zip").write_text("saved after some of the repair's training")  # then interrupted
+    assert runner.prepare(run) == command
+    assert (repair / "model.zip").read_text() == "{}" and (repair / "replay_buffer.pkl").samefile(rq1 / "replay_buffer.pkl")

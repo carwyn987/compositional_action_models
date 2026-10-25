@@ -1,11 +1,15 @@
+import gymnasium as gym
+import numpy as np
 import pytest
 
 pytest.importorskip("stable_baselines3")
 
+from stable_baselines3.common.buffers import DictReplayBuffer  # noqa: E402
+
 from main import parse_args  # noqa: E402
 from cam.experiments.environment_setup import setup_environment  # noqa: E402
 from cam.skills.registry import build_skill  # noqa: E402
-from cam.training.stable_baselines3_trainer import train_stable_baselines3  # noqa: E402
+from cam.training.stable_baselines3_trainer import remove_transitions, train_stable_baselines3  # noqa: E402
 
 
 @pytest.mark.integration
@@ -77,3 +81,87 @@ def test_training_writes_its_progress_for_the_overnight_runner(tmp_path):
     resumed = json.loads((tmp_path / "progress.json").read_text())
     assert first == {"done": 300, "total": 300, "step": 300}
     assert resumed == {"done": 200, "total": 200, "step": 500}
+
+
+KEPT, REMOVED = np.eye(2, dtype=np.float32)
+
+
+def replay_buffer(skills: str, size: int) -> DictReplayBuffer:
+    """A replay buffer of size slots given one transition per letter of skills (K: the kept skill's embedding, R: the
+    removed one's). Transition i has observation i, next observation i + 0.5, action i / 100, reward -i, done on
+    every third and a timeout on every fourth, so each array shows whether it moved with its transition."""
+    buffer = DictReplayBuffer(size, gym.spaces.Dict({
+        "observation": gym.spaces.Box(-np.inf, np.inf, (1,)), "operator_embedding": gym.spaces.Box(0, 1, (2,)),
+    }), gym.spaces.Box(-1, 1, (1,)), device="cpu")
+    for i, skill in enumerate(skills):
+        embedding = (KEPT if skill == "K" else REMOVED)[None]
+        buffer.add({"observation": np.array([[i]], np.float32), "operator_embedding": embedding},
+                   {"observation": np.array([[i + 0.5]], np.float32), "operator_embedding": embedding},
+                   np.array([[i / 100]], np.float32), np.array([-i], np.float32), np.array([i % 3 == 0]),
+                   [{"TimeLimit.truncated": i % 4 == 0}])
+    return buffer
+
+
+def assert_holds(buffer: DictReplayBuffer, transitions: list[int]) -> None:
+    """The buffer holds exactly these transitions (by index), in this order from its first slot, each whole."""
+    count = len(transitions)
+    i = np.array(transitions, dtype=np.float32)
+    assert buffer.size() == count
+    np.testing.assert_array_equal(buffer.observations["observation"][:count, 0, 0], i)
+    np.testing.assert_array_equal(buffer.observations["operator_embedding"][:count, 0], np.tile(KEPT, (count, 1)))
+    np.testing.assert_array_equal(buffer.next_observations["observation"][:count, 0, 0], i + 0.5)
+    np.testing.assert_array_equal(buffer.next_observations["operator_embedding"][:count, 0], np.tile(KEPT, (count, 1)))
+    np.testing.assert_array_equal(buffer.actions[:count, 0, 0], i / 100)
+    np.testing.assert_array_equal(buffer.rewards[:count, 0], -i)
+    np.testing.assert_array_equal(buffer.dones[:count, 0], i % 3 == 0)
+    np.testing.assert_array_equal(buffer.timeouts[:count, 0], i % 4 == 0)
+
+
+def sampled(buffer: DictReplayBuffer) -> set[float]:
+    """The transitions (observations) 500 samples draw; asserts each sample is one whole transition."""
+    batch = buffer.sample(500)
+    observations = batch.observations["observation"][:, 0].numpy()
+    np.testing.assert_array_equal(batch.next_observations["observation"][:, 0].numpy(), observations + 0.5)
+    np.testing.assert_allclose(batch.actions[:, 0].numpy(), observations / 100)
+    np.testing.assert_array_equal(batch.rewards[:, 0].numpy(), -observations)
+    return set(observations.tolist())
+
+
+@pytest.mark.unit
+def test_removing_a_skills_transitions_keeps_the_others_whole_and_in_order():
+    """Six transitions in a buffer of ten, alternating two skills: removing one skill's leaves the other's three at
+    the front, each with its own next observation, action, reward, done and timeout, and sampling draws only them.
+    Control: before the removal, sampling draws both skills' transitions."""
+    buffer = replay_buffer("KRKRKR", 10)
+    assert sampled(buffer) == {0, 1, 2, 3, 4, 5}
+    assert remove_transitions(buffer, [REMOVED]) == 3
+    assert (buffer.pos, buffer.full) == (3, False)
+    assert_holds(buffer, [0, 2, 4])
+    assert sampled(buffer) == {0, 2, 4}
+
+
+@pytest.mark.unit
+def test_removing_transitions_from_a_full_wrapped_buffer_keeps_the_oldest_first():
+    """14 transitions in a buffer of ten: it is full, and its oldest (transition 4) is at slot 4, after the newest.
+    Removing one skill's transitions leaves the other's from oldest to newest at the front, the buffer no longer full,
+    so the next transitions fill the freed slots and then replace the oldest kept one first. Control: a skill with no
+    transitions in the buffer removes nothing and leaves it as it was."""
+    skills = "KRRKRKKRKRRKKR"
+    buffer = replay_buffer(skills, 10)
+    assert (buffer.pos, buffer.full) == (4, True)
+    assert remove_transitions(buffer, [np.array([0.5, 0.5], np.float32)]) == 0
+    assert (buffer.pos, buffer.full) == (4, True)
+    assert sampled(buffer) == set(range(4, 14))
+
+    kept = [i for i in range(4, 14) if skills[i] == "K"]  # 5, 6, 8, 11, 12
+    assert remove_transitions(buffer, [REMOVED]) == 10 - len(kept)
+    assert (buffer.pos, buffer.full) == (len(kept), False)
+    assert_holds(buffer, kept)
+    assert sampled(buffer) == set(kept)
+
+    for i in range(100, 100 + 10 - len(kept) + 1):  # fills the buffer, then one more
+        buffer.add({"observation": np.array([[i]], np.float32), "operator_embedding": KEPT[None]},
+                   {"observation": np.array([[i + 0.5]], np.float32), "operator_embedding": KEPT[None]},
+                   np.array([[i / 100]], np.float32), np.array([-i], np.float32), np.array([False]), [{}])
+    assert buffer.full and buffer.observations["observation"][0, 0, 0] == 100 + 10 - len(kept)
+    assert sampled(buffer) == set(kept[1:]) | set(range(100, 100 + 10 - len(kept) + 1))

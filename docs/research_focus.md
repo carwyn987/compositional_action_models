@@ -163,7 +163,10 @@ runner's defaults are:
 - **Repair-visible vs repair-hidden.** Repair-hidden gives the repaired operator exactly the original's
   embedding (`--operator-identity-aliases`, one-hot and random only), so the policy cannot see the repair. If
   repair-hidden succeeds zero-shot, the original behaviour already satisfies the repaired operator, and the
-  pair does not test repair.
+  pair does not test repair. Every repair starts without the original's transitions in the replay buffer and
+  with its temperature reset (multi-task SAC), so the two variants differ only in the embedding, and
+  repair-hidden's steps to threshold compare with learning from scratch: the difference is what the network
+  carries over from the original when given its input.
 - **Isolated vs retain.** Isolated trains only the repaired skill, so its steps compare directly with learning
   it from scratch. Retain trains every skill until the repaired one is at the threshold and every other skill
   is back at its earlier level: the cost of a repair without forgetting.

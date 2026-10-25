@@ -32,9 +32,9 @@ read from `~/.secrets/openai_api_key`). A unit that failed keeps its name until
 `systemctl --user reset-failed NAME`.
 
 Starting the same command again with the same `OUT` continues the plan: finished runs are skipped and
-interrupted runs resume from their last save. Before anything trains, the runner checks the device, embeds and
-caches every operator text the runs need (`TEXT_BACKEND=openai` needs the key and the network) and runs every
-skill's scripted policy.
+interrupted runs resume from their last save (an interrupted repair starts over from its rq1 run). Before
+anything trains, the runner checks the device, embeds and caches every operator text the runs need
+(`TEXT_BACKEND=openai` needs the key and the network) and runs every skill's scripted policy.
 
 ### Settings
 
@@ -98,8 +98,10 @@ and final success; next to each skill's shared fraction in `overlap.txt`. Settin
 
 The learnability and rq1 runs, then each rq1 policy continued with a training skill (FROM) replaced by a
 held-out operator (TO) every literal of which another training skill has; TO is evaluated zero-shot, then
-trained alone until it reaches the threshold. Controls: repair-hidden (TO gets FROM's exact embedding, for
-one-hot and random), one-hot's unused index, and operator embeddings without the operator's name.
+trained alone until it reaches the threshold, starting in every condition without FROM's transitions in the
+replay buffer and with FROM's temperature reset (main.py `--reset-replaced-skills`). Controls: repair-hidden
+(TO gets FROM's exact embedding, for one-hot and random), one-hot's unused index, and operator embeddings
+without the operator's name.
 
 - `rq3-repair-minimal`: seven training skills and three repairs (unstack → unstack-raised, putdown →
   place-beside, push-left → push-left-front), each repair's new literals in exactly one other skill. Read it

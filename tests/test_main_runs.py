@@ -163,3 +163,103 @@ def test_a_run_saved_without_operator_embedding_loss_resumes_with_the_actor_loss
         assert parse_args(["--run-directory", str(tmp_path), *explicit])["operator_embedding_loss"] == "actor"
     with pytest.raises(SystemExit):
         parse_args(["--run-directory", str(tmp_path), "--operator-embedding-loss", "critic"])
+
+
+@pytest.mark.unit
+def test_only_a_resume_that_drops_skills_while_adding_others_replaces_them(tmp_path):
+    """A repair (unstack left out, unstack-raised added) replaces unstack, with the code the run gave it, also when
+    the resume encodes unstack-raised as unstack. Adding skills alone (as an rq2 stage does), dropping skills alone or
+    resuming with the same skills replaces none; nor does dropping a skill whose code a kept skill shares."""
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.skills.registry import build_skill
+    from main import replaced_skills
+
+    def replaced(saved_options, *options):
+        saved = parse_args(["--operator-encoder", "one-hot", *saved_options])
+        (tmp_path / "config.json").write_text(json.dumps(saved))
+        return replaced_skills(parse_args(["--run-directory", str(tmp_path), *options]), saved)
+
+    run = ["--skills", "pickup", "unstack"]
+    config = parse_args(["--operator-encoder", "one-hot", *run])
+    unstack = OPERATOR_ENCODERS["one-hot"](config, []).encode(build_skill("unstack", config).symbolic_action_model)
+    for aliases in ([], ["--operator-identity-aliases", "unstack-raised=unstack"]):
+        repair = replaced(run, "--skills", "pickup", "unstack-raised", *aliases)
+        assert list(repair) == ["unstack"] and (repair["unstack"] == unstack).all()
+    assert replaced(run, "--skills", "pickup", "unstack", "unstack-raised") == {}
+    assert replaced(run, "--skills", "pickup") == {}
+    assert replaced(run, "--skills", "pickup", "unstack") == {}
+    aliased_run = [*run, "unstack-raised", "--operator-identity-aliases", "unstack-raised=unstack"]
+    assert replaced(aliased_run, "--skills", "pickup", "unstack-raised", "pickup-raised") == {}
+
+
+@pytest.mark.integration
+def test_a_repair_starts_without_the_replaced_skills_transitions_and_temperature(tmp_path, monkeypatch):
+    """An mtsac one-hot run on pickup and unstack (100 steps, replay buffer saved, unstack's temperature set to 0.05 as
+    if converged) is copied as the overnight runner copies it for a repair, its buffer hard-linked, and resumed for
+    10 steps with unstack replaced by unstack-raised, which alone trains. Repair-hidden (unstack-raised gets unstack's
+    code): the buffer holds pickup's transitions and the 10 new ones, and the shared slot is back at temperature 1.
+    Repair-visible: unstack's transitions go and its slot is reset too; unstack-raised's are the 10 new ones. Control
+    (--no-reset-replaced-skills): unstack's transitions, with the same input as the new ones, stay, and so does its
+    temperature. The rq1 run's buffer file is never written."""
+    import hashlib
+    import os
+
+    import torch
+    from stable_baselines3.common.save_util import load_from_pkl
+
+    from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.skills.registry import build_skill
+    from cam.training import stable_baselines3_trainer
+    from cam.training.multi_task_sac import MultiTaskSAC, embedding_key
+    from scripts.overnight_runs import link_replay_buffer
+
+    options = ["--algorithm", "mtsac", "--operator-encoder", "one-hot", "--num-blocks", "2",
+               "--max-steps-per-episode", "10", "--mode", "train"]
+    config = parse_args(["--skills", "pickup", "unstack", *options])
+    main(["--skills", "pickup", "unstack", *options, "--total-timesteps", "100", "--save-replay-buffer",
+          "--output-dir", str(tmp_path)])
+    rq1 = tmp_path / run_name(config)
+    encoder = OPERATOR_ENCODERS["one-hot"](config, [])
+    code = {name: encoder.encode(build_skill(name, config).symbolic_action_model)
+            for name in ("pickup", "unstack", "unstack-raised")}
+    model = MultiTaskSAC.load(rq1 / "model.zip", device="cpu")  # 100 steps make no updates: give it temperatures
+    model.skill_slots = {embedding_key(code["pickup"]): 0, embedding_key(code["unstack"]): 1}
+    model.log_ent_coef.data[:2] = torch.log(torch.tensor([0.2, 0.05]))
+    model.save(rq1 / "model.zip")
+
+    def counts(buffer) -> dict[str, int]:
+        stored = buffer.observations["operator_embedding"][: buffer.size(), 0]
+        return {name: int((stored == embedding).all(axis=1).sum()) for name, embedding in code.items()}
+
+    def temperatures(sac) -> list[float]:
+        return [round(float(value), 4) for value in torch.exp(sac.log_ent_coef.detach()[:2])]
+
+    before = counts(load_from_pkl(rq1 / "replay_buffer.pkl"))
+    digest = hashlib.sha256((rq1 / "replay_buffer.pkl").read_bytes()).hexdigest()
+    assert before["pickup"] > 0 and before["unstack"] > 0 and before["pickup"] + before["unstack"] == 100
+
+    resumed = []
+    train = stable_baselines3_trainer.train_stable_baselines3
+
+    def train_and_keep(*args, **kwargs):
+        resumed.append(train(*args, **kwargs))
+        return resumed[-1]
+
+    monkeypatch.setattr(stable_baselines3_trainer, "train_stable_baselines3", train_and_keep)
+    hidden = ["--operator-identity-aliases", "unstack-raised=unstack"]
+    after = {}
+    for variant, variant_options in (("hidden", hidden), ("visible", []),
+                                     ("hidden-kept", [*hidden, "--no-reset-replaced-skills"])):
+        run = shutil.copytree(rq1, tmp_path / variant, copy_function=link_replay_buffer)
+        main(["--run-directory", str(run), "--skills", "pickup", "unstack-raised", "--stop-skills", "unstack-raised",
+              "--repair-mode", "isolated", "--mode", "train", "--total-timesteps", "10", "--no-save-replay-buffer",
+              *variant_options])
+        after[variant] = counts(resumed[-1].replay_buffer), temperatures(resumed[-1])
+        assert os.path.samefile(run / "replay_buffer.pkl", rq1 / "replay_buffer.pkl")
+
+    pickup = before["pickup"]
+    assert after["hidden"] == ({"pickup": pickup, "unstack": 10, "unstack-raised": 0}, [0.2, 1.0])
+    assert after["visible"] == ({"pickup": pickup, "unstack": 0, "unstack-raised": 10}, [0.2, 1.0])
+    assert after["hidden-kept"] == ({"pickup": pickup, "unstack": before["unstack"] + 10, "unstack-raised": 0},
+                                    [0.2, 0.05])
+    assert hashlib.sha256((rq1 / "replay_buffer.pkl").read_bytes()).hexdigest() == digest
