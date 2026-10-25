@@ -152,10 +152,16 @@ In rough priority order.
     embedding.
 
 **RQ2: does structure speed up learning a new skill?**
-- *Built:* resuming with added skills, dense-then-sparse evaluation of added skills, and zero-shot points.
-- *Next:* the protocol from `research_focus.md` (RQ2): add skills one at a time in shuffled orders across
-  seeds, and measure zero-shot success and steps to threshold per new skill. Add it as an experiment
-  (`src/cam/experiments/research_experiments.py`) with its own runner group.
+- *Built:* the protocol from `research_focus.md` (RQ2) as the runner's rq2 group, with two experiments (their
+  docstrings give the design and metrics): `rq2`, the four corners of the pickup / unstack / raised square added one
+  at a time in three shuffled orders, and `rq2-add-unstack-raised`, unstack-raised added to a policy trained on the
+  other three. Each chain is one run continued stage by stage, a stage starting only once the one before reached the
+  threshold; the plan prints each added skill's literal coverage, and `review_runs.py` section 5 reports every
+  addition with its zero-shot success, steps to threshold, transfer gain and retention.
+- *Next:*
+  - Run `--experiment rq2-add-unstack-raised`, then `--experiment rq2`, with `SEEDS="0 1 2"`.
+  - A summary over orders: per condition, the zero-shot success and steps to threshold of the additions at
+    coverage 1 against the others (section 5 reports each order apart).
 
 **RQ3: does structure allow repair (zero-shot or faster)?** The most important experiment to run:
 `./scripts/start_overnight.sh --experiment rq3-repair-minimal`, then `rq3-repair-maximal`.
@@ -218,4 +224,4 @@ In rough priority order.
 2. **Before the next overnight run:** shorten run names (§3.1). Then run `--experiment rq3-repair-minimal`
    (learnability, RQ1, then the repairs) with `SEEDS="0 1 2"`.
 3. **Then, depending on the results:** operator relabeling (§4.1) and the RQ1 wrong-embedding control, or
-   RQ2's protocol, or RQ4 starting with FiLM.
+   RQ2 (`--experiment rq2-add-unstack-raised`, then `rq2`), or RQ4 starting with FiLM.

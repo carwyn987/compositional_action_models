@@ -49,6 +49,8 @@ its name in upper case; the runner lists the overrides it used. The ones most of
 | `BASE_SKILLS`, `REPAIRS` | the training skills, and the repairs as `FROM:TO` pairs |
 | `REPAIR_MODES` | `isolated` (only the repaired skill trains), `retain` (every skill trains), or both |
 | `LEARN_STEPS`, `RQ1_STEPS`, `REPAIR_STEPS` | the budgets; `RQ1_STEPS=auto` sets the rq1 budget from the learnability runs |
+| `RQ2_ORDERS`, `RQ2_SHUFFLES` | rq2's orders, stages separated by `,` and a stage's skills joined by `+` (e.g. `"pickup+unstack+pickup-raised,unstack-raised"`); or that many shuffles of `BASE_SKILLS`, one skill per stage |
+| `RQ2_FIRST_STEPS`, `RQ2_STAGE_STEPS` | an rq2 chain's budgets: its first stage, and each later one |
 | `TEXT_BACKEND` | `openai`, or `mock` (offline, no meaning) |
 
 Machine settings: `OUT` (default `outputs/overnight_<date>`), `JOBS` (runs at once, default 2), `DEVICE`
@@ -63,6 +65,7 @@ Under `OUT`:
 | `learnability/<skill>/<run name>/` | a learnability run: `config.json`, `metrics.json`, `model.zip`, `tensorboard/`, `train.log` |
 | `rq1/<condition>_seed<n>/<run name>/` | an rq1 run |
 | `repair/<TO>/<condition>_<repair-visible or repair-hidden>_<mode>_seed<n>/` | a repair: a copy of the rq1 run, continued |
+| `rq2/<condition>_seed<n>/<order>/<run name>/` | an rq2 chain: one run, continued stage by stage |
 | `logs/<label>.log`, `failed.txt` | each run's full output; the runs that failed |
 | `overlap.txt`, `run_info.txt` | the overlap report of the experiment's skills; the commit and settings |
 | `summary.csv`, `review.txt` | per run and skill metrics; `scripts/review_runs.py`'s report, written when the plan ends |
@@ -110,6 +113,35 @@ what the other skills forgot. Check first, in section 2, that the rq1 policy lea
 carry TO's literals. Settings: `REPAIRS`, `REPAIR_MODES` (`"isolated retain"` adds the cost of a repair
 without forgetting), `REPAIR_STEPS`, `OPERATOR_EMBEDDINGS`, `SEEDS`, `OPERATOR_NAMES`.
 
+### `rq2` and `rq2-add-unstack-raised`: does structure speed up learning the next skill?
+
+One shared policy per operator embedding, order and seed, given skills a stage at a time. Stage 1 is a new run
+on its skills until each reaches the threshold; each later stage continues that run with its skills added
+(repair mode retain), until they reach the threshold and the earlier skills are back at their level. A stage
+starts only once the one before reached the threshold, otherwise the chain ends there (section 1 of the review
+says why). For each added skill: does it succeed zero-shot (possible only where the stages before cover all
+its literals: the plan prints each added skill's coverage), does it reach the threshold in fewer steps than
+with one-hot and than from scratch, and what do the earlier skills forget?
+
+- `rq2`: pickup, unstack, pickup-raised and unstack-raised, one at a time, in three shuffled orders (the same
+  for every embedding and seed), after a learnability run of each skill (the transfer gain's baseline). Each
+  skill's literals are all in the two it differs from in one way (on the table or a block, held low or raised),
+  so the last skill of every order has coverage 1.
+- `rq2-add-unstack-raised`: one-hot and compositional-tree, side by side: pickup, unstack and pickup-raised
+  together until each reaches 0.95 (at most 1.5M steps), then unstack-raised added (at most 1M steps), whose
+  literals the three cover. Saved every 20k steps with the replay buffer. No learnability runs, so no transfer
+  gain.
+
+Read section 5 (one entry per addition, in the order added, each with its own retention) and section 1.
+Settings: `RQ2_ORDERS`, `RQ2_SHUFFLES`, `RQ2_FIRST_STEPS`, `RQ2_STAGE_STEPS`, `OPERATOR_EMBEDDINGS`, `SEEDS`,
+`OPERATOR_NAMES`.
+
+```bash
+DRY_RUN=1 ./scripts/start_overnight.sh --experiment rq2       # the plan, with each added skill's coverage
+systemd-run --user --unit=rq2 --same-dir --setenv=OUT=outputs/rq2_$(date +%Y%m%d) --setenv=DEVICE=cuda \
+    ./scripts/start_overnight.sh --experiment rq2
+```
+
 ### `overlap`: how much of their operators do the training skills share?
 
 Static, nothing trains: the fraction of each skill's predicates, atoms, literals, preconditions and effects,
@@ -142,7 +174,7 @@ every operator `unnamed` and the compositional embedding has no name component: 
 embeddings only where their preconditions, effects or parameters differ.
 
 The setting is `operator_names` in `research_experiments.py`. Each value is a variant of every text and
-compositional condition of the rq1 and repair runs:
+compositional condition of the rq1, repair and rq2 runs:
 
 | `OPERATOR_NAMES` | runs | main.py options |
 | --- | --- | --- |
