@@ -63,7 +63,10 @@ OPERATOR_ENCODERS = {
     "random": lambda config, skills: RandomOperatorEncoder(
         config["operator_embedding_dim"], seed=config["seed"], aliases=identity_aliases(config)
     ),
-    "text": lambda config, skills: TextOperatorEncoder(text_backend(config), config["operator_text"]),
+    # configs saved before --operator-text-name: the name included
+    "text": lambda config, skills: TextOperatorEncoder(
+        text_backend(config), config["operator_text"], config.get("operator_text_name", "include") == "include"
+    ),
     # the operator's structure, composed into an embedding inside the policy (representations/compositional/)
     "compositional": lambda config, skills: StructuredOperatorEncoder(
         compositional_layout(config),

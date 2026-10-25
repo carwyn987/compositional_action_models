@@ -42,7 +42,7 @@ from cam.experiments.environment_setup import (
 )
 from cam.logging_config import add_log_file, configure_logging
 from cam.representations.text_backends import TEXT_BACKENDS
-from cam.representations.text_operator_encoder import OPERATOR_TEXTS
+from cam.representations.text_operator_encoder import OPERATOR_TEXTS, UNNAMED
 from cam.skills.registry import SKILL_REGISTRY, build_skill
 from cam.skills.skill import Skill
 
@@ -59,7 +59,7 @@ REPAIR_CONSECUTIVE_EVALUATIONS = 2
 # Changing these would change the policy's observation or algorithm, so a resumed run keeps them.
 LOCKED_ON_RESUME = [
     "algorithm", "environment_id", "num_blocks", "operator_encoder", "operator_embedding_dim", "max_operator_arity",
-    "trainable_operator_embedding", "text_backend", "operator_text", "compositional_architecture",
+    "trainable_operator_embedding", "text_backend", "operator_text", "operator_text_name", "compositional_architecture",
     "component_embedding_dim", "max_operator_literals", "max_predicate_arity", "compositional_name", "slots",
     "slot_iterations",
     "symbolic_action_model_format",
@@ -154,6 +154,11 @@ def build_parser() -> argparse.ArgumentParser:
     training.add_argument(
         "--operator-text", choices=sorted(OPERATOR_TEXTS), default="pddl",
         help="--operator-encoder text: embed the canonical PDDL, or a templated paragraph describing the operator",
+    )
+    training.add_argument(
+        "--operator-text-name", choices=["include", "none"], default="include",
+        help="--operator-encoder text: include the operator name in the text, or leave it out (every operator is "
+        f"called {UNNAMED!r}), so the texts differ only where the operators' structure does",
     )
     training.add_argument(
         "--text-embedding-cache", default="outputs/text_embedding_cache.json",
@@ -290,7 +295,9 @@ def parse_args(argv: list[str] | None = None) -> dict:
             parser.error(f"{args.run_directory} has no config.json")
         saved = {key: value for key, value in json.loads(config_path.read_text()).items() if key not in PER_INVOCATION}
         explicit = explicit_options(argv)
-        changed = [key for key in LOCKED_ON_RESUME if key in explicit and explicit[key] != saved.get(key)]
+        # a key missing from config.json: a run saved before the option, which had its default
+        changed = [key for key in LOCKED_ON_RESUME
+                   if key in explicit and explicit[key] != saved.get(key, parser.get_default(key))]
         if changed:
             parser.error(f"cannot change {changed} of an existing run (they define its observation and algorithm)")
         config = config | saved | explicit
@@ -311,12 +318,15 @@ def parse_args(argv: list[str] | None = None) -> dict:
 
 
 def run_name(config: dict) -> str:
-    """e.g. pickup-putdown_sac_multi-hot_sparse_seed0, or ..._random-trainable_... with a trainable embedding"""
+    """e.g. pickup-putdown_sac_multi-hot_sparse_seed0, or ..._random-trainable_... with a trainable embedding, or
+    ..._text-mock-pddl-no-name_... without the operator's name"""
     encoder = config["operator_encoder"]
     if encoder == "text":
         encoder += f"-{config['text_backend']}-{config['operator_text']}"
+        encoder += "-no-name" if config["operator_text_name"] == "none" else ""
     elif encoder == "compositional":
         encoder += f"-{config['compositional_architecture']}"
+        encoder += "-no-name" if config["compositional_name"] == "none" else ""
     if config.get("trainable_operator_embedding"):
         encoder += "-trainable"
     return "_".join(["-".join(config["skills"]), config["algorithm"], encoder, config["reward"], f"seed{config['seed']}"])

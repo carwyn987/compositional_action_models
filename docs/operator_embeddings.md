@@ -75,6 +75,21 @@ What each condition gives the policy:
 | multi-hot + trainable | literal features | a vector per feature (columns of W) | the sum of its features' vectors |
 | compositional | the full operator, as a tree / tokens / grid | every component and composition function | composed from the same components |
 
+## The operator's name
+
+The text and compositional encoders can carry the operator's name. One-hot and random identify operators by
+their name by design, and multi-hot has only the literals.
+
+| encoder | where the name is | without it |
+| --- | --- | --- |
+| text | in the text: `(:action pickup ...` (PDDL), `Action pickup with parameters ...` (paragraph) | `--operator-text-name none`: every operator's text calls it `unnamed` |
+| compositional | a name component: the name's text embedding, at the end of the structure array, composed with the others | `--compositional-name none`: no name component (see the notes below) |
+
+`main.py` includes the name by default. The experiments leave it out (`OPERATOR_NAMES`, `docs/experiments.md`):
+held-out operators share words of their names with training skills (unstack-raised and pickup-raised:
+"raised"), so the name alone could relate them. Without it, two operators with the same parameters,
+preconditions and effects get the same embedding.
+
 ## Identity: one-hot and random
 
 `OneHotOperatorEncoder` is the baseline: one entry per operator, no structure.
