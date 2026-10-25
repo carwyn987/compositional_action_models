@@ -317,6 +317,7 @@ def learned_embeddings(config: dict, model_path: Path) -> dict:
     import torch
 
     from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.policies.feature_extractors import features_extractors
     from cam.policies.stable_baselines3_policy import ALGORITHMS
     from cam.skills.registry import build_skill
 
@@ -324,7 +325,7 @@ def learned_embeddings(config: dict, model_path: Path) -> dict:
     encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills)
     inputs = torch.as_tensor(np.stack([encoder.encode(skill.symbolic_action_model) for skill in skills]))
     policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
-    extractor = policy.features_extractor if hasattr(policy, "features_extractor") else policy.actor.features_extractor
+    extractor = features_extractors(policy)["actor"]
     with torch.no_grad():
         outputs = extractor.operator_embedding(inputs)
     return {skill.name: output for skill, output in zip(skills, outputs)}
@@ -338,6 +339,7 @@ def composition_magnitudes(config: dict, model_path: Path) -> dict:
     import torch
 
     from cam.experiments.environment_setup import OPERATOR_ENCODERS
+    from cam.policies.feature_extractors import features_extractors
     from cam.policies.stable_baselines3_policy import ALGORITHMS
     from cam.skills.registry import build_skill
 
@@ -345,7 +347,7 @@ def composition_magnitudes(config: dict, model_path: Path) -> dict:
     encoder = OPERATOR_ENCODERS[config["operator_encoder"]](config, skills)
     inputs = torch.as_tensor(np.stack([encoder.encode(skill.symbolic_action_model) for skill in skills]))
     policy = ALGORITHMS[config["algorithm"]].load(model_path, device="cpu").policy
-    extractor = policy.features_extractor if hasattr(policy, "features_extractor") else policy.actor.features_extractor
+    extractor = features_extractors(policy)["actor"]
     with torch.no_grad():
         composed = extractor.composed_embedding(inputs)
     return {skill.name: float(magnitude) for skill, magnitude in zip(skills, composed.norm(dim=1))}
