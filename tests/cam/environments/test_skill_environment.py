@@ -218,6 +218,41 @@ def test_reset_chooses_only_feasible_groundings():
         env.reset(seed=0)
 
 
+class PickupAfterRetreat(PickupSkill):
+    retreat_after_setup = True
+
+
+class WaitingRetreat:
+    """Done after `steps` steps of waiting."""
+
+    def __init__(self, steps):
+        self.steps, self.resets, self.actions = steps, 0, 0
+
+    def reset(self, info, rng):
+        self.resets, self.left = self.resets + 1, self.steps
+
+    def __call__(self, obs, info):
+        if self.left == 0:
+            return None
+        self.left, self.actions = self.left - 1, self.actions + 1
+        return WAIT
+
+
+@pytest.mark.unit
+def test_the_retreat_runs_after_setup_only_for_skills_that_ask_for_it():
+    """A skill with retreat_after_setup starts after the retreat's steps; a skill without it (the control) starts
+    without them. A retreat that never gets there makes reset resample the scene, then give up."""
+    retreat = WaitingRetreat(steps=3)
+    SkillEnvironment(TwoBlockFactsEnv(), [PickupSkill(PDDL_CONFIG)], retreat=retreat).reset(seed=0)
+    assert retreat.resets == 0
+    SkillEnvironment(TwoBlockFactsEnv(), [PickupAfterRetreat(PDDL_CONFIG)], retreat=retreat).reset(seed=0)
+    assert retreat.resets == 1 and retreat.actions == 3
+    stuck = SkillEnvironment(TwoBlockFactsEnv(), [PickupAfterRetreat(PDDL_CONFIG)], retreat=WaitingRetreat(10**6),
+                             max_steps_per_setup_skill=5, max_setup_attempts=3)
+    with pytest.raises(RuntimeError):
+        stuck.reset(seed=0)
+
+
 @pytest.mark.unit
 def test_reset_option_selects_the_skill():
     """reset(options={"skill": name}) runs an episode of that skill, including its setup chain."""

@@ -369,15 +369,20 @@ def test_lifting_slowly_and_lowering_fast_earns_nothing_from_the_lift():
 @pytest.mark.integration
 @pytest.mark.parametrize("skill, rewarded", [("unstack-raised", True), ("unstack", True), ("pickup", False)])
 def test_closing_where_unstacks_setup_leaves_the_gripper_earns_the_grip(skill, rewarded):
-    """unstack's setup leaves the open gripper around the top block: closing there earns the closing progress and the
-    grip bonus, though the gripper never went above the block. From pickup's start, away from the block (the
-    control), closing in place earns neither."""
+    """Without its retreat, unstack's setup leaves the open gripper around the top block: closing there earns the
+    closing progress and the grip bonus, though the gripper never went above the block. From pickup's start, away
+    from the block (the control), closing in place earns neither."""
     from main import parse_args
+    from cam.environments.skill_environment import SkillEnvironment
     from cam.experiments.environment_setup import setup_environment
     from cam.skills.registry import build_skill
 
     config = parse_args(["--skills", skill, "--num-blocks", "2", "--reward", "shaped", "--seed", "0"])
     env = setup_environment(config, [build_skill(skill, config)])
+    skill_environment = env
+    while not isinstance(skill_environment, SkillEnvironment):
+        skill_environment = skill_environment.env
+    skill_environment.retreat = None
     try:
         env.reset(seed=7)
         close = grip = 0.0

@@ -24,6 +24,7 @@ from cam.environments.fetch.fetch_scripted_policies import (
     FetchScriptedPlaceBesidePolicy,
     FetchScriptedPushPolicy,
     FetchScriptedPutdownPolicy,
+    FetchScriptedRetreatPolicy,
     FetchScriptedStackPolicy,
 )
 from cam.environments.skill_environment import SkillEnvironment
@@ -163,6 +164,7 @@ def setup_environment(config: dict, skills: list[Skill]) -> gym.Env:
                 check_failure=check_fetch_failure if config.get("failures", True) else None,
                 at_rest=moved_block_settled,  # settled success: the moved block stopped, not passing through
                 feasible=push_path_clear,  # pushes start with their path clear of the other blocks
+                retreat=FetchScriptedRetreatPolicy(),  # unstack starts with the gripper away from the block
                 frame_predicates=FETCH_FRAME_PREDICATES,
                 # shaped rewards: motion penalties for every skill, and a penalty on failure
                 shared_reward=(FetchMotionReward() if config["reward"] == "shaped" and config.get("motion_penalties", True)

@@ -30,10 +30,12 @@ class StackSkill(Skill):
 
 class UnstackSkill(Skill):
     """unstack(?o, ?u): lift block ?o off block ?u. Setup picks up a random block and stacks it on a random
-    other block, so the stacked pair varies between episodes. Needs at least two blocks."""
+    other block, so the stacked pair varies between episodes, then moves the gripper away from it (a random rise
+    and sideways move). Needs at least two blocks."""
 
     name = "unstack"
     setup_skills = (("pickup", "stack"),)
+    retreat_after_setup = True
 
 
 # Variants of the skills above, each one literal (or one parameter and literal) away from its original.
@@ -50,6 +52,7 @@ class UnstackRaisedSkill(Skill):
 
     name = "unstack-raised"
     setup_skills = (("pickup", "stack"),)
+    retreat_after_setup = True
 
 
 class PlaceBesideSkill(Skill):
