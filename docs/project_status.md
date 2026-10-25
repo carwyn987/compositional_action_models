@@ -183,7 +183,11 @@ compute the trainable and compositional embeddings inside the policy. Multi-task
 separate entropy temperature per skill, as on Meta-World: with one temperature, the entropy target holds only
 on average over the skills, so learned skills and skills still being explored pull it in opposite directions.
 Each distinct operator embedding gets its own temperature, logged as `train/ent_coef/<skill>`; the policy's
-input is unchanged.
+input is unchanged. A new run's skills all start at the initial temperature, 1. A skill new to a trained run (a
+repair's operator, an rq2 stage's skill) starts at the mean of the trained skills' temperatures
+(`--new-skill-temperature trained-mean`, the default): at 1, the entropy bonus outweighs the Q-values the trained
+policy has, and the policy acts almost at random on the new skill, throwing away what it already does for it. On
+the CPU, repairs reached the threshold in 20–40% fewer steps with it than at 1, in every condition (`docs/results.md`).
 
 **Which loss trains a learned embedding** (`--operator-embedding-loss`, SAC and multi-task SAC). The actor and
 critic share the embedding's features extractor (`main.py`'s `policy_kwargs`), and `OperatorEmbeddingSACPolicy`
@@ -252,7 +256,7 @@ A resume that replaces skills of the run (leaves them out of `--skills` while ad
 one that only adds skills, as an rq2 stage does, replaces none) first removes what the model holds of them besides
 its network (`forget_replaced_skills` in `stable_baselines3_trainer.py`): their transitions in the loaded replay
 buffer, found by their operator embedding as the run encoded it, and, with multi-task SAC, their temperature
-slots, reset to the initial temperature with zero Adam moments, as a slot no batch has used. A replaced skill is
+slots, reset to the temperature a new skill gets (`--new-skill-temperature`) with zero Adam moments. A replaced skill is
 no longer part of the task: its transitions' rewards are for effects it no longer has, and under repair-hidden
 their inputs are exactly the repaired operator's, so the critic would get contradictory targets in the very
 states the repair changes until new transitions replaced them; its temperature (about 0.05 once learned) was

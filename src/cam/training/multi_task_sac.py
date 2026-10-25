@@ -32,6 +32,8 @@ class MultiTaskSAC(SAC):
 
     def __init__(self, *args, max_skills: int = 64, **kwargs):
         self.max_skills = max_skills
+        # the temperature a skill new to the run starts with, set per training invocation (new_slot_log_value)
+        self.new_skill_temperature = "trained-mean"
         self.skill_slots: dict[str, int] = {}  # embedding_key(operator embedding) -> temperature slot
         super().__init__(*args, **kwargs)
 
@@ -52,21 +54,38 @@ class MultiTaskSAC(SAC):
             if key not in self.skill_slots:
                 if len(self.skill_slots) == self.max_skills:
                     raise RuntimeError(f"more than max_skills={self.max_skills} distinct operator embeddings")
+                value = self.new_slot_log_value(list(self.skill_slots.values()))
                 self.skill_slots[key] = len(self.skill_slots)
+                with th.no_grad():
+                    self.log_ent_coef[self.skill_slots[key]] = value
             slots.append(self.skill_slots[key])
         return th.as_tensor(slots, device=operator_embeddings.device)[inverse]
 
+    def new_slot_log_value(self, trained_slots: list[int]) -> float:
+        """The log temperature a skill new to the run starts with. trained-mean: the mean of trained_slots, the skills
+        the run has (the initial one if it has none, so a new run's skills, which all appear in its first batch,
+        start alike); initial: the run's initial one, as every skill of a new run starts. A skill added to a trained
+        policy (a repair, an rq2 stage) then explores about as much as the skills it joins: at the initial
+        temperature, 1, the entropy bonus outweighs the Q-values the trained policy has, and the policy acts almost
+        at random on the new skill, throwing away what it already does for it (in repairs on the CPU, trained-mean
+        reached the threshold in 20-40% fewer steps in every condition; docs/results.md)."""
+        if self.new_skill_temperature == "trained-mean" and trained_slots:
+            return float(self.log_ent_coef.detach()[trained_slots].mean())
+        return self.initial_log_ent_coef
+
     def reset_temperatures(self, operator_embeddings) -> list[int]:
-        """Puts the temperature slots of operator_embeddings back as a slot no batch has used yet: the initial
-        temperature, and zero moments in its entries of the temperature optimizer's Adam state (an unused slot's
-        gradients are zero, and the step count is shared by every slot). A repaired operator that keeps its
-        original's embedding (repair-hidden) then explores as one given a new embedding does, instead of with the
-        original's converged temperature. Returns the slots reset; an embedding without a slot has nothing to reset."""
+        """Puts the temperature slots of operator_embeddings back as a slot no batch has used yet: the temperature a
+        new skill gets (new_slot_log_value, over the slots not reset), and zero moments in its entries of the
+        temperature optimizer's Adam state (an unused slot's gradients are zero, and the step count is shared by
+        every slot). A repaired operator that keeps its original's embedding (repair-hidden) then explores as one
+        given a new embedding does, instead of with the original's converged temperature. Returns the slots reset; an
+        embedding without a slot has nothing to reset."""
         slots = sorted({self.skill_slots[key] for key in map(embedding_key, operator_embeddings)
                         if key in self.skill_slots})
         if slots:
             with th.no_grad():
-                self.log_ent_coef[slots] = self.initial_log_ent_coef
+                self.log_ent_coef[slots] = self.new_slot_log_value(
+                    [slot for slot in self.skill_slots.values() if slot not in slots])
             state = self.ent_coef_optimizer.state.get(self.log_ent_coef, {})
             for moment in ("exp_avg", "exp_avg_sq"):
                 if moment in state:
