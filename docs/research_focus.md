@@ -170,7 +170,8 @@ runner's defaults are:
 - **Isolated vs retain.** Isolated trains only the repaired skill, so its steps compare directly with learning
   it from scratch. Retain trains every skill until the repaired one is at the threshold and every other skill
   is back at its earlier level: the cost of a repair without forgetting.
-- **From scratch.** The repaired skill learned alone (its learnability run) is the baseline for transfer gain.
+- **From scratch.** The repaired skill learned alone (its learnability runs, one per seed of the repairs) is the
+  baseline for transfer gain.
 - **Without the operator's name.** Held-out operators share words of their names with training skills
   (unstack-raised with pickup-raised, push-left-front with push-front, place-beside with push-beside), so the
   text and compositional embeddings leave the name out: a zero-shot success then comes from the operator's

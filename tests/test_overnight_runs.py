@@ -49,6 +49,21 @@ def test_rq1_runs_wait_for_the_learnability_runs_only_with_an_automatic_budget(m
 
 
 @pytest.mark.unit
+def test_a_repaired_operator_is_learned_from_scratch_with_every_seed_of_its_repairs(monkeypatch):
+    """The from-scratch baseline of a repair's transfer gain has the repairs' seeds, so it is compared with an
+    interval like theirs; a training skill's learnability run (the gate) stays at seed 0, under the label earlier
+    folders have, so their finished runs are skipped."""
+    for name, value in (("RUN_GROUPS", ["learnability"]), ("SEEDS", [0, 1, 2]), ("BASE_SKILLS", ["pickup", "unstack"]),
+                        ("REPAIRS", [("unstack", "unstack-raised")]), ("REPAIRED", ["unstack-raised"])):
+        monkeypatch.setattr(overnight_runs, name, value)
+    runs = overnight_runs.build_plan()
+    assert [run.label for run in runs] == ["learnability_pickup", "learnability_unstack", "learnability_unstack-raised",
+                                           "learnability_unstack-raised_seed1", "learnability_unstack-raised_seed2"]
+    assert [run.command[run.command.index("--seed") + 1] for run in runs] == ["0", "0", "0", "1", "2"]
+    assert len({run.output for run in runs if "unstack-raised" in run.label}) == 1  # one folder, a run per seed
+
+
+@pytest.mark.unit
 def test_the_budget_goes_into_every_rq1_runs_command(tmp_path, monkeypatch):
     """Once the learnability results exist, each rq1 run trains for the budget: its steps and --total-timesteps."""
     monkeypatch.setattr(overnight_runs, "OUT", tmp_path)
