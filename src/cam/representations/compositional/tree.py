@@ -30,21 +30,31 @@ class TreeComposition(nn.Module):
         self.parameter_element, self.parameter_set = mlp(dim, dim), mlp(dim, dim)  # PARAMETERS
         self.operator = mlp((4 if layout.name_dim else 3) * dim, output_dim)  # OPERATOR
 
-    def conjoin(self, literals: torch.Tensor, mask: torch.Tensor) -> torch.Tensor:
-        """AND over the masked literals: (B, L, dim) -> (B, dim); an empty conjunction is AND({})."""
-        return self.conjunction((self.conjunction_element(literals) * mask[..., None]).sum(dim=1))
-
-    def forward(self, parts: OperatorParts) -> torch.Tensor:
+    def intermediates(self, parts: OperatorParts) -> dict[str, torch.Tensor]:
+        """Every stage of the composition by name; forward returns "operator". Per literal, (B, L, dim), zero for
+        EMPTY rows: signed-literal (NOT applied to negated preconditions and delete effects) and conjunct (AND's
+        element function phi of it). Per operator, (B, dim): and-sum pre / eff (each section's sum of conjuncts, so
+        linear in its literals), and pre / eff (AND: rho of the sum; an empty conjunction is AND({})), pre, eff,
+        parameters, and operator (B, output_dim)."""
         variables, variable_mask = self.components.typed_variables(parts)
         literals, literal_mask = self.components.literals(parts, variables)
         negated = (parts.kinds == NEGATED_PRECONDITION) | (parts.kinds == DELETE)
         literals = torch.where(negated[..., None], self.negation(literals), literals)
-        is_precondition = (parts.kinds == PRECONDITION) | (parts.kinds == NEGATED_PRECONDITION)
-        is_effect = (parts.kinds == ADD) | (parts.kinds == DELETE)
-        precondition = self.precondition(self.conjoin(literals, literal_mask & is_precondition))
-        effect = self.effect(self.conjoin(literals, literal_mask & is_effect))
-        parameters = self.parameter_set((self.parameter_element(variables) * variable_mask[..., None]).sum(dim=1))
-        pieces = [parameters, precondition, effect]
+        stages, conjuncts = {"signed-literal": literals}, {}
+        sections = {"pre": ((parts.kinds == PRECONDITION) | (parts.kinds == NEGATED_PRECONDITION), self.precondition),
+                    "eff": ((parts.kinds == ADD) | (parts.kinds == DELETE), self.effect)}
+        for section, (in_section, function) in sections.items():
+            conjuncts[section] = self.conjunction_element(literals) * (literal_mask & in_section)[..., None]
+            stages[f"and-sum {section}"] = conjuncts[section].sum(dim=1)
+            stages[f"and {section}"] = self.conjunction(stages[f"and-sum {section}"])
+            stages[section] = function(stages[f"and {section}"])  # PRE or EFF
+        stages["conjunct"] = conjuncts["pre"] + conjuncts["eff"]  # each literal row is in one section, zero in the other
+        stages["parameters"] = self.parameter_set((self.parameter_element(variables) * variable_mask[..., None]).sum(dim=1))
+        pieces = [stages["parameters"], stages["pre"], stages["eff"]]
         if self.components.name is not None:
             pieces.insert(0, self.components.name(parts.name))
-        return self.operator(torch.cat(pieces, dim=-1))
+        stages["operator"] = self.operator(torch.cat(pieces, dim=-1))
+        return stages
+
+    def forward(self, parts: OperatorParts) -> torch.Tensor:
+        return self.intermediates(parts)["operator"]

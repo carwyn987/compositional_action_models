@@ -50,6 +50,16 @@ class SlotComposition(nn.Module):
         self.slot_attention = SlotAttention(component_dim, num_slots, slot_iterations)
         self.output = nn.Linear(num_slots * component_dim, output_dim)
 
-    def forward(self, parts: OperatorParts) -> torch.Tensor:
+    def intermediates(self, parts: OperatorParts) -> dict[str, torch.Tensor]:
+        """Every stage of the composition by name; forward returns "operator": token (B, N, dim), each component
+        token plus its kind's embedding, in ComponentEmbeddings.tokens' order (slot attention's inputs), slot
+        (B, num_slots, dim), slots (the slots flattened) and operator (B, output_dim)."""
         tokens, kinds, mask = self.components.tokens(parts)
-        return self.output(self.slot_attention(tokens + self.kind(kinds), mask).flatten(1))
+        stages = {"token": tokens + self.kind(kinds)}
+        stages["slot"] = self.slot_attention(stages["token"], mask)
+        stages["slots"] = stages["slot"].flatten(1)
+        stages["operator"] = self.output(stages["slots"])
+        return stages
+
+    def forward(self, parts: OperatorParts) -> torch.Tensor:
+        return self.intermediates(parts)["operator"]

@@ -45,7 +45,15 @@ class GeometricComposition(nn.Module):
         cells = nn.functional.one_hot(kinds, NUM_KINDS).float() * mask[..., None]  # (B, H, W)
         return (cells[..., None] * tokens[:, :, None, :]).permute(0, 3, 1, 2)
 
-    def forward(self, parts: OperatorParts) -> torch.Tensor:
+    def intermediates(self, parts: OperatorParts) -> dict[str, torch.Tensor]:
+        """Every stage after the CNN by name; forward returns "operator": slot (B, num_slots, dim), slots (the slots
+        flattened) and operator (B, output_dim)."""
         features = self.cnn(self.grid(parts)).flatten(2).transpose(1, 2) + self.position  # (B, H * W, dim)
         every_cell = torch.ones(features.shape[:2], dtype=torch.bool, device=features.device)
-        return self.output(self.slot_attention(features, every_cell).flatten(1))
+        stages = {"slot": self.slot_attention(features, every_cell)}
+        stages["slots"] = stages["slot"].flatten(1)
+        stages["operator"] = self.output(stages["slots"])
+        return stages
+
+    def forward(self, parts: OperatorParts) -> torch.Tensor:
+        return self.intermediates(parts)["operator"]
