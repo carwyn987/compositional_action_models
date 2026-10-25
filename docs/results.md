@@ -191,6 +191,7 @@ the dominant literal become one point, whatever else differs. The composition we
 scale. So the compositional results so far measure a collapsed embedding, not the operator's structure; the same
 growth is likely in Experiment 1 (not checked there).
 
-**Next.** Bound the composition's scale (`docs/next_steps.md` §3.4), check on short trainings that the embeddings of
-pickup, pickup-raised, unstack and unstack-raised stay apart, and run this experiment again: the comparison with
-one-hot's 37k is then the test of RQ3 on this pair. Then the working hypothesis of Experiment 1.
+**Next.** Bound the composition's scale (`--composition-normalization every-stage`, `docs/project_status.md` §2),
+check on short trainings that the embeddings of pickup, pickup-raised, unstack and unstack-raised stay apart, and
+run this experiment again: the comparison with one-hot's 37k is then the test of RQ3 on this pair. Then the working
+hypothesis of Experiment 1.

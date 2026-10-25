@@ -31,7 +31,8 @@ class CompositionalPolicyFeaturesExtractor(BaseFeaturesExtractor):
     and DeepSets sums over literals amplify the components' scale), and training changes it further
     (the tree reached 170-570 over 1M PPO steps). The other inputs of the policy's MLP are around 1, so
     the embedding swamped them, and the unnormalized tree runs never learned pickup. Magnitude 1 also
-    matches the random and text embeddings. `architecture` is TreeComposition, SlotComposition
+    matches the random and text embeddings. This normalization alone leaves the composition's inside
+    unbounded; the architectures' stage_normalization bounds every stage (tree.py). `architecture` is TreeComposition, SlotComposition
     or GeometricComposition, built with (layout, component_dim, output_dim, **architecture_kwargs).
     These settings are saved in model.zip, so a loaded model rebuilds the same network.
     """

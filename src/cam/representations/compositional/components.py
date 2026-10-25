@@ -6,19 +6,22 @@ from torch import nn
 from cam.representations.compositional.structure import EMPTY, NAME, PARAMETER, OperatorLayout, OperatorParts
 
 
-def mlp(in_dim: int, out_dim: int, hidden_dim: int | None = None) -> nn.Sequential:
-    """The learned function used throughout: Linear -> ReLU -> Linear."""
+def mlp(in_dim: int, out_dim: int, hidden_dim: int | None = None, normalize: bool = False) -> nn.Sequential:
+    """The learned function used throughout: Linear -> ReLU -> Linear, with normalize then a LayerNorm without a
+    learnable gain or bias (a gain could grow again), so its output has the same scale whatever its weights."""
     hidden_dim = hidden_dim or max(in_dim, out_dim)
-    return nn.Sequential(nn.Linear(in_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, out_dim))
+    layers = [nn.Linear(in_dim, hidden_dim), nn.ReLU(), nn.Linear(hidden_dim, out_dim)]
+    return nn.Sequential(*layers, *([nn.LayerNorm(out_dim, elementwise_affine=False)] if normalize else []))
 
 
 class ComponentEmbeddings(nn.Module):
     """Embedding store for the operator's components - contains the learned embeddings: type, variable
     (by position) and predicate embeddings, the learned functions TYPED and LITERAL that combine them,
     and the name's learned map. Every architecture builds on these. Components in EMPTY (padding)
-    positions are exactly zero and masked."""
+    positions are exactly zero and masked. With normalize, TYPED, LITERAL and the name's map end in a
+    LayerNorm (see the architectures' stage_normalization)."""
 
-    def __init__(self, layout: OperatorLayout, dim: int):
+    def __init__(self, layout: OperatorLayout, dim: int, normalize: bool = False):
         super().__init__()
         self.layout = layout
         self.type_embedding = nn.Embedding(len(layout.types) + 1, dim, padding_idx=0)
@@ -26,9 +29,11 @@ class ComponentEmbeddings(nn.Module):
         self.predicate_embedding = nn.Embedding(len(layout.predicates) + 1, dim, padding_idx=0)
         # TODO: maybe make each type a functional embedding instead: a learned function per type applied to
         # the variable (type_function[type](variable)), replacing both type_embedding and TYPED.
-        self.typed = mlp(2 * dim, dim)  # TYPED(variable, type)
-        self.literal = mlp((1 + layout.max_predicate_arity) * dim, dim)  # LITERAL(predicate, arguments...)
-        self.name = nn.Linear(layout.name_dim, dim) if layout.name_dim else None
+        self.typed = mlp(2 * dim, dim, normalize=normalize)  # TYPED(variable, type)
+        # LITERAL(predicate, arguments...)
+        self.literal = mlp((1 + layout.max_predicate_arity) * dim, dim, normalize=normalize)
+        name = [nn.Linear(layout.name_dim, dim), *([nn.LayerNorm(dim, elementwise_affine=False)] if normalize else [])]
+        self.name = (nn.Sequential(*name) if normalize else name[0]) if layout.name_dim else None
 
     def typed_variables(self, parts: OperatorParts) -> tuple[torch.Tensor, torch.Tensor]:
         """(B, P, dim) typed-variable embeddings and (B, P) mask of real parameters."""
