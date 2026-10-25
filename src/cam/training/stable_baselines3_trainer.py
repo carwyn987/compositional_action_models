@@ -34,6 +34,7 @@ from cam.training.checkpointing import (
     atomic_save_model,
     atomic_save_replay_buffer,
     atomic_write_text,
+    sigint_ignored,
 )
 from cam.training.multi_task_sac import MultiTaskSAC
 
@@ -317,7 +318,8 @@ def train_stable_baselines3(
             progress_bar=True,
         )
     except BaseException:
-        save()
+        with sigint_ignored():
+            save()
         logger.warning("training stopped at step %d; saved model to %s", model.num_timesteps, model_path)
         raise
     save()
